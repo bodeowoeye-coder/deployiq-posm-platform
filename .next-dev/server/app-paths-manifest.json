@@ -1,0 +1,9 @@
+{
+  "/client/page": "app/client/page.js",
+  "/api/auth/session/route": "app/api/auth/session/route.js",
+  "/portal/page": "app/portal/page.js",
+  "/submit/page": "app/submit/page.js",
+  "/admin/page": "app/admin/page.js",
+  "/login/page": "app/login/page.js",
+  "/api/brands/route": "app/api/brands/route.js"
+}
