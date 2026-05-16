@@ -1,14 +1,12 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
 import { BrandMark } from "@/components/BrandMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { createBrowserSupabase } from "@/lib/supabaseClient";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -30,6 +28,8 @@ export default function LoginPage() {
 
       const response = await fetch("/api/auth/session", {
         method: "POST",
+        credentials: "include",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accessToken: data.session.access_token,
@@ -42,8 +42,7 @@ export default function LoginPage() {
       }
 
       showToast("Signed in successfully.");
-      router.push("/portal");
-      router.refresh();
+      window.location.assign("/portal");
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : "Could not sign in.";
       setError(message);
