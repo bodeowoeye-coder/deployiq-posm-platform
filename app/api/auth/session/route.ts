@@ -62,9 +62,13 @@ export async function DELETE() {
 
 export async function GET() {
   const accessToken = await getCurrentAccessToken();
+  console.info("[auth-session] has access cookie", {
+    hasAccessCookie: Boolean(accessToken)
+  });
   const context = await getCurrentUserContext();
 
   if (!context) {
+    console.error("[auth-session] getCurrentUserContext returned null");
     console.error("[auth-session] verification failed", {
       hasAccessCookie: Boolean(accessToken)
     });
@@ -78,7 +82,9 @@ export async function GET() {
   }
 
   return NextResponse.json({
+    ok: true,
     authenticated: true,
+    role: context.role.role,
     redirectTo: context.role.role === "admin" ? "/admin" : context.role.role === "client" ? "/client" : "/submit"
   });
 }

@@ -15,11 +15,15 @@ export async function getCurrentUserContext() {
   const userClient = createUserSupabase(accessToken);
   const { data, error } = await userClient.auth.getUser();
   if (error || !data.user) {
-    console.error("[auth-context] user lookup failed", {
+    console.error("[auth-context] auth.getUser failed", {
       message: error?.message ?? "No user returned"
     });
     return null;
   }
+
+  console.info("[auth-context] user resolved", {
+    userId: data.user.id
+  });
 
   const { data: userRole, error: userRoleError } = await userClient
     .from("user_roles")
@@ -34,6 +38,10 @@ export async function getCurrentUserContext() {
   }
 
   let role = userRole;
+  console.info("[auth-context] user-scoped role row", {
+    found: Boolean(role)
+  });
+
   if (!role) {
     try {
       const admin = createAdminSupabase();
@@ -50,6 +58,9 @@ export async function getCurrentUserContext() {
       }
 
       role = adminRole;
+      console.info("[auth-context] fallback role row", {
+        found: Boolean(role)
+      });
     } catch (adminFallbackError) {
       console.error("[auth-context] admin fallback unavailable", {
         message: adminFallbackError instanceof Error ? adminFallbackError.message : "Unknown error"
