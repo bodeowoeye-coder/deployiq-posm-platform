@@ -51,11 +51,26 @@ export default function LoginPage() {
         throw new Error("Could not create app session.");
       }
 
+      const verificationResponse = await fetch("/api/auth/session", {
+        cache: "no-store",
+        credentials: "include"
+      });
+
+      if (!verificationResponse.ok) {
+        throw new Error("App session was not accepted. Please try again.");
+      }
+
+      const verifiedSession = (await verificationResponse.json()) as { authenticated: boolean; redirectTo?: string };
+      if (!verifiedSession.authenticated) {
+        throw new Error("App session was not accepted. Please try again.");
+      }
+
+      const redirectTo = verifiedSession.redirectTo || "/portal";
       showToast("Signed in successfully.");
-      window.location.assign("/portal");
+      window.location.assign(redirectTo);
       window.setTimeout(() => {
         if (window.location.pathname === "/login") {
-          window.location.href = "/portal";
+          window.location.href = redirectTo;
         }
       }, 400);
     } catch (loginError) {

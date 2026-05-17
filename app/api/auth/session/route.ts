@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCurrentAccessToken, getCurrentUserContext } from "@/lib/auth";
 import { createUserSupabase } from "@/lib/supabaseUser";
 import { inspectSupabaseEnvironment } from "@/lib/supabaseEnv";
 
@@ -57,4 +58,21 @@ export async function DELETE() {
   response.cookies.delete("sb-access-token");
   response.cookies.delete("sb-refresh-token");
   return response;
+}
+
+export async function GET() {
+  const accessToken = await getCurrentAccessToken();
+  const context = await getCurrentUserContext();
+
+  if (!context) {
+    console.error("[auth-session] verification failed", {
+      hasAccessCookie: Boolean(accessToken)
+    });
+    return NextResponse.json({ authenticated: false }, { status: 401 });
+  }
+
+  return NextResponse.json({
+    authenticated: true,
+    redirectTo: context.role.role === "admin" ? "/admin" : context.role.role === "client" ? "/client" : "/submit"
+  });
 }
