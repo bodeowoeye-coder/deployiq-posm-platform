@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { createUserSupabase } from "@/lib/supabaseUser";
 import type { Client, RoleRecord, UserRole } from "@/lib/types";
 
@@ -13,13 +14,48 @@ export async function getCurrentUserContext() {
 
   const userClient = createUserSupabase(accessToken);
   const { data, error } = await userClient.auth.getUser();
-  if (error || !data.user) return null;
+  if (error || !data.user) {
+    console.error("[auth-context] user lookup failed", {
+      message: error?.message ?? "No user returned"
+    });
+    return null;
+  }
 
-  const { data: role } = await userClient
+  const { data: userRole, error: userRoleError } = await userClient
     .from("user_roles")
     .select("user_id, role, client_id")
     .eq("user_id", data.user.id)
     .maybeSingle();
+
+  if (userRoleError) {
+    console.error("[auth-context] user-scoped role lookup failed", {
+      message: userRoleError.message
+    });
+  }
+
+  let role = userRole;
+  if (!role) {
+    try {
+      const admin = createAdminSupabase();
+      const { data: adminRole, error: adminRoleError } = await admin
+        .from("user_roles")
+        .select("user_id, role, client_id")
+        .eq("user_id", data.user.id)
+        .maybeSingle();
+
+      if (adminRoleError) {
+        console.error("[auth-context] admin fallback role lookup failed", {
+          message: adminRoleError.message
+        });
+      }
+
+      role = adminRole;
+    } catch (adminFallbackError) {
+      console.error("[auth-context] admin fallback unavailable", {
+        message: adminFallbackError instanceof Error ? adminFallbackError.message : "Unknown error"
+      });
+    }
+  }
 
   if (!role) return null;
 
