@@ -70,7 +70,8 @@ export async function GET() {
   if (!context) {
     console.error("[auth-session] getCurrentUserContext returned null");
     console.error("[auth-session] verification failed", {
-      hasAccessCookie: Boolean(accessToken)
+      hasAccessCookie: Boolean(accessToken),
+      failureStage: "getCurrentUserContext"
     });
     return NextResponse.json(
       {

@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { getCurrentUserContext } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 export default async function PortalPage() {
   const context = await getCurrentUserContext();
 
