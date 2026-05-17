@@ -4,10 +4,6 @@ type EnvValueCheck = {
   startsWithEquals: boolean;
 };
 
-function readEnvValue(name: string) {
-  return process.env[name] ?? "";
-}
-
 function inspectValue(value: string): EnvValueCheck {
   return {
     present: value.length > 0,
@@ -17,8 +13,9 @@ function inspectValue(value: string): EnvValueCheck {
 }
 
 export function getPublicSupabaseConfig() {
-  const url = readEnvValue("NEXT_PUBLIC_SUPABASE_URL").trim();
-  const anonKey = readEnvValue("NEXT_PUBLIC_SUPABASE_ANON_KEY").trim();
+  // Public env vars must be referenced directly so Next.js can inline them into the browser bundle.
+  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
+  const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
 
   if (!url || !anonKey) {
     throw new Error("Missing public Supabase environment variables.");
@@ -32,9 +29,9 @@ export function getPublicSupabaseConfig() {
 }
 
 export function inspectSupabaseEnvironment() {
-  const rawUrl = readEnvValue("NEXT_PUBLIC_SUPABASE_URL");
-  const rawAnonKey = readEnvValue("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-  const rawServiceRoleKey = readEnvValue("SUPABASE_SERVICE_ROLE_KEY");
+  const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const rawAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+  const rawServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
   let urlLooksValid = false;
   try {

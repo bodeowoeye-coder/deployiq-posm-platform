@@ -19,7 +19,17 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const supabase = createBrowserSupabase();
+      const configResponse = await fetch("/api/auth/public-config", {
+        cache: "no-store",
+        credentials: "include"
+      });
+
+      if (!configResponse.ok) {
+        throw new Error("Could not load login configuration.");
+      }
+
+      const config = (await configResponse.json()) as { url: string; anonKey: string };
+      const supabase = createBrowserSupabase(config);
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
 
       if (signInError || !data.session) {
