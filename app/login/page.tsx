@@ -53,6 +53,11 @@ export default function LoginPage() {
 
       showToast("Signed in successfully.");
       window.location.assign("/portal");
+      window.setTimeout(() => {
+        if (window.location.pathname === "/login") {
+          window.location.href = "/portal";
+        }
+      }, 400);
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : "Could not sign in.";
       setError(message);
