@@ -1,6 +1,5 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { createUserSupabase } from "@/lib/supabaseUser";
 import type { Client, RoleRecord, UserRole } from "@/lib/types";
 
@@ -16,8 +15,7 @@ export async function getCurrentUserContext() {
   const { data, error } = await userClient.auth.getUser();
   if (error || !data.user) return null;
 
-  const admin = createAdminSupabase();
-  const { data: role } = await admin
+  const { data: role } = await userClient
     .from("user_roles")
     .select("user_id, role, client_id")
     .eq("user_id", data.user.id)
@@ -27,7 +25,7 @@ export async function getCurrentUserContext() {
 
   let client: Client | null = null;
   if (role.client_id) {
-    const { data: clientRow } = await admin
+    const { data: clientRow } = await userClient
       .from("clients")
       .select("id, name, can_review")
       .eq("id", role.client_id)

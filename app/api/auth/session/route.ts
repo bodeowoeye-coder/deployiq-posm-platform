@@ -68,7 +68,13 @@ export async function GET() {
     console.error("[auth-session] verification failed", {
       hasAccessCookie: Boolean(accessToken)
     });
-    return NextResponse.json({ authenticated: false }, { status: 401 });
+    return NextResponse.json(
+      {
+        authenticated: false,
+        reason: accessToken ? "role_or_user_context_unavailable" : "access_cookie_missing"
+      },
+      { status: 401 }
+    );
   }
 
   return NextResponse.json({

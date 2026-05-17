@@ -56,11 +56,15 @@ export default function LoginPage() {
         credentials: "include"
       });
 
+      const verifiedSession = (await verificationResponse.json()) as { authenticated: boolean; redirectTo?: string; reason?: string };
       if (!verificationResponse.ok) {
-        throw new Error("App session was not accepted. Please try again.");
+        throw new Error(
+          verifiedSession.reason === "access_cookie_missing"
+            ? "App session cookie was not saved. Please try again."
+            : "App session was not accepted. Please try again."
+        );
       }
 
-      const verifiedSession = (await verificationResponse.json()) as { authenticated: boolean; redirectTo?: string };
       if (!verifiedSession.authenticated) {
         throw new Error("App session was not accepted. Please try again.");
       }
