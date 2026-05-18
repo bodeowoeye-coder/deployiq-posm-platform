@@ -7,6 +7,15 @@ create table if not exists public.clients (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.client_profiles (
+  client_id uuid primary key references public.clients(id) on delete cascade,
+  contact_person text,
+  email text,
+  phone text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.brands (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
@@ -78,6 +87,9 @@ create table if not exists public.installer_performance (
 create table if not exists public.agencies (
   id uuid primary key default gen_random_uuid(),
   agency_name text not null unique,
+  contact_person text,
+  email text,
+  phone text,
   assigned_regions text[] not null default '{}',
   status text not null default 'Active' check (status in ('Active', 'Inactive')),
   created_at timestamptz not null default now()
@@ -85,10 +97,13 @@ create table if not exists public.agencies (
 
 create table if not exists public.installers (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid unique references auth.users(id) on delete set null,
   installer_name text not null unique,
   agency_id uuid references public.agencies(id) on delete set null,
   assigned_regions text[] not null default '{}',
+  assigned_states text[] not null default '{}',
   assigned_project_ids uuid[] not null default '{}',
+  access_status text not null default 'Active' check (access_status in ('Active', 'Suspended', 'Inactive')),
   status text not null default 'Active' check (status in ('Active', 'Inactive')),
   created_at timestamptz not null default now()
 );
@@ -104,6 +119,31 @@ create table if not exists public.user_roles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   role text not null check (role in ('admin', 'client', 'installer')),
   client_id uuid references public.clients(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.user_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  full_name text not null default '',
+  email text not null unique,
+  phone text,
+  agency_id uuid references public.agencies(id) on delete set null,
+  assigned_project_ids uuid[] not null default '{}',
+  assigned_regions text[] not null default '{}',
+  assigned_states text[] not null default '{}',
+  status text not null default 'Active' check (status in ('Active', 'Inactive', 'Suspended', 'Archived')),
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  actor_user_id uuid references auth.users(id) on delete set null,
+  target_user_id uuid references auth.users(id) on delete set null,
+  action_type text not null,
+  old_value jsonb,
+  new_value jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -234,6 +274,12 @@ alter table public.submissions add column if not exists phone text;
 alter table public.submissions add column if not exists state_region text;
 alter table public.submissions add column if not exists status text not null default 'Pending';
 alter table public.projects add column if not exists archived_at timestamptz;
+alter table public.agencies add column if not exists contact_person text;
+alter table public.agencies add column if not exists email text;
+alter table public.agencies add column if not exists phone text;
+alter table public.installers add column if not exists user_id uuid unique references auth.users(id) on delete set null;
+alter table public.installers add column if not exists assigned_states text[] not null default '{}';
+alter table public.installers add column if not exists access_status text not null default 'Active';
 
 update public.submissions
 set status = case
@@ -325,11 +371,16 @@ create index if not exists projects_brand_id_idx on public.projects (brand_id);
 create index if not exists project_targets_project_id_idx on public.project_targets (project_id);
 create index if not exists deployment_progress_project_id_idx on public.deployment_progress (project_id);
 create index if not exists installers_agency_id_idx on public.installers (agency_id);
+create index if not exists user_profiles_agency_id_idx on public.user_profiles (agency_id);
+create index if not exists user_profiles_status_idx on public.user_profiles (status);
+create index if not exists audit_logs_target_user_id_idx on public.audit_logs (target_user_id);
+create index if not exists audit_logs_created_at_idx on public.audit_logs (created_at desc);
 create index if not exists submission_status_history_submission_id_idx on public.submission_status_history (submission_id, created_at desc);
 create index if not exists alert_events_submission_id_idx on public.alert_events (submission_id, created_at desc);
 
 alter table public.submissions enable row level security;
 alter table public.clients enable row level security;
+alter table public.client_profiles enable row level security;
 alter table public.brands enable row level security;
 alter table public.projects enable row level security;
 alter table public.project_targets enable row level security;
@@ -340,6 +391,8 @@ alter table public.agencies enable row level security;
 alter table public.installers enable row level security;
 alter table public.client_projects enable row level security;
 alter table public.user_roles enable row level security;
+alter table public.user_profiles enable row level security;
+alter table public.audit_logs enable row level security;
 alter table public.submission_status_history enable row level security;
 alter table public.alert_events enable row level security;
 
@@ -355,6 +408,25 @@ create policy "Users can read their own role"
 on public.user_roles
 for select
 using (auth.uid() = user_id);
+
+drop policy if exists "Users can read their own profile" on public.user_profiles;
+create policy "Users can read their own profile"
+on public.user_profiles
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists "Clients can read own profile" on public.client_profiles;
+create policy "Clients can read own profile"
+on public.client_profiles
+for select
+using (
+  exists (
+    select 1
+    from public.user_roles
+    where user_roles.user_id = auth.uid()
+      and user_roles.client_id = client_profiles.client_id
+  )
+);
 
 drop policy if exists "Clients can read their own client row" on public.clients;
 create policy "Clients can read their own client row"

@@ -67,6 +67,15 @@ export type Client = {
   can_review: boolean;
 };
 
+export type ClientProfile = {
+  client_id: string;
+  contact_person: string | null;
+  email: string | null;
+  phone: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Brand = {
   id: string;
   client_id: string;
@@ -125,6 +134,9 @@ export type DeploymentProgress = {
 export type Agency = {
   id: string;
   agency_name: string;
+  contact_person: string | null;
+  email: string | null;
+  phone: string | null;
   assigned_regions: string[];
   status: "Active" | "Inactive";
   created_at: string;
@@ -132,11 +144,55 @@ export type Agency = {
 
 export type Installer = {
   id: string;
+  user_id: string | null;
   installer_name: string;
   agency_id: string | null;
   assigned_regions: string[];
+  assigned_states: string[];
   assigned_project_ids: string[];
+  access_status: "Active" | "Suspended" | "Inactive";
   status: "Active" | "Inactive";
+  created_at: string;
+};
+
+export type UserProfile = {
+  user_id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  agency_id: string | null;
+  assigned_project_ids: string[];
+  assigned_regions: string[];
+  assigned_states: string[];
+  status: "Active" | "Inactive" | "Suspended" | "Archived";
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ManagedUser = {
+  user_id: string;
+  email: string;
+  full_name: string;
+  phone: string | null;
+  role: UserRole;
+  client_id: string | null;
+  agency_id: string | null;
+  assigned_project_ids: string[];
+  assigned_regions: string[];
+  assigned_states: string[];
+  status: UserProfile["status"];
+  created_at: string;
+  last_sign_in_at: string | null;
+};
+
+export type AuditLog = {
+  id: string;
+  actor_user_id: string | null;
+  target_user_id: string | null;
+  action_type: string;
+  old_value: Record<string, unknown> | null;
+  new_value: Record<string, unknown> | null;
   created_at: string;
 };
 

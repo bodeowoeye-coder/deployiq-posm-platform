@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { BRANDS, STATUSES } from "@/lib/brands";
-import type { Agency, Brand, Client, DeploymentProgress, Installer, Project, ProjectTarget, Submission, SubmissionStatus, SubmissionStatusHistory } from "@/lib/types";
+import type { Agency, AuditLog, Brand, Client, ClientProfile, DeploymentProgress, Installer, ManagedUser, Project, ProjectTarget, Submission, SubmissionStatus, SubmissionStatusHistory } from "@/lib/types";
 import {
   getBrandComplianceScores,
   getBrandCounts,
@@ -148,7 +148,10 @@ export function AdminDashboard({
   clients,
   brands,
   agencies,
-  installers
+  installers,
+  managedUsers,
+  clientProfiles,
+  auditLogs
 }: {
   submissions: Submission[];
   history: SubmissionStatusHistory[];
@@ -159,10 +162,18 @@ export function AdminDashboard({
   brands: Brand[];
   agencies: Agency[];
   installers: Installer[];
+  managedUsers: ManagedUser[];
+  clientProfiles: ClientProfile[];
+  auditLogs: AuditLog[];
 }) {
   const [records, setRecords] = useState(submissions);
   const [projectRecords, setProjectRecords] = useState(projects);
   const [targetRecords, setTargetRecords] = useState(projectTargets);
+  const [userRecords, setUserRecords] = useState(managedUsers);
+  const [agencyRecords, setAgencyRecords] = useState(agencies);
+  const [installerRecords, setInstallerRecords] = useState(installers);
+  const [clientProfileRecords, setClientProfileRecords] = useState(clientProfiles);
+  const [auditLogRecords, setAuditLogRecords] = useState(auditLogs);
   const [filters, setFilters] = useState<Filters>(blankFilters);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [exportError, setExportError] = useState("");
@@ -396,6 +407,92 @@ export function AdminDashboard({
     }
     setTargetRecords((current) => [body.target, ...current]);
     showToast("Target allocation added.");
+  }
+
+  async function refreshUsers() {
+    const response = await fetch("/api/users");
+    if (!response.ok) return;
+    const body = await response.json();
+    setUserRecords(body.users);
+  }
+
+  async function createUser(formData: FormData) {
+    const response = await fetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fullName: formData.get("fullName"),
+        email: formData.get("email"),
+        phone: formData.get("phone"),
+        role: formData.get("role"),
+        clientId: formData.get("clientId"),
+        agencyId: formData.get("agencyId"),
+        assignedProjectIds: formData.getAll("assignedProjectIds"),
+        assignedRegions: String(formData.get("assignedRegions") || "").split(",").map((item) => item.trim()).filter(Boolean),
+        assignedStates: String(formData.get("assignedStates") || "").split(",").map((item) => item.trim()).filter(Boolean),
+        status: formData.get("status"),
+        temporaryPassword: formData.get("temporaryPassword")
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      showToast(body.error || "Could not create user.", "error");
+      return;
+    }
+    await refreshUsers();
+    showToast("User created.");
+  }
+
+  async function updateUser(payload: Record<string, unknown>) {
+    const response = await fetch("/api/users", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      showToast(body.error || "Could not update user.", "error");
+      return false;
+    }
+    await refreshUsers();
+    showToast("User updated.");
+    return true;
+  }
+
+  async function createAgency(formData: FormData) {
+    const response = await fetch("/api/agencies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agencyName: formData.get("agencyName"),
+        contactPerson: formData.get("contactPerson"),
+        email: formData.get("email"),
+        phone: formData.get("phone"),
+        assignedRegions: String(formData.get("assignedRegions") || "").split(",").map((item) => item.trim()).filter(Boolean),
+        status: formData.get("status")
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) return showToast(body.error || "Could not create agency.", "error");
+    setAgencyRecords((current) => [...current, body.agency]);
+    showToast("Agency created.");
+  }
+
+  async function updateClientProfile(formData: FormData) {
+    const response = await fetch("/api/clients", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: formData.get("clientId"),
+        contactPerson: formData.get("contactPerson"),
+        email: formData.get("email"),
+        phone: formData.get("phone")
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) return showToast(body.error || "Could not save client profile.", "error");
+    setClientProfileRecords((current) => [body.profile, ...current.filter((item) => item.client_id !== body.profile.client_id)]);
+    showToast("Client profile saved.");
   }
 
   return (
@@ -748,13 +845,13 @@ export function AdminDashboard({
           </div>
         ) : null}
         {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
-        {activeView === "clients" ? <AdminPlaceholder title="Clients" message="Multi-client portfolio controls and client onboarding workspace." /> : null}
-        {activeView === "user-management" ? <AdminPlaceholder title="User Management" message="Future user provisioning and role administration." /> : null}
-        {activeView === "installers" ? <InstallerManagementPanel installers={installers} submissions={records} projects={projectRecords} agencies={agencies} /> : null}
-        {activeView === "agencies" ? <AgencyManagementPanel agencies={agencies} installers={installers} /> : null}
+        {activeView === "clients" ? <ClientManagementPanel clients={clients} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onSave={updateClientProfile} /> : null}
+        {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clients} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
+        {activeView === "installers" ? <InstallerManagementPanel installers={installerRecords} submissions={records} projects={projectRecords} agencies={agencyRecords} /> : null}
+        {activeView === "agencies" ? <AgencyManagementPanel agencies={agencyRecords} installers={installerRecords} submissions={records} projects={projectRecords} onCreate={createAgency} /> : null}
         {activeView === "regions" ? <AdminPlaceholder title="Regions & Territories" message="Future territory rules and coverage configuration." /> : null}
         {activeView === "preferences" ? <AdminPlaceholder title="System Preferences" message="Future operational defaults and platform preferences." /> : null}
-        {activeView === "audit-logs" ? <AdminPlaceholder title="Audit Logs" message="Future governance and system activity review." /> : null}
+        {activeView === "audit-logs" ? <AuditLogPanel logs={auditLogRecords} users={userRecords} /> : null}
       </section>
       </div>
       <PhotoLightbox submissions={filtered} activeIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} onNavigate={setLightboxIndex} />
@@ -1167,6 +1264,8 @@ function InstallerManagementPanel({
         {installers.map((installer) => {
           const installerSubmissions = submissions.filter((item) => item.installer_name === installer.installer_name);
           const approved = installerSubmissions.filter((item) => item.status === "Approved").length;
+          const rejected = installerSubmissions.filter((item) => item.status === "Rejected").length;
+          const duplicates = installerSubmissions.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique").length;
           const agency = agencies.find((item) => item.id === installer.agency_id);
           const assignedProjects = projects.filter((project) => installer.assigned_project_ids.includes(project.id));
           return (
@@ -1183,10 +1282,12 @@ function InstallerManagementPanel({
                   Projects: {assignedProjects.map((project) => project.project_name).join(", ") || "Unassigned"}
                 </p>
               </div>
-              <div className="grid grid-cols-3 gap-3 text-right text-xs">
+              <div className="grid grid-cols-5 gap-3 text-right text-xs">
                 <MiniMetric label="Volume" value={installerSubmissions.length} />
                 <MiniMetric label="Approved" value={approved} />
                 <MiniMetric label="Success" value={`${installerSubmissions.length === 0 ? 0 : Math.round((approved / installerSubmissions.length) * 100)}%`} />
+                <MiniMetric label="Reject" value={`${installerSubmissions.length === 0 ? 0 : Math.round((rejected / installerSubmissions.length) * 100)}%`} />
+                <MiniMetric label="Duplicate" value={`${installerSubmissions.length === 0 ? 0 : Math.round((duplicates / installerSubmissions.length) * 100)}%`} />
               </div>
             </div>
           );
@@ -1196,31 +1297,457 @@ function InstallerManagementPanel({
   );
 }
 
-function AgencyManagementPanel({ agencies, installers }: { agencies: Agency[]; installers: Installer[] }) {
+function AgencyManagementPanel({
+  agencies,
+  installers,
+  submissions,
+  projects,
+  onCreate
+}: {
+  agencies: Agency[];
+  installers: Installer[];
+  submissions: Submission[];
+  projects: Project[];
+  onCreate: (formData: FormData) => Promise<void>;
+}) {
+  return (
+    <div className="grid gap-4">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="text-base font-bold leading-snug">Create agency</h2>
+        <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={async (event) => {
+          event.preventDefault();
+          await onCreate(new FormData(event.currentTarget));
+          event.currentTarget.reset();
+        }}>
+          <input required name="agencyName" placeholder="Agency name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="contactPerson" placeholder="Contact person" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="email" placeholder="Email" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="phone" placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="assignedRegions" placeholder="Regions, comma separated" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <select name="status" defaultValue="Active" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option>Active</option>
+            <option>Inactive</option>
+          </select>
+          <button className="min-h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white md:col-span-2">Create agency</button>
+        </form>
+      </div>
+      <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="text-base font-bold leading-snug">Agency directory</h2>
+        <p className="mt-2 text-sm leading-snug text-slate-600">Partner agencies, territory assignments, and execution performance.</p>
+        <div className="mt-4 grid gap-3">
+          {agencies.length === 0 ? <div className="text-sm text-slate-500">No agencies configured yet.</div> : null}
+          {agencies.map((agency) => {
+            const assignedInstallers = installers.filter((installer) => installer.agency_id === agency.id);
+            const installerNames = assignedInstallers.map((item) => item.installer_name);
+            const agencySubmissions = submissions.filter((item) => installerNames.includes(item.installer_name ?? ""));
+            const approved = agencySubmissions.filter((item) => item.status === "Approved").length;
+            const reviewed = agencySubmissions.filter((item) => item.reviewed_at);
+            const slaCompliant = reviewed.filter((item) => new Date(item.reviewed_at!).getTime() - new Date(item.submitted_at).getTime() <= 48 * 3600000).length;
+            const projectCount = projects.filter((project) => project.assigned_installers.some((name) => installerNames.includes(name))).length;
+            return (
+              <div key={agency.id} className="grid min-w-0 gap-3 rounded-lg bg-slate-50 p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="min-w-0">
+                  <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{agency.agency_name}</p>
+                  <p className="mt-1 text-xs text-slate-500">{agency.contact_person || "No contact"} | {agency.status}</p>
+                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                    Regions: {agency.assigned_regions.join(", ") || "Unassigned"}
+                  </p>
+                </div>
+                <div className="grid grid-cols-5 gap-3 text-right text-xs">
+                  <MiniMetric label="Installers" value={assignedInstallers.length} />
+                  <MiniMetric label="Projects" value={projectCount} />
+                  <MiniMetric label="Volume" value={agencySubmissions.length} />
+                  <MiniMetric label="Perf." value={`${agencySubmissions.length ? Math.round((approved / agencySubmissions.length) * 100) : 0}%`} />
+                  <MiniMetric label="SLA" value={`${reviewed.length ? Math.round((slaCompliant / reviewed.length) * 100) : 0}%`} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserManagementPanel({
+  users,
+  clients,
+  agencies,
+  projects,
+  submissions,
+  onCreate,
+  onUpdate
+}: {
+  users: ManagedUser[];
+  clients: Client[];
+  agencies: Agency[];
+  projects: Project[];
+  submissions: Submission[];
+  onCreate: (formData: FormData) => Promise<void>;
+  onUpdate: (payload: Record<string, unknown>) => Promise<boolean>;
+}) {
+  const [query, setQuery] = useState("");
+  const [role, setRole] = useState("");
+  const [agency, setAgency] = useState("");
+  const [client, setClient] = useState("");
+  const [status, setStatus] = useState("");
+  const [region, setRegion] = useState("");
+  const [project, setProject] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const selectedUser = users.find((user) => user.user_id === selectedUserId) ?? null;
+  const filteredUsers = users.filter((user) => {
+    const searchable = [user.full_name, user.email, user.phone].filter(Boolean).join(" ").toLowerCase();
+    return (
+      (!query || searchable.includes(query.toLowerCase())) &&
+      (!role || user.role === role) &&
+      (!agency || user.agency_id === agency) &&
+      (!client || user.client_id === client) &&
+      (!status || user.status === status) &&
+      (!region || user.assigned_regions.includes(region) || user.assigned_states.includes(region)) &&
+      (!project || user.assigned_project_ids.includes(project))
+    );
+  });
+
+  return (
+    <div className="grid min-w-0 gap-4">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="text-base font-bold leading-snug">Create user</h2>
+        <form
+          className="mt-4 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3"
+          onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+            event.preventDefault();
+            await onCreate(new FormData(event.currentTarget));
+            event.currentTarget.reset();
+          }}
+        >
+          <input required name="fullName" placeholder="Full name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input required name="email" type="email" placeholder="Email" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="phone" placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <select required name="role" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">Role</option>
+            <option value="admin">Admin</option>
+            <option value="client">Client</option>
+            <option value="installer">Installer</option>
+          </select>
+          <select name="clientId" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">Assigned client</option>
+            {clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <select name="agencyId" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">Assigned agency</option>
+            {agencies.map((item) => <option key={item.id} value={item.id}>{item.agency_name}</option>)}
+          </select>
+          <select name="assignedProjectIds" multiple className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+            {projects.map((item) => <option key={item.id} value={item.id}>{item.project_name}</option>)}
+          </select>
+          <input name="assignedRegions" placeholder="Regions, comma separated" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="assignedStates" placeholder="States, comma separated" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <select name="status" defaultValue="Active" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Suspended</option>
+          </select>
+          <input required name="temporaryPassword" minLength={8} placeholder="Temporary password" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <button className="inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 xl:col-span-3">
+            Create user
+          </button>
+        </form>
+      </div>
+
+      <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, email, phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm xl:col-span-2" />
+          <select value={role} onChange={(event) => setRole(event.target.value)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">All roles</option>
+            <option value="admin">Admin</option>
+            <option value="client">Client</option>
+            <option value="installer">Installer</option>
+          </select>
+          <select value={agency} onChange={(event) => setAgency(event.target.value)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">All agencies</option>
+            {agencies.map((item) => <option key={item.id} value={item.id}>{item.agency_name}</option>)}
+          </select>
+          <select value={client} onChange={(event) => setClient(event.target.value)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">All clients</option>
+            {clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">All statuses</option>
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Suspended</option>
+            <option>Archived</option>
+          </select>
+          <input value={region} onChange={(event) => setRegion(event.target.value)} placeholder="Region/state" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <select value={project} onChange={(event) => setProject(event.target.value)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">All projects</option>
+            {projects.map((item) => <option key={item.id} value={item.id}>{item.project_name}</option>)}
+          </select>
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-[900px] w-full text-left text-sm">
+            <thead className="text-xs uppercase text-slate-500">
+              <tr>
+                <th className="px-3 py-2">User</th>
+                <th className="px-3 py-2">Role</th>
+                <th className="px-3 py-2">Agency</th>
+                <th className="px-3 py-2">Projects</th>
+                <th className="px-3 py-2">Regions</th>
+                <th className="px-3 py-2">Last login</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredUsers.map((user) => (
+                <tr key={user.user_id} className="cursor-pointer border-t border-slate-100 hover:bg-orange-50/50" onClick={() => setSelectedUserId(user.user_id)}>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-950 text-xs font-bold text-white">{initials(user.full_name || user.email)}</span>
+                      <span>
+                        <span className="block font-medium">{user.full_name || "Unnamed user"}</span>
+                        <span className="block text-xs text-slate-500">{user.email}</span>
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3"><RoleBadge role={user.role} /></td>
+                  <td className="px-3 py-3">{agencies.find((item) => item.id === user.agency_id)?.agency_name || "—"}</td>
+                  <td className="px-3 py-3">{user.assigned_project_ids.length}</td>
+                  <td className="px-3 py-3">{user.assigned_regions.join(", ") || "—"}</td>
+                  <td className="px-3 py-3">{user.last_sign_in_at ? new Date(user.last_sign_in_at).toLocaleDateString() : "Never"}</td>
+                  <td className="px-3 py-3">{user.status}</td>
+                  <td className="px-3 py-3">{new Date(user.created_at).toLocaleDateString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {selectedUser ? (
+        <UserProfilePanel
+          user={selectedUser}
+          clients={clients}
+          agencies={agencies}
+          projects={projects}
+          submissions={submissions}
+          onClose={() => setSelectedUserId(null)}
+          onUpdate={onUpdate}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function UserProfilePanel({
+  user,
+  clients,
+  agencies,
+  projects,
+  submissions,
+  onClose,
+  onUpdate
+}: {
+  user: ManagedUser;
+  clients: Client[];
+  agencies: Agency[];
+  projects: Project[];
+  submissions: Submission[];
+  onClose: () => void;
+  onUpdate: (payload: Record<string, unknown>) => Promise<boolean>;
+}) {
+  const userSubmissions = submissions.filter((item) => item.installer_user_id === user.user_id || item.installer_name === user.full_name);
+  const approved = userSubmissions.filter((item) => item.status === "Approved").length;
+  const rejected = userSubmissions.filter((item) => item.status === "Rejected").length;
+  const lastSubmission = userSubmissions[0];
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/35">
+      <div className="h-full w-full max-w-xl overflow-y-auto bg-white p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold">{user.full_name || "Unnamed user"}</h2>
+            <p className="text-sm text-slate-600">{user.email}</p>
+          </div>
+          <button className="rounded-lg border border-slate-200 px-3 py-2 text-sm" onClick={onClose}>Close</button>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <SummaryCard label="Deployments" value={userSubmissions.length} />
+          <SummaryCard label="Approval rate" value={userSubmissions.length ? Math.round((approved / userSubmissions.length) * 100) : 0} suffix="%" />
+          <SummaryCard label="Rejection rate" value={userSubmissions.length ? Math.round((rejected / userSubmissions.length) * 100) : 0} suffix="%" />
+        </div>
+        <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm">
+          <p>Role: <strong>{user.role}</strong></p>
+          <p className="mt-1">Client: <strong>{clients.find((item) => item.id === user.client_id)?.name || "—"}</strong></p>
+          <p className="mt-1">Agency: <strong>{agencies.find((item) => item.id === user.agency_id)?.agency_name || "—"}</strong></p>
+          <p className="mt-1">Projects: <strong>{projects.filter((item) => user.assigned_project_ids.includes(item.id)).map((item) => item.project_name).join(", ") || "—"}</strong></p>
+          <p className="mt-1">Territories: <strong>{[...user.assigned_regions, ...user.assigned_states].join(", ") || "—"}</strong></p>
+          <p className="mt-1">Last submission: <strong>{lastSubmission ? new Date(lastSubmission.submitted_at).toLocaleString() : "None"}</strong></p>
+        </div>
+        <div className="mt-4 rounded-lg border border-slate-200 p-4">
+          <h3 className="text-sm font-bold">Activity history</h3>
+          <div className="mt-3 grid gap-2">
+            {userSubmissions.length === 0 ? <p className="text-sm text-slate-500">No submission activity yet.</p> : null}
+            {userSubmissions.slice(0, 5).map((item) => (
+              <div key={item.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <span className="font-medium">{item.salon_name || "Unnamed location"}</span>
+                <span className="text-slate-500"> | {item.status} | {new Date(item.submitted_at).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <form
+          className="mt-4 grid gap-3"
+          onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+            event.preventDefault();
+            const formData = new FormData(event.currentTarget);
+            const nextStatus = String(formData.get("status"));
+            if ((nextStatus === "Suspended" || nextStatus === "Archived") && !window.confirm(`Confirm ${nextStatus.toLowerCase()} for this user?`)) return;
+            await onUpdate({
+              userId: user.user_id,
+              fullName: formData.get("fullName"),
+              phone: formData.get("phone"),
+              role: formData.get("role"),
+              clientId: formData.get("clientId"),
+              agencyId: formData.get("agencyId"),
+              assignedProjectIds: formData.getAll("assignedProjectIds"),
+              assignedRegions: String(formData.get("assignedRegions") || "").split(",").map((item) => item.trim()).filter(Boolean),
+              assignedStates: String(formData.get("assignedStates") || "").split(",").map((item) => item.trim()).filter(Boolean),
+              status: nextStatus
+            });
+          }}
+        >
+          <input name="fullName" defaultValue={user.full_name} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="phone" defaultValue={user.phone ?? ""} placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <select name="role" defaultValue={user.role} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="admin">Admin</option>
+            <option value="client">Client</option>
+            <option value="installer">Installer</option>
+          </select>
+          <select name="clientId" defaultValue={user.client_id ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">No client</option>
+            {clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <select name="agencyId" defaultValue={user.agency_id ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option value="">No agency</option>
+            {agencies.map((item) => <option key={item.id} value={item.id}>{item.agency_name}</option>)}
+          </select>
+          <select name="assignedProjectIds" multiple defaultValue={user.assigned_project_ids} className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+            {projects.map((item) => <option key={item.id} value={item.id}>{item.project_name}</option>)}
+          </select>
+          <input name="assignedRegions" defaultValue={user.assigned_regions.join(", ")} placeholder="Regions" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="assignedStates" defaultValue={user.assigned_states.join(", ")} placeholder="States" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <select name="status" defaultValue={user.status} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Suspended</option>
+            <option>Archived</option>
+          </select>
+          <button className="min-h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white">Save changes</button>
+        </form>
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+            event.preventDefault();
+            const password = window.prompt("Enter a new temporary password (minimum 8 characters):");
+            if (!password) return;
+            await onUpdate({ userId: user.user_id, resetPassword: true, temporaryPassword: password });
+          }}
+        >
+          <button className="min-h-10 rounded-lg border border-slate-200 px-4 text-sm font-semibold">Reset password</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function RoleBadge({ role }: { role: ManagedUser["role"] }) {
+  return <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold capitalize">{role}</span>;
+}
+
+function initials(value: string) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((item) => item[0]?.toUpperCase())
+    .join("") || "U";
+}
+
+function ClientManagementPanel({
+  clients,
+  clientProfiles,
+  users,
+  submissions,
+  projects,
+  onSave
+}: {
+  clients: Client[];
+  clientProfiles: ClientProfile[];
+  users: ManagedUser[];
+  submissions: Submission[];
+  projects: Project[];
+  onSave: (formData: FormData) => Promise<void>;
+}) {
+  return (
+    <div className="grid min-w-0 gap-3">
+      {clients.map((client) => {
+        const profile = clientProfiles.find((item) => item.client_id === client.id);
+        const clientSubmissions = submissions.filter((item) => item.client_id === client.id);
+        const approved = clientSubmissions.filter((item) => item.status === "Approved").length;
+        const clientProjects = projects.filter((item) => item.client_id === client.id);
+        const coverage = Array.from(new Set(clientSubmissions.map((item) => item.installer_region).filter(Boolean))).length;
+        return (
+          <form key={client.id} className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-2" onSubmit={async (event) => {
+            event.preventDefault();
+            await onSave(new FormData(event.currentTarget));
+          }}>
+            <input type="hidden" name="clientId" value={client.id} />
+            <div className="md:col-span-2">
+              <h2 className="text-base font-bold">{client.name}</h2>
+              <p className="mt-1 text-xs text-slate-500">{users.filter((item) => item.client_id === client.id).length} assigned users | {clientProjects.length} projects</p>
+            </div>
+            <input name="contactPerson" defaultValue={profile?.contact_person ?? ""} placeholder="Contact person" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <input name="email" defaultValue={profile?.email ?? ""} placeholder="Email" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <input name="phone" defaultValue={profile?.phone ?? ""} placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <div className="grid grid-cols-4 gap-2">
+              <MiniMetric label="Deployments" value={clientSubmissions.length} />
+              <MiniMetric label="Approved" value={approved} />
+              <MiniMetric label="Approval" value={`${clientSubmissions.length ? Math.round((approved / clientSubmissions.length) * 100) : 0}%`} />
+              <MiniMetric label="Coverage" value={coverage} />
+            </div>
+            <button className="min-h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white md:col-span-2">Save client profile</button>
+          </form>
+        );
+      })}
+    </div>
+  );
+}
+
+function AuditLogPanel({ logs, users }: { logs: AuditLog[]; users: ManagedUser[] }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
-      <h2 className="text-base font-bold leading-snug">Agency directory</h2>
-      <p className="mt-2 text-sm leading-snug text-slate-600">Partner agencies, territory assignments, and installer coverage foundation.</p>
-      <div className="mt-4 grid gap-3">
-        {agencies.length === 0 ? <div className="text-sm text-slate-500">No agencies configured yet.</div> : null}
-        {agencies.map((agency) => {
-          const assignedInstallers = installers.filter((installer) => installer.agency_id === agency.id);
-          return (
-            <div key={agency.id} className="grid min-w-0 gap-3 rounded-lg bg-slate-50 p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-              <div className="min-w-0">
-                <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{agency.agency_name}</p>
-                <p className="mt-1 text-xs text-slate-500">{agency.status}</p>
-                <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
-                  Regions: {agency.assigned_regions.join(", ") || "Unassigned"}
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-3 text-right text-xs">
-                <MiniMetric label="Installers" value={assignedInstallers.length} />
-                <MiniMetric label="Coverage" value={agency.assigned_regions.length} />
-              </div>
-            </div>
-          );
-        })}
+      <h2 className="text-base font-bold">Audit logs</h2>
+      <div className="mt-4 overflow-x-auto">
+        <table className="min-w-[760px] w-full text-left text-sm">
+          <thead className="text-xs uppercase text-slate-500">
+            <tr>
+              <th className="px-3 py-2">Action</th>
+              <th className="px-3 py-2">Actor</th>
+              <th className="px-3 py-2">Target</th>
+              <th className="px-3 py-2">Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.length === 0 ? <tr><td colSpan={4} className="px-3 py-3 text-slate-500">No audit events yet.</td></tr> : null}
+            {logs.map((log) => (
+              <tr key={log.id} className="border-t border-slate-100">
+                <td className="px-3 py-3">{log.action_type.replaceAll("_", " ")}</td>
+                <td className="px-3 py-3">{users.find((item) => item.user_id === log.actor_user_id)?.email || "System"}</td>
+                <td className="px-3 py-3">{users.find((item) => item.user_id === log.target_user_id)?.email || "—"}</td>
+                <td className="px-3 py-3">{new Date(log.created_at).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

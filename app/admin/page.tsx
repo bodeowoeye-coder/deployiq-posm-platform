@@ -1,7 +1,8 @@
 import { AdminDashboard } from "@/components/AdminDashboard";
 import { requireRole } from "@/lib/auth";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
-import type { Agency, Brand, Client, DeploymentProgress, Installer, Project, ProjectTarget, Submission, SubmissionStatusHistory } from "@/lib/types";
+import { listAuditLogs, listManagedUsers } from "@/lib/userManagement";
+import type { Agency, AuditLog, Brand, Client, ClientProfile, DeploymentProgress, Installer, ManagedUser, Project, ProjectTarget, Submission, SubmissionStatusHistory } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,10 @@ export default async function AdminPage() {
     { data: clients },
     { data: brands },
     { data: agencies },
-    { data: installers }
+    { data: installers },
+    { data: clientProfiles },
+    managedUsers,
+    auditLogs
   ] = await Promise.all([
     supabase.from("projects").select("*").order("created_at", { ascending: false }),
     supabase.from("project_targets").select("*"),
@@ -33,7 +37,10 @@ export default async function AdminPage() {
     supabase.from("clients").select("*").order("name", { ascending: true }),
     supabase.from("brands").select("*").order("brand_name", { ascending: true }),
     supabase.from("agencies").select("*").order("agency_name", { ascending: true }),
-    supabase.from("installers").select("*").order("installer_name", { ascending: true })
+    supabase.from("installers").select("*").order("installer_name", { ascending: true }),
+    supabase.from("client_profiles").select("*"),
+    listManagedUsers(),
+    listAuditLogs()
   ]);
   const { data: history } =
     submissionIds.length > 0
@@ -55,6 +62,9 @@ export default async function AdminPage() {
       brands={(brands ?? []) as Brand[]}
       agencies={(agencies ?? []) as Agency[]}
       installers={(installers ?? []) as Installer[]}
+      managedUsers={managedUsers as ManagedUser[]}
+      clientProfiles={(clientProfiles ?? []) as ClientProfile[]}
+      auditLogs={auditLogs as AuditLog[]}
     />
   );
 }
