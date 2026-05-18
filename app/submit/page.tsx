@@ -12,6 +12,7 @@ import { getRegionForState } from "@/lib/geography";
 import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
 import { StateCombobox } from "@/components/StateCombobox";
 import { queueSubmission, readInstallerDraft, readQueuedSubmissions, saveInstallerDraft } from "@/lib/installerDrafts";
+import { SignOutButton } from "@/components/SignOutButton";
 
 type PositionState = {
   latitude: number | null;
@@ -255,6 +256,7 @@ export default function SubmitPage() {
                 My uploads
               </Link>
             ) : null}
+            <SignOutButton />
           </div>
         </div>
       </header>

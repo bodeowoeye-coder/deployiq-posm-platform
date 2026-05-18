@@ -5,6 +5,7 @@ import { requireRole } from "@/lib/auth";
 import { displayProjectName } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Submission } from "@/lib/types";
+import { SignOutButton } from "@/components/SignOutButton";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,7 @@ export default async function InstallerHistoryPage() {
             <Link href="/submit" className="inline-flex min-h-10 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50">
               New upload
             </Link>
+            <SignOutButton />
           </div>
         </div>
       </header>
