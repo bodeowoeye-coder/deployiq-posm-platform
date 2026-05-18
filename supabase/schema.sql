@@ -34,6 +34,7 @@ create table if not exists public.project_targets (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
   installer_name text,
+  installer_user_id uuid references auth.users(id) on delete set null,
   agency_name text,
   region text,
   state text,
@@ -164,6 +165,7 @@ create table if not exists public.alert_events (
 );
 
 alter table public.submissions add column if not exists installer_name text;
+alter table public.submissions add column if not exists installer_user_id uuid references auth.users(id) on delete set null;
 alter table public.submissions add column if not exists client_id uuid references public.clients(id) on delete set null;
 alter table public.submissions add column if not exists project_id uuid references public.projects(id) on delete set null;
 alter table public.submissions add column if not exists project_name text;
@@ -289,6 +291,7 @@ create index if not exists submissions_state_region_idx on public.submissions (s
 create index if not exists submissions_installer_state_idx on public.submissions (installer_state);
 create index if not exists submissions_installer_region_idx on public.submissions (installer_region);
 create index if not exists submissions_installer_name_idx on public.submissions (installer_name);
+create index if not exists submissions_installer_user_id_idx on public.submissions (installer_user_id);
 create index if not exists submissions_brand_name_idx on public.submissions (brand_name);
 create index if not exists submissions_client_id_idx on public.submissions (client_id);
 create index if not exists submissions_project_id_idx on public.submissions (project_id);

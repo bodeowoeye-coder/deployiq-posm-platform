@@ -8,6 +8,7 @@ export type DeploymentStageCode = "production" | "warehouse" | "in_transit" | "i
 export type Submission = {
   id: string;
   client_id: string | null;
+  installer_user_id: string | null;
   project_id: string | null;
   project_name: string | null;
   installer_name: string | null;

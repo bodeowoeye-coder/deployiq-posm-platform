@@ -11,6 +11,7 @@ import { compressImage } from "@/lib/imageCompression";
 import { getRegionForState } from "@/lib/geography";
 import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
 import { StateCombobox } from "@/components/StateCombobox";
+import { queueSubmission, readInstallerDraft, readQueuedSubmissions, saveInstallerDraft } from "@/lib/installerDrafts";
 
 type PositionState = {
   latitude: number | null;
@@ -53,11 +54,28 @@ export default function SubmitPage() {
   const [mismatchWarning, setMismatchWarning] = useState<MismatchWarning | null>(null);
   const [role, setRole] = useState<"admin" | "client" | "installer" | null>(null);
   const [showWebcam, setShowWebcam] = useState(false);
+  const [queuedCount, setQueuedCount] = useState(0);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const { showToast } = useToast();
+
+  useEffect(() => {
+    const draft = readInstallerDraft();
+    if (draft) {
+      setInstallerName(draft.installerName);
+      setProjectName(draft.projectName || DEFAULT_PROJECT_NAME);
+      setBrandName(draft.brandName);
+      setInstallerState(draft.installerState);
+      setInstallerLga(draft.installerLga);
+    }
+    setQueuedCount(readQueuedSubmissions().length);
+  }, []);
+
+  useEffect(() => {
+    saveInstallerDraft({ installerName, projectName, brandName, installerState, installerLga });
+  }, [brandName, installerLga, installerName, installerState, projectName]);
 
   useEffect(() => {
     fetch("/api/auth/session", { credentials: "include" })
@@ -156,10 +174,7 @@ export default function SubmitPage() {
       formData.append("capturedAt", new Date().toISOString());
       formData.append("submitAnyway", String(submitAnyway));
 
-      const response = await fetch("/api/submissions", {
-        method: "POST",
-        body: formData
-      });
+      const response = await fetch("/api/submissions", { method: "POST", body: formData });
 
       const body = await response.json().catch(() => ({}));
 
@@ -179,11 +194,7 @@ export default function SubmitPage() {
       }
 
       setImage(null);
-      setInstallerName("");
-      setProjectName(DEFAULT_PROJECT_NAME);
       setBrandName("");
-      setInstallerState("");
-      setInstallerLga("");
       setMismatchWarning(null);
       setResult("success");
       showToast("Report submitted successfully.");
@@ -191,6 +202,10 @@ export default function SubmitPage() {
       setResult("error");
       const message = submitError instanceof Error ? submitError.message : "Submission failed.";
       setError(message);
+      if (!navigator.onLine || message.toLowerCase().includes("fetch")) {
+        queueSubmission({ installerName, projectName, brandName, installerState, installerLga });
+        setQueuedCount(readQueuedSubmissions().length);
+      }
       showToast(message, "error");
     } finally {
       setIsSubmitting(false);
@@ -235,6 +250,11 @@ export default function SubmitPage() {
                 Client
               </Link>
             ) : null}
+            {role === "installer" ? (
+              <Link className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" href="/installer/history">
+                My uploads
+              </Link>
+            ) : null}
           </div>
         </div>
       </header>
@@ -243,6 +263,7 @@ export default function SubmitPage() {
         <div className="mb-5">
           <h1 className="whitespace-normal break-words text-2xl font-bold leading-snug tracking-normal sm:text-3xl">Upload installed board photo</h1>
           <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">Take a clear picture. Your phone adds the location and time automatically.</p>
+          {queuedCount > 0 ? <p className="mt-2 text-xs font-medium text-orange-700">{queuedCount} local draft queue item{queuedCount === 1 ? "" : "s"} waiting for future retry support.</p> : null}
         </div>
 
         <form className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-6" onSubmit={handleSubmit}>
@@ -360,7 +381,7 @@ export default function SubmitPage() {
 
             {result === "error" ? <div className="whitespace-normal break-words rounded-lg bg-rose-50 p-3 text-sm leading-snug text-rose-700">{error}</div> : null}
 
-            <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60" type="submit" disabled={!canSubmit}>
+            <button className="sticky bottom-3 z-10 inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-lg transition hover:bg-slate-800 disabled:opacity-60 sm:static sm:min-h-11 sm:shadow-none" type="submit" disabled={!canSubmit}>
               {isSubmitting ? <Loader2 className="animate-spin" aria-hidden size={18} /> : <Upload aria-hidden size={18} />}
               {isSubmitting ? "Submitting..." : "Submit report"}
             </button>

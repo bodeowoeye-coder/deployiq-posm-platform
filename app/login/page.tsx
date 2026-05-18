@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { BrandMark } from "@/components/BrandMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
@@ -12,6 +12,15 @@ export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const { showToast } = useToast();
+
+  useEffect(() => {
+    fetch("/api/auth/session", { cache: "no-store", credentials: "include" })
+      .then(async (response) => (response.ok ? response.json() : null))
+      .then((session) => {
+        if (session?.authenticated && session.redirectTo) window.location.assign(session.redirectTo);
+      })
+      .catch(() => null);
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -97,7 +106,7 @@ export default function LoginPage() {
         </div>
         <div className="p-6">
         <h1 className="text-2xl font-bold">Sign in</h1>
-        <p className="mt-2 text-sm text-slate-600">Access your deployment dashboard.</p>
+        <p className="mt-2 text-sm text-slate-600">Access your DeployIQ workspace.</p>
 
         <form className="mt-6 grid gap-4" onSubmit={handleSubmit}>
           <label className="grid gap-1 text-sm font-semibold">

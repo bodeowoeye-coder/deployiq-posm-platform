@@ -20,6 +20,11 @@ function cleanString(value: FormDataEntryValue | null) {
 
 export async function POST(request: Request) {
   try {
+    const context = await getCurrentUserContext();
+    if (!context || !["admin", "installer"].includes(context.role.role)) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const image = formData.get("image");
 
@@ -136,6 +141,7 @@ export async function POST(request: Request) {
       .from("submissions")
       .insert({
         installer_name: installerName || null,
+        installer_user_id: context.user.id,
         project_id: matchingProject?.id ?? null,
         project_name: projectName,
         client_id: matchingBrand?.client_id ?? null,
