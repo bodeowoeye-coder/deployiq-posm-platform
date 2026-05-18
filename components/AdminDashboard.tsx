@@ -365,7 +365,16 @@ export function AdminDashboard({
               <input className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" type="date" value={filters.endDate} onChange={(event) => setFilter("endDate", event.target.value)} />
             </FilterField>
             <FilterField label="Region/state">
-              <StateCombobox value={filters.region} onChange={(value) => setFilter("region", value)} required={false} placeholder="All states" inputClassName="min-h-10" />
+              <StateCombobox
+                value={filters.region}
+                onChange={(value) => setFilter("region", value)}
+                required={false}
+                placeholder="All states"
+                inputClassName="min-h-10"
+                autoComplete="off-state-filter"
+                inputName="deployiq-state-filter"
+                inputId="deployiq-admin-state-filter"
+              />
             </FilterField>
             <FilterField label="Installer">
               <input className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.installer} onChange={(event) => setFilter("installer", event.target.value)} placeholder="Name" />

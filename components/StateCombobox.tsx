@@ -8,13 +8,19 @@ export function StateCombobox({
   onChange,
   required = true,
   placeholder = "Search state",
-  inputClassName = "min-h-11"
+  inputClassName = "min-h-11",
+  autoComplete = "new-password",
+  inputName = "deployiq-state-selector",
+  inputId
 }: {
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
   placeholder?: string;
   inputClassName?: string;
+  autoComplete?: string;
+  inputName?: string;
+  inputId?: string;
 }) {
   const [query, setQuery] = useState(value);
   const [open, setOpen] = useState(false);
@@ -40,12 +46,14 @@ export function StateCombobox({
           setOpen(true);
         }}
         placeholder={placeholder}
-        autoComplete="off"
-        name="deployiq-state-selector"
+        autoComplete={autoComplete}
+        name={inputName}
+        id={inputId}
+        aria-autocomplete="list"
         required={required}
       />
       {open ? (
-        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+        <div className="absolute z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
           {options.length === 0 ? <div className="px-3 py-2 text-sm text-slate-500">No state found</div> : null}
           {options.map((state) => (
             <button
