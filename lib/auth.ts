@@ -88,7 +88,14 @@ export async function requireRole(allowedRoles: UserRole[]) {
   const context = await getCurrentUserContext();
 
   if (!context) {
-    redirect("/login");
+    const requestedPath = allowedRoles.includes("admin")
+      ? "/admin"
+      : allowedRoles.includes("client")
+        ? "/client"
+        : allowedRoles.includes("installer")
+          ? "/submit"
+          : "/portal";
+    redirect(`/login?returnTo=${encodeURIComponent(requestedPath)}`);
   }
 
   if (!allowedRoles.includes(context.role.role)) {
@@ -96,4 +103,17 @@ export async function requireRole(allowedRoles: UserRole[]) {
   }
 
   return context;
+}
+
+export function defaultRouteForRole(role: UserRole) {
+  return role === "admin" ? "/admin" : role === "client" ? "/client" : "/submit";
+}
+
+export function isAllowedReturnTo(role: UserRole, returnTo: string | null | undefined) {
+  if (!returnTo || !returnTo.startsWith("/") || returnTo.startsWith("//")) return false;
+  if (returnTo === "/admin") return role === "admin";
+  if (returnTo === "/client") return role === "client";
+  if (returnTo === "/submit") return role === "installer" || role === "admin";
+  if (returnTo === "/installer/history") return role === "installer";
+  return false;
 }

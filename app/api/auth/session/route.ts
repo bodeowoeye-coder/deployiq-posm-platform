@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentAccessToken, getCurrentUserContext } from "@/lib/auth";
+import { defaultRouteForRole, getCurrentAccessToken, getCurrentUserContext, isAllowedReturnTo } from "@/lib/auth";
 import { createUserSupabase } from "@/lib/supabaseUser";
 import { inspectSupabaseEnvironment } from "@/lib/supabaseEnv";
 
@@ -62,7 +62,7 @@ export async function DELETE() {
   return response;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const accessToken = await getCurrentAccessToken();
   const context = await getCurrentUserContext();
 
@@ -80,10 +80,15 @@ export async function GET() {
     );
   }
 
+  const requestedReturnTo = new URL(request.url).searchParams.get("returnTo");
+  const redirectTo = isAllowedReturnTo(context.role.role, requestedReturnTo)
+    ? requestedReturnTo
+    : defaultRouteForRole(context.role.role);
+
   return NextResponse.json({
     ok: true,
     authenticated: true,
     role: context.role.role,
-    redirectTo: context.role.role === "admin" ? "/admin" : context.role.role === "client" ? "/client" : "/submit"
+    redirectTo
   });
 }

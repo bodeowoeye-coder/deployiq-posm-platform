@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentUserContext } from "@/lib/auth";
+import { defaultRouteForRole, getCurrentUserContext } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,5 +10,5 @@ export default async function PortalPage() {
     redirect("/login");
   }
 
-  redirect(context.role.role === "admin" ? "/admin" : context.role.role === "client" ? "/client" : "/submit");
+  redirect(defaultRouteForRole(context.role.role));
 }

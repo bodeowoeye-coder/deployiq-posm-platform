@@ -12,15 +12,19 @@ export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const { showToast } = useToast();
+  const returnTo =
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("returnTo");
 
   useEffect(() => {
-    fetch("/api/auth/session", { cache: "no-store", credentials: "include" })
+    fetch(`/api/auth/session${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`, { cache: "no-store", credentials: "include" })
       .then(async (response) => (response.ok ? response.json() : null))
       .then((session) => {
         if (session?.authenticated && session.redirectTo) window.location.assign(session.redirectTo);
       })
       .catch(() => null);
-  }, []);
+  }, [returnTo]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,7 +64,7 @@ export default function LoginPage() {
         throw new Error("Could not create app session.");
       }
 
-      const verificationResponse = await fetch("/api/auth/session", {
+      const verificationResponse = await fetch(`/api/auth/session${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`, {
         cache: "no-store",
         credentials: "include"
       });
