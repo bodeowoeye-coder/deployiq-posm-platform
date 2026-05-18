@@ -1,14 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NIGERIA_STATES } from "@/lib/geography";
 
 export function StateCombobox({
   value,
-  onChange
+  onChange,
+  required = true,
+  placeholder = "Search state",
+  inputClassName = "min-h-11"
 }: {
   value: string;
   onChange: (value: string) => void;
+  required?: boolean;
+  placeholder?: string;
+  inputClassName?: string;
 }) {
   const [query, setQuery] = useState(value);
   const [open, setOpen] = useState(false);
@@ -17,20 +23,26 @@ export function StateCombobox({
     [query]
   );
 
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
   return (
     <div className="relative min-w-0">
       <input
-        className="min-h-11 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+        className={`${inputClassName} w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100`}
         value={query}
         onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
         onChange={(event) => {
           setQuery(event.target.value);
           onChange("");
           setOpen(true);
         }}
-        placeholder="Search state"
+        placeholder={placeholder}
         autoComplete="off"
-        required
+        name="deployiq-state-selector"
+        required={required}
       />
       {open ? (
         <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg">

@@ -20,11 +20,12 @@ import { BrandMark } from "@/components/BrandMark";
 import { EmptyState } from "@/components/EmptyState";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
-import { NIGERIA_REGIONS, NIGERIA_STATES } from "@/lib/geography";
+import { NIGERIA_REGIONS } from "@/lib/geography";
 import { DEFAULT_PROJECT_NAME, displayProjectName } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { SignOutButton } from "@/components/SignOutButton";
 import { getPortfolioOperations, getProjectOperations, getStageTotals } from "@/lib/operations";
+import { StateCombobox } from "@/components/StateCombobox";
 
 type Filters = {
   query: string;
@@ -232,12 +233,7 @@ export function ClientDashboard({
               <input className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" type="date" value={filters.endDate} onChange={(event) => setFilter("endDate", event.target.value)} />
             </FilterField>
             <FilterField label="State">
-              <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.state} onChange={(event) => setFilter("state", event.target.value)}>
-                <option value="">All states</option>
-                {NIGERIA_STATES.map((state) => (
-                  <option key={state} value={state}>{state}</option>
-                ))}
-              </select>
+              <StateCombobox value={filters.state} onChange={(value) => setFilter("state", value)} required={false} placeholder="All states" inputClassName="min-h-10" />
             </FilterField>
             <FilterField label="Region">
               <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.region} onChange={(event) => setFilter("region", event.target.value)}>

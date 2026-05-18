@@ -27,6 +27,7 @@ import { useToast } from "@/components/ToastProvider";
 import { displayProjectName } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, getStageTotals } from "@/lib/operations";
+import { StateCombobox } from "@/components/StateCombobox";
 
 type Filters = {
   query: string;
@@ -364,7 +365,7 @@ export function AdminDashboard({
               <input className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" type="date" value={filters.endDate} onChange={(event) => setFilter("endDate", event.target.value)} />
             </FilterField>
             <FilterField label="Region/state">
-              <input className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.region} onChange={(event) => setFilter("region", event.target.value)} placeholder="Lagos" />
+              <StateCombobox value={filters.region} onChange={(value) => setFilter("region", value)} required={false} placeholder="All states" inputClassName="min-h-10" />
             </FilterField>
             <FilterField label="Installer">
               <input className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.installer} onChange={(event) => setFilter("installer", event.target.value)} placeholder="Name" />
