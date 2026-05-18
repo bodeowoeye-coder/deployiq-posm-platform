@@ -5,22 +5,47 @@ import { createUserSupabase } from "@/lib/supabaseUser";
 import type { Client, RoleRecord, UserRole } from "@/lib/types";
 
 export async function getCurrentAccessToken() {
-  return cookies().get("sb-access-token")?.value ?? null;
+  const cookieStore = cookies();
+  return cookieStore.get("sb-access-token")?.value ?? cookieStore.get("deployiq-access-token")?.value ?? null;
+}
+
+export async function getCurrentRefreshToken() {
+  const cookieStore = cookies();
+  return cookieStore.get("sb-refresh-token")?.value ?? cookieStore.get("deployiq-refresh-token")?.value ?? null;
+}
+
+export function inspectAuthCookiePresence() {
+  const cookieStore = cookies();
+  return {
+    sbAccessToken: Boolean(cookieStore.get("sb-access-token")?.value),
+    sbRefreshToken: Boolean(cookieStore.get("sb-refresh-token")?.value),
+    deployiqAccessToken: Boolean(cookieStore.get("deployiq-access-token")?.value),
+    deployiqRefreshToken: Boolean(cookieStore.get("deployiq-refresh-token")?.value)
+  };
 }
 
 export async function getCurrentUserContext() {
   try {
     const accessToken = await getCurrentAccessToken();
-    if (!accessToken) return null;
+    if (!accessToken) {
+      console.info("[auth-context] missing access token", inspectAuthCookiePresence());
+      return null;
+    }
 
     const userClient = createUserSupabase(accessToken);
     const { data, error } = await userClient.auth.getUser();
     if (error || !data.user) {
       console.error("[auth-context] auth.getUser failed", {
-        message: error?.message ?? "No user returned"
+        message: error?.message ?? "No user returned",
+        cookies: inspectAuthCookiePresence()
       });
       return null;
     }
+
+    console.info("[auth-context] token verified", {
+      userId: data.user.id,
+      email: data.user.email ?? null
+    });
 
     const { data: userRole, error: userRoleError } = await userClient
       .from("user_roles")

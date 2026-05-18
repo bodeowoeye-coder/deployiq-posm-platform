@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
-import { defaultRouteForRole, getCurrentAccessToken, getCurrentUserContext, isAllowedReturnTo } from "@/lib/auth";
+import { defaultRouteForRole, getCurrentAccessToken, getCurrentUserContext, inspectAuthCookiePresence, isAllowedReturnTo } from "@/lib/auth";
 import { createUserSupabase } from "@/lib/supabaseUser";
 import { inspectSupabaseEnvironment } from "@/lib/supabaseEnv";
 
 export const dynamic = "force-dynamic";
+
+function setAuthCookie(response: NextResponse, name: string, value: string, maxAge: number) {
+  response.cookies.set(name, value, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge
+  });
+}
 
 export async function POST(request: Request) {
   try {
@@ -31,19 +41,14 @@ export async function POST(request: Request) {
 
     const response = NextResponse.json({ ok: true });
     response.headers.set("Cache-Control", "private, no-store");
-    response.cookies.set("sb-access-token", accessToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60
-    });
-    response.cookies.set("sb-refresh-token", refreshToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 90
+    setAuthCookie(response, "sb-access-token", accessToken, 60 * 60);
+    setAuthCookie(response, "sb-refresh-token", refreshToken, 60 * 60 * 24 * 90);
+    setAuthCookie(response, "deployiq-access-token", accessToken, 60 * 60);
+    setAuthCookie(response, "deployiq-refresh-token", refreshToken, 60 * 60 * 24 * 90);
+    console.info("[auth-session] cookies written", {
+      userId: data.user.id,
+      email: data.user.email ?? null,
+      cookieNames: ["sb-access-token", "sb-refresh-token", "deployiq-access-token", "deployiq-refresh-token"]
     });
     return response;
   } catch (error) {
@@ -59,16 +64,20 @@ export async function DELETE() {
   const response = NextResponse.json({ ok: true });
   response.cookies.delete("sb-access-token");
   response.cookies.delete("sb-refresh-token");
+  response.cookies.delete("deployiq-access-token");
+  response.cookies.delete("deployiq-refresh-token");
   return response;
 }
 
 export async function GET(request: Request) {
   const accessToken = await getCurrentAccessToken();
+  console.info("[auth-session] cookie presence", inspectAuthCookiePresence());
   const context = await getCurrentUserContext();
 
   if (!context) {
     console.error("[auth-session] verification failed", {
       hasAccessCookie: Boolean(accessToken),
+      cookiePresence: inspectAuthCookiePresence(),
       failureStage: "getCurrentUserContext"
     });
     return NextResponse.json(
