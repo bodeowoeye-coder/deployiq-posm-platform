@@ -26,6 +26,7 @@ create table if not exists public.projects (
   status text not null default 'Planning' check (status in ('Planning', 'Active', 'On Hold', 'Completed')),
   regions_covered text[] not null default '{}',
   assigned_installers text[] not null default '{}',
+  archived_at timestamptz,
   created_at timestamptz not null default now(),
   unique (client_id, project_name)
 );
@@ -72,6 +73,24 @@ create table if not exists public.installer_performance (
   mismatch_submissions integer not null default 0,
   average_turnaround_hours numeric not null default 0,
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.agencies (
+  id uuid primary key default gen_random_uuid(),
+  agency_name text not null unique,
+  assigned_regions text[] not null default '{}',
+  status text not null default 'Active' check (status in ('Active', 'Inactive')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.installers (
+  id uuid primary key default gen_random_uuid(),
+  installer_name text not null unique,
+  agency_id uuid references public.agencies(id) on delete set null,
+  assigned_regions text[] not null default '{}',
+  assigned_project_ids uuid[] not null default '{}',
+  status text not null default 'Active' check (status in ('Active', 'Inactive')),
+  created_at timestamptz not null default now()
 );
 
 create table if not exists public.client_projects (
@@ -214,6 +233,7 @@ alter table public.submissions add column if not exists address text;
 alter table public.submissions add column if not exists phone text;
 alter table public.submissions add column if not exists state_region text;
 alter table public.submissions add column if not exists status text not null default 'Pending';
+alter table public.projects add column if not exists archived_at timestamptz;
 
 update public.submissions
 set status = case
@@ -304,6 +324,7 @@ create index if not exists projects_client_id_idx on public.projects (client_id)
 create index if not exists projects_brand_id_idx on public.projects (brand_id);
 create index if not exists project_targets_project_id_idx on public.project_targets (project_id);
 create index if not exists deployment_progress_project_id_idx on public.deployment_progress (project_id);
+create index if not exists installers_agency_id_idx on public.installers (agency_id);
 create index if not exists submission_status_history_submission_id_idx on public.submission_status_history (submission_id, created_at desc);
 create index if not exists alert_events_submission_id_idx on public.alert_events (submission_id, created_at desc);
 
@@ -315,6 +336,8 @@ alter table public.project_targets enable row level security;
 alter table public.deployment_stages enable row level security;
 alter table public.deployment_progress enable row level security;
 alter table public.installer_performance enable row level security;
+alter table public.agencies enable row level security;
+alter table public.installers enable row level security;
 alter table public.client_projects enable row level security;
 alter table public.user_roles enable row level security;
 alter table public.submission_status_history enable row level security;

@@ -1,12 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { Download, FileText, Inbox, Loader2, Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { BRANDS, STATUSES } from "@/lib/brands";
-import type { Brand, Client, DeploymentProgress, Project, ProjectTarget, Submission, SubmissionStatus, SubmissionStatusHistory } from "@/lib/types";
+import type { Agency, Brand, Client, DeploymentProgress, Installer, Project, ProjectTarget, Submission, SubmissionStatus, SubmissionStatusHistory } from "@/lib/types";
 import {
   getBrandComplianceScores,
   getBrandCounts,
@@ -26,7 +25,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { displayProjectName } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
-import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, getStageTotals } from "@/lib/operations";
+import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, getStageTotals, getTargetAllocationRows } from "@/lib/operations";
 import { StateCombobox } from "@/components/StateCombobox";
 
 type Filters = {
@@ -87,6 +86,50 @@ function duplicateClass(status: string | null) {
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
+function adminViewTitle(view: DashboardView) {
+  const titles: Partial<Record<DashboardView, string>> = {
+    dashboard: "Dashboard",
+    deployments: "Deployments",
+    analytics: "Analytics",
+    reports: "Reports",
+    alerts: "Alerts",
+    clients: "Clients",
+    installers: "Installers",
+    profile: "Profile",
+    "create-project": "Create Project",
+    campaigns: "Campaign Management",
+    "installer-portal": "Installer Portal",
+    "user-management": "User Management",
+    agencies: "Agencies",
+    regions: "Regions & Territories",
+    preferences: "System Preferences",
+    "audit-logs": "Audit Logs"
+  };
+  return titles[view] ?? "Dashboard";
+}
+
+function adminViewDescription(view: DashboardView) {
+  const descriptions: Partial<Record<DashboardView, string>> = {
+    dashboard: "Executive intelligence across deployments, approvals, and portfolio health.",
+    deployments: "Operational field records, deployment evidence, maps, and submission controls.",
+    analytics: "Performance trends, compliance rankings, and deployment intelligence.",
+    reports: "Filtered export actions and client-ready reporting outputs.",
+    alerts: "Exception monitoring for low completion, overdue work, and project risk.",
+    clients: "Client portfolio management and account visibility.",
+    installers: "Installer performance, accuracy, and operational oversight.",
+    profile: "Admin account settings.",
+    "create-project": "Project configuration and campaign setup.",
+    campaigns: "Campaign planning and lifecycle management.",
+    "installer-portal": "Operational utility access for the installer submission workflow.",
+    "user-management": "User provisioning and access controls.",
+    agencies: "Agency directory and assignment configuration.",
+    regions: "Territory planning and regional configuration.",
+    preferences: "System-wide operational preferences.",
+    "audit-logs": "Governance, review, and system activity trails."
+  };
+  return descriptions[view] ?? "Executive intelligence across deployments.";
+}
+
 function formatStage(stage: string | null) {
   if (!stage) return "Installed";
   return stage
@@ -103,7 +146,9 @@ export function AdminDashboard({
   deploymentProgress
   ,
   clients,
-  brands
+  brands,
+  agencies,
+  installers
 }: {
   submissions: Submission[];
   history: SubmissionStatusHistory[];
@@ -112,15 +157,18 @@ export function AdminDashboard({
   deploymentProgress: DeploymentProgress[];
   clients: Client[];
   brands: Brand[];
+  agencies: Agency[];
+  installers: Installer[];
 }) {
   const [records, setRecords] = useState(submissions);
   const [projectRecords, setProjectRecords] = useState(projects);
+  const [targetRecords, setTargetRecords] = useState(projectTargets);
   const [filters, setFilters] = useState<Filters>(blankFilters);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [exportError, setExportError] = useState("");
   const [exporting, setExporting] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
-  const [activeView, setActiveView] = useState<DashboardView>("overview");
+  const [activeView, setActiveView] = useState<DashboardView>("dashboard");
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -189,10 +237,11 @@ export function AdminDashboard({
   const brandCompliance = getBrandComplianceScores(filtered);
   const projectOptions = Array.from(new Set(records.map((item) => displayProjectName(item.project_name)))).sort();
   const campaignOptions = Array.from(new Set(projectRecords.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
-  const projectOperations = getProjectOperations(projectRecords, projectTargets, filtered, deploymentProgress);
+  const projectOperations = getProjectOperations(projectRecords, targetRecords, filtered, deploymentProgress);
   const portfolio = getPortfolioOperations(projectOperations);
   const stageTotals = getStageTotals(projectOperations);
   const operationalAlerts = getOperationalAlerts(projectOperations);
+  const allocationRows = getTargetAllocationRows(targetRecords, filtered, projectRecords);
 
   function setFilter(key: keyof Filters, value: string) {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -296,6 +345,59 @@ export function AdminDashboard({
     showToast("Project created.");
   }
 
+  async function updateProject(formData: FormData) {
+    const response = await fetch("/api/projects", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: formData.get("projectId"),
+        campaignName: formData.get("campaignName"),
+        targetQuantity: Number(formData.get("targetQuantity") || 0),
+        status: formData.get("status"),
+        startDate: formData.get("startDate"),
+        endDate: formData.get("endDate"),
+        regionsCovered: String(formData.get("regionsCovered") || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        assignedInstallers: String(formData.get("assignedInstallers") || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        archived: formData.get("archived") === "true"
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      showToast(body.error || "Could not update project.", "error");
+      return;
+    }
+    setProjectRecords((current) => current.map((project) => (project.id === body.project.id ? body.project : project)));
+    showToast("Project updated.");
+  }
+
+  async function createTarget(formData: FormData) {
+    const response = await fetch("/api/project-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: formData.get("projectId"),
+        state: formData.get("state"),
+        region: formData.get("region"),
+        installerName: formData.get("installerName"),
+        agencyName: formData.get("agencyName"),
+        targetQuantity: Number(formData.get("targetQuantity") || 0)
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      showToast(body.error || "Could not create target allocation.", "error");
+      return;
+    }
+    setTargetRecords((current) => [body.target, ...current]);
+    showToast("Target allocation added.");
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
@@ -303,9 +405,6 @@ export function AdminDashboard({
           <BrandMark />
           <div className="flex min-w-0 flex-wrap gap-2">
             <ThemeToggle />
-            <Link className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" href="/submit">
-              Upload
-            </Link>
           </div>
         </div>
       </header>
@@ -314,26 +413,26 @@ export function AdminDashboard({
         <DashboardSidebar audience="admin" activeView={activeView} onSelectView={setActiveView} />
       <section className="min-w-0 flex-1">
         <div className="mb-5">
-          <h1 className="whitespace-normal break-words text-2xl font-bold leading-snug tracking-normal sm:text-3xl">Installation Reports</h1>
-          <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">Filter live deployment data and export client-ready Excel or PDF reports.</p>
+          <h1 className="whitespace-normal break-words text-2xl font-bold leading-snug tracking-normal sm:text-3xl">{adminViewTitle(activeView)}</h1>
+          <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">{adminViewDescription(activeView)}</p>
           <p className="mt-2 text-xs font-medium text-slate-500">Last updated: {lastUpdated || "Loading..."}</p>
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4`}>
           <SummaryCard label="Expected deployments" value={portfolio.expected} />
           <SummaryCard label="Actual deployments" value={portfolio.actual} />
           <SummaryCard label="Completion" value={portfolio.completion} suffix="%" />
           <SummaryCard label="Outstanding" value={portfolio.outstanding} />
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4`}>
           <SummaryCard label="Deployment efficiency" value={portfolio.deploymentEfficiency} suffix="%" />
           <SummaryCard label="Installer performance" value={portfolio.installerPerformance} suffix="%" />
           <SummaryCard label="Average approval time" value={portfolio.averageApprovalHours} suffix="h" />
           <SummaryCard label="SLA compliance" value={portfolio.slaCompliance} suffix="%" />
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-6`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-6`}>
           <SummaryCard label="Total installs" value={filtered.length} />
           <SummaryCard label="Today" value={todayCount} />
           <SummaryCard label="Brands" value={brandCounts.length} />
@@ -342,7 +441,7 @@ export function AdminDashboard({
           <SummaryCard label="Rejected" value={rejectedCount} />
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-5`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-5`}>
           <SummaryCard label="Success rate" value={metrics.successRate} suffix="%" />
           <SummaryCard label="Mismatch rate" value={metrics.mismatchRate} suffix="%" />
           <SummaryCard label="Duplicate rate" value={metrics.duplicateRate} suffix="%" />
@@ -350,7 +449,7 @@ export function AdminDashboard({
           <SummaryCard label="Avg. turnaround" value={metrics.approvalTurnaroundHours} suffix="h" />
         </div>
 
-        <div className={`${activeView === "overview" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
+        <div className={`${activeView === "dashboard" || activeView === "reports" || activeView === "deployments" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
           <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-8">
             <FilterField label="Search">
               <div className="relative">
@@ -429,22 +528,22 @@ export function AdminDashboard({
           {exportError ? <p className="mt-3 whitespace-normal break-words text-sm leading-snug text-rose-700">{exportError}</p> : null}
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
           <ChartPanel title="Installations by region" data={regionCounts} xKey="region" />
           <ChartPanel title="Installations by brand" data={brandCounts} xKey="brand" color="#7c3aed" />
           <ChartPanel title="Daily uploads" data={dailyCounts} xKey="date" color="#2563eb" />
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]`}>
           <ProjectPortfolioPanel rows={projectOperations} />
           <FunnelPanel rows={stageTotals} />
         </div>
 
-        <div className={`${activeView === "overview" ? "block" : "hidden"} mt-5 min-w-0`}>
+        <div className={`${activeView === "dashboard" || activeView === "alerts" ? "block" : "hidden"} mt-5 min-w-0`}>
           <AlertPanel rows={operationalAlerts} />
         </div>
 
-        <div className={`${activeView === "overview" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
+        <div className={`${activeView === "dashboard" || activeView === "analytics" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
           <h2 className="mb-3 whitespace-normal break-words text-base font-bold leading-snug">Executive trends</h2>
           <div className="min-w-0 overflow-hidden">
           <ResponsiveContainer width="100%" height={260}>
@@ -462,7 +561,7 @@ export function AdminDashboard({
           </div>
         </div>
 
-        {activeView === "map" ? (
+        {activeView === "deployments" ? (
           <div className="grid min-w-0 gap-4">
             <DeploymentMap submissions={filtered} variant="hero" />
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
@@ -472,18 +571,18 @@ export function AdminDashboard({
           </div>
         ) : null}
 
-        <div className={`${activeView === "reports" ? "grid" : "hidden"} min-w-0 gap-4 lg:grid-cols-2`}>
+        <div className={`${activeView === "deployments" || activeView === "installers" ? "grid" : "hidden"} min-w-0 gap-4 lg:grid-cols-2`}>
           <BreakdownPanel title="Brand summary" rows={brandCounts.map((item) => [item.brand, item.count])} />
           <BreakdownPanel title="Installer performance" rows={installerCounts.slice(0, 8).map((item) => [item.installer, item.count])} />
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
+        <div className={`${activeView === "dashboard" || activeView === "analytics" || activeView === "installers" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
           <ScorePanel title="Installer accuracy ranking" rows={installerAccuracy.map((item) => [item.installer, item.score, item.total])} />
           <ScorePanel title="Region performance ranking" rows={regionPerformance.map((item) => [item.region, item.score, item.total])} />
           <ScorePanel title="Brand compliance score" rows={brandCompliance.map((item) => [item.brand, item.score, item.total])} />
         </div>
 
-        <div className={`${activeView === "reports" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white`}>
+        <div className={`${activeView === "deployments" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white`}>
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
             <h2 className="min-w-0 break-words text-base font-bold leading-snug">Submissions</h2>
             <span className="text-sm text-slate-500">{filtered.length} shown</span>
@@ -628,11 +727,34 @@ export function AdminDashboard({
             ))}
           </div>
         </div>
-        <div className={`${activeView === "profile" ? "block" : "hidden"} min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
-          <h2 className="text-base font-bold leading-snug">Settings/Profile</h2>
-          <p className="mt-2 text-sm leading-snug text-slate-600">Admin operational workspace for POSM deployment oversight.</p>
-          <ProjectManager clients={clients} brands={brands} onCreate={createProject} />
-        </div>
+        {activeView === "profile" ? <AdminPlaceholder title="Profile" message="Admin account profile and identity settings." /> : null}
+        {activeView === "create-project" ? (
+          <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+            <h2 className="text-base font-bold leading-snug">Create Project</h2>
+            <p className="mt-2 text-sm leading-snug text-slate-600">Configure new deployment initiatives, targets, territories, and assigned teams.</p>
+            <ProjectManager clients={clients} brands={brands} onCreate={createProject} />
+          </div>
+        ) : null}
+        {activeView === "campaigns" ? (
+          <div className="grid min-w-0 gap-4">
+            <ProjectCrudPanel projects={projectRecords} onUpdate={updateProject} />
+            <TargetAllocationPanel
+              projects={projectRecords}
+              rows={allocationRows}
+              installers={installers}
+              agencies={agencies}
+              onCreate={createTarget}
+            />
+          </div>
+        ) : null}
+        {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
+        {activeView === "clients" ? <AdminPlaceholder title="Clients" message="Multi-client portfolio controls and client onboarding workspace." /> : null}
+        {activeView === "user-management" ? <AdminPlaceholder title="User Management" message="Future user provisioning and role administration." /> : null}
+        {activeView === "installers" ? <InstallerManagementPanel installers={installers} submissions={records} projects={projectRecords} agencies={agencies} /> : null}
+        {activeView === "agencies" ? <AgencyManagementPanel agencies={agencies} installers={installers} /> : null}
+        {activeView === "regions" ? <AdminPlaceholder title="Regions & Territories" message="Future territory rules and coverage configuration." /> : null}
+        {activeView === "preferences" ? <AdminPlaceholder title="System Preferences" message="Future operational defaults and platform preferences." /> : null}
+        {activeView === "audit-logs" ? <AdminPlaceholder title="Audit Logs" message="Future governance and system activity review." /> : null}
       </section>
       </div>
       <PhotoLightbox submissions={filtered} activeIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} onNavigate={setLightboxIndex} />
@@ -801,6 +923,32 @@ function AlertPanel({ rows }: { rows: Array<{ type: string; severity: "high" | "
   );
 }
 
+function AdminPlaceholder({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-base font-bold leading-snug">{title}</h2>
+      <p className="mt-2 text-sm leading-snug text-slate-600">{message}</p>
+    </div>
+  );
+}
+
+function InstallerPortalPanel() {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-base font-bold leading-snug">Installer Portal</h2>
+      <p className="mt-2 text-sm leading-snug text-slate-600">
+        Field execution is handled through the installer workflow. Use manual submission only for operational exceptions.
+      </p>
+      <a
+        href="/submit"
+        className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50"
+      >
+        Open manual submission
+      </a>
+    </div>
+  );
+}
+
 function ProjectManager({
   clients,
   brands,
@@ -853,5 +1001,227 @@ function ProjectManager({
         Create project
       </button>
     </form>
+  );
+}
+
+function ProjectCrudPanel({
+  projects,
+  onUpdate
+}: {
+  projects: Project[];
+  onUpdate: (formData: FormData) => Promise<void>;
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-base font-bold leading-snug">Project management</h2>
+      <p className="mt-2 text-sm leading-snug text-slate-600">Edit campaign details, targets, dates, assignments, and archive projects without deleting history.</p>
+      <div className="mt-4 grid gap-3">
+        {projects.length === 0 ? <div className="text-sm text-slate-500">No projects configured yet.</div> : null}
+        {projects.map((project) => (
+          <form
+            key={project.id}
+            className="grid min-w-0 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-2"
+            onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+              event.preventDefault();
+              await onUpdate(new FormData(event.currentTarget));
+            }}
+          >
+            <input type="hidden" name="projectId" value={project.id} />
+            <div className="md:col-span-2">
+              <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{project.project_name}</p>
+              <p className="mt-1 text-xs text-slate-500">{project.archived_at ? "Archived" : project.status}</p>
+            </div>
+            <input name="campaignName" defaultValue={project.campaign_name ?? ""} placeholder="Campaign name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <input name="targetQuantity" type="number" min="0" defaultValue={project.target_quantity} placeholder="Target quantity" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <input name="startDate" type="date" defaultValue={project.start_date ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <input name="endDate" type="date" defaultValue={project.end_date ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <select name="status" defaultValue={project.status} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+              <option>Planning</option>
+              <option>Active</option>
+              <option>On Hold</option>
+              <option>Completed</option>
+            </select>
+            <select name="archived" defaultValue={project.archived_at ? "true" : "false"} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+              <option value="false">Keep active</option>
+              <option value="true">Archive safely</option>
+            </select>
+            <input name="regionsCovered" defaultValue={project.regions_covered.join(", ")} placeholder="Regions covered" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <input name="assignedInstallers" defaultValue={project.assigned_installers.join(", ")} placeholder="Assigned installers/agencies" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            <button className="inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 md:col-span-2">
+              Save project changes
+            </button>
+          </form>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TargetAllocationPanel({
+  projects,
+  rows,
+  installers,
+  agencies,
+  onCreate
+}: {
+  projects: Project[];
+  rows: ReturnType<typeof getTargetAllocationRows>;
+  installers: Installer[];
+  agencies: Agency[];
+  onCreate: (formData: FormData) => Promise<void>;
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-base font-bold leading-snug">Project target allocation</h2>
+      <p className="mt-2 text-sm leading-snug text-slate-600">Allocate expected deployment volume by territory, installer, or agency and compare it against live submissions.</p>
+      <form
+        className="mt-4 grid min-w-0 gap-3 border-t border-slate-200 pt-4 md:grid-cols-3"
+        onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          await onCreate(new FormData(event.currentTarget));
+          event.currentTarget.reset();
+        }}
+      >
+        <select required name="projectId" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+          <option value="">Select project</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>{project.project_name}</option>
+          ))}
+        </select>
+        <input name="state" placeholder="State" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+        <input name="region" placeholder="Region" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+        <select name="installerName" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+          <option value="">Any installer</option>
+          {installers.map((installer) => (
+            <option key={installer.id} value={installer.installer_name}>{installer.installer_name}</option>
+          ))}
+        </select>
+        <select name="agencyName" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+          <option value="">Any agency</option>
+          {agencies.map((agency) => (
+            <option key={agency.id} value={agency.agency_name}>{agency.agency_name}</option>
+          ))}
+        </select>
+        <input required name="targetQuantity" type="number" min="0" placeholder="Expected quantity" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+        <button className="inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 md:col-span-3">
+          Add target allocation
+        </button>
+      </form>
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="min-w-[760px] w-full text-left text-sm">
+          <thead className="text-xs uppercase text-slate-500">
+            <tr>
+              <th className="px-3 py-2">Project</th>
+              <th className="px-3 py-2">Allocation</th>
+              <th className="px-3 py-2">Expected</th>
+              <th className="px-3 py-2">Actual</th>
+              <th className="px-3 py-2">Pending</th>
+              <th className="px-3 py-2">Completion</th>
+              <th className="px-3 py-2">Variance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td className="px-3 py-3 text-slate-500" colSpan={7}>No target allocations yet.</td>
+              </tr>
+            ) : null}
+            {rows.map((row) => (
+              <tr key={row.target.id} className="border-t border-slate-100">
+                <td className="px-3 py-3 font-medium">{row.project?.project_name ?? "Unknown project"}</td>
+                <td className="px-3 py-3 text-slate-600">
+                  {[row.target.state, row.target.region, row.target.installer_name, row.target.agency_name].filter(Boolean).join(" | ") || "Portfolio target"}
+                </td>
+                <td className="px-3 py-3">{row.expected}</td>
+                <td className="px-3 py-3">{row.actual}</td>
+                <td className="px-3 py-3">{row.pending}</td>
+                <td className="px-3 py-3">{row.completion}%</td>
+                <td className="px-3 py-3">{row.variance}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function InstallerManagementPanel({
+  installers,
+  submissions,
+  projects,
+  agencies
+}: {
+  installers: Installer[];
+  submissions: Submission[];
+  projects: Project[];
+  agencies: Agency[];
+}) {
+  return (
+    <div className="mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-base font-bold leading-snug">Installer directory</h2>
+      <p className="mt-2 text-sm leading-snug text-slate-600">Lightweight operational view of installer assignments, status, and submission performance.</p>
+      <div className="mt-4 grid gap-3">
+        {installers.length === 0 ? <div className="text-sm text-slate-500">No installers configured yet.</div> : null}
+        {installers.map((installer) => {
+          const installerSubmissions = submissions.filter((item) => item.installer_name === installer.installer_name);
+          const approved = installerSubmissions.filter((item) => item.status === "Approved").length;
+          const agency = agencies.find((item) => item.id === installer.agency_id);
+          const assignedProjects = projects.filter((project) => installer.assigned_project_ids.includes(project.id));
+          return (
+            <div key={installer.id} className="grid min-w-0 gap-3 rounded-lg bg-slate-50 p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="min-w-0">
+                <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{installer.installer_name}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {agency?.agency_name || "Independent"} | {installer.status}
+                </p>
+                <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  Regions: {installer.assigned_regions.join(", ") || "Unassigned"}
+                </p>
+                <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  Projects: {assignedProjects.map((project) => project.project_name).join(", ") || "Unassigned"}
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-right text-xs">
+                <MiniMetric label="Volume" value={installerSubmissions.length} />
+                <MiniMetric label="Approved" value={approved} />
+                <MiniMetric label="Success" value={`${installerSubmissions.length === 0 ? 0 : Math.round((approved / installerSubmissions.length) * 100)}%`} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AgencyManagementPanel({ agencies, installers }: { agencies: Agency[]; installers: Installer[] }) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-base font-bold leading-snug">Agency directory</h2>
+      <p className="mt-2 text-sm leading-snug text-slate-600">Partner agencies, territory assignments, and installer coverage foundation.</p>
+      <div className="mt-4 grid gap-3">
+        {agencies.length === 0 ? <div className="text-sm text-slate-500">No agencies configured yet.</div> : null}
+        {agencies.map((agency) => {
+          const assignedInstallers = installers.filter((installer) => installer.agency_id === agency.id);
+          return (
+            <div key={agency.id} className="grid min-w-0 gap-3 rounded-lg bg-slate-50 p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="min-w-0">
+                <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{agency.agency_name}</p>
+                <p className="mt-1 text-xs text-slate-500">{agency.status}</p>
+                <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  Regions: {agency.assigned_regions.join(", ") || "Unassigned"}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-right text-xs">
+                <MiniMetric label="Installers" value={assignedInstallers.length} />
+                <MiniMetric label="Coverage" value={agency.assigned_regions.length} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

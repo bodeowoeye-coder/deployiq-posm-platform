@@ -139,3 +139,28 @@ export function getOperationalAlerts(projectRows: ReturnType<typeof getProjectOp
     return alerts;
   });
 }
+
+export function getTargetAllocationRows(targets: ProjectTarget[], submissions: Submission[], projects: Project[]) {
+  return targets.map((target) => {
+    const project = projects.find((item) => item.id === target.project_id);
+    const actual = submissions.filter((submission) => {
+      const sameProject =
+        submission.project_id === target.project_id ||
+        Boolean(project && submission.project_name === project.project_name);
+      const sameState = !target.state || submission.installer_state === target.state;
+      const sameRegion = !target.region || submission.installer_region === target.region;
+      const sameInstaller = !target.installer_name || submission.installer_name === target.installer_name;
+      return sameProject && sameState && sameRegion && sameInstaller;
+    }).length;
+    const pending = Math.max(target.target_quantity - actual, 0);
+    return {
+      target,
+      project,
+      expected: target.target_quantity,
+      actual,
+      pending,
+      completion: percentage(actual, target.target_quantity),
+      variance: target.target_quantity === 0 ? 0 : Math.round(((actual - target.target_quantity) / target.target_quantity) * 100)
+    };
+  });
+}

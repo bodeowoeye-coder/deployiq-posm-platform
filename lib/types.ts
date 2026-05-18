@@ -86,6 +86,7 @@ export type Project = {
   status: ProjectStatus;
   regions_covered: string[];
   assigned_installers: string[];
+  archived_at: string | null;
   created_at: string;
   client?: Client | null;
   brand?: Brand | null;
@@ -119,6 +120,24 @@ export type DeploymentProgress = {
   quantity: number;
   updated_by: string | null;
   updated_at: string;
+};
+
+export type Agency = {
+  id: string;
+  agency_name: string;
+  assigned_regions: string[];
+  status: "Active" | "Inactive";
+  created_at: string;
+};
+
+export type Installer = {
+  id: string;
+  installer_name: string;
+  agency_id: string | null;
+  assigned_regions: string[];
+  assigned_project_ids: string[];
+  status: "Active" | "Inactive";
+  created_at: string;
 };
 
 export type RoleRecord = {

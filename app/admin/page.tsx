@@ -1,7 +1,7 @@
 import { AdminDashboard } from "@/components/AdminDashboard";
 import { requireRole } from "@/lib/auth";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
-import type { Brand, Client, DeploymentProgress, Project, ProjectTarget, Submission, SubmissionStatusHistory } from "@/lib/types";
+import type { Agency, Brand, Client, DeploymentProgress, Installer, Project, ProjectTarget, Submission, SubmissionStatusHistory } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -18,12 +18,22 @@ export default async function AdminPage() {
   }
 
   const submissionIds = (data ?? []).map((item) => item.id);
-  const [{ data: projects }, { data: projectTargets }, { data: deploymentProgress }, { data: clients }, { data: brands }] = await Promise.all([
+  const [
+    { data: projects },
+    { data: projectTargets },
+    { data: deploymentProgress },
+    { data: clients },
+    { data: brands },
+    { data: agencies },
+    { data: installers }
+  ] = await Promise.all([
     supabase.from("projects").select("*").order("created_at", { ascending: false }),
     supabase.from("project_targets").select("*"),
     supabase.from("deployment_progress").select("*"),
     supabase.from("clients").select("*").order("name", { ascending: true }),
-    supabase.from("brands").select("*").order("brand_name", { ascending: true })
+    supabase.from("brands").select("*").order("brand_name", { ascending: true }),
+    supabase.from("agencies").select("*").order("agency_name", { ascending: true }),
+    supabase.from("installers").select("*").order("installer_name", { ascending: true })
   ]);
   const { data: history } =
     submissionIds.length > 0
@@ -43,6 +53,8 @@ export default async function AdminPage() {
       deploymentProgress={(deploymentProgress ?? []) as DeploymentProgress[]}
       clients={(clients ?? []) as Client[]}
       brands={(brands ?? []) as Brand[]}
+      agencies={(agencies ?? []) as Agency[]}
+      installers={(installers ?? []) as Installer[]}
     />
   );
 }

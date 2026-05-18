@@ -100,3 +100,31 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ project });
 }
+
+export async function PATCH(request: Request) {
+  const context = await getCurrentUserContext();
+  if (!context || context.role.role !== "admin") return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+
+  const body = await request.json();
+  const id = stringValue(body.id);
+  if (!id) return NextResponse.json({ error: "Missing project id." }, { status: 400 });
+
+  const updates = {
+    campaign_name: stringValue(body.campaignName) || null,
+    target_quantity: Number(body.targetQuantity ?? 0),
+    start_date: stringValue(body.startDate) || null,
+    end_date: stringValue(body.endDate) || null,
+    status: stringValue(body.status) || "Planning",
+    regions_covered: stringArray(body.regionsCovered),
+    assigned_installers: stringArray(body.assignedInstallers),
+    archived_at: body.archived ? new Date().toISOString() : null
+  };
+  if (!Number.isFinite(updates.target_quantity) || updates.target_quantity < 0) {
+    return NextResponse.json({ error: "Target quantity must be valid." }, { status: 400 });
+  }
+
+  const supabase = createAdminSupabase();
+  const { data: project, error } = await supabase.from("projects").update(updates).eq("id", id).select().single();
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ project });
+}
