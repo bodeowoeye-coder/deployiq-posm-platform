@@ -85,6 +85,13 @@ export async function GET(request: Request) {
     ? requestedReturnTo
     : defaultRouteForRole(context.role.role);
 
+  console.info("[auth-session] redirect resolved", {
+    email: context.user.email ?? null,
+    role: context.role.role,
+    requestedReturnTo,
+    redirectTo
+  });
+
   return NextResponse.json({
     ok: true,
     authenticated: true,

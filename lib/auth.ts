@@ -61,6 +61,11 @@ export async function getCurrentUserContext() {
 
     if (!role) return null;
 
+    console.info("[auth-context] resolved user", {
+      email: data.user.email ?? null,
+      role: role.role
+    });
+
     let client: Client | null = null;
     if (role.client_id) {
       const { data: clientRow } = await userClient
@@ -106,7 +111,9 @@ export async function requireRole(allowedRoles: UserRole[]) {
 }
 
 export function defaultRouteForRole(role: UserRole) {
-  return role === "admin" ? "/admin" : role === "client" ? "/client" : "/submit";
+  if (role === "admin") return "/admin";
+  if (role === "client") return "/client";
+  return "/submit";
 }
 
 export function isAllowedReturnTo(role: UserRole, returnTo: string | null | undefined) {
