@@ -14,6 +14,72 @@ create table if not exists public.brands (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.projects (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  brand_id uuid references public.brands(id) on delete set null,
+  project_name text not null,
+  campaign_name text,
+  start_date date,
+  end_date date,
+  target_quantity integer not null default 0 check (target_quantity >= 0),
+  status text not null default 'Planning' check (status in ('Planning', 'Active', 'On Hold', 'Completed')),
+  regions_covered text[] not null default '{}',
+  assigned_installers text[] not null default '{}',
+  created_at timestamptz not null default now(),
+  unique (client_id, project_name)
+);
+
+create table if not exists public.project_targets (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  installer_name text,
+  agency_name text,
+  region text,
+  state text,
+  target_quantity integer not null default 0 check (target_quantity >= 0),
+  deployment_timeline_start date,
+  deployment_timeline_end date,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.deployment_stages (
+  id uuid primary key default gen_random_uuid(),
+  stage_code text not null unique check (stage_code in ('production', 'warehouse', 'in_transit', 'installed', 'approved')),
+  stage_name text not null,
+  sort_order integer not null unique,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.deployment_progress (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  stage_code text not null references public.deployment_stages(stage_code) on delete cascade,
+  quantity integer not null default 0 check (quantity >= 0),
+  updated_by uuid references auth.users(id) on delete set null,
+  updated_at timestamptz not null default now(),
+  unique (project_id, stage_code)
+);
+
+create table if not exists public.installer_performance (
+  installer_name text primary key,
+  total_submissions integer not null default 0,
+  approved_submissions integer not null default 0,
+  rejected_submissions integer not null default 0,
+  flagged_submissions integer not null default 0,
+  duplicate_submissions integer not null default 0,
+  mismatch_submissions integer not null default 0,
+  average_turnaround_hours numeric not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.client_projects (
+  client_id uuid not null references public.clients(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (client_id, project_id)
+);
+
 create table if not exists public.user_roles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   role text not null check (role in ('admin', 'client', 'installer')),
@@ -25,6 +91,7 @@ create table if not exists public.submissions (
   id uuid primary key default gen_random_uuid(),
   installer_name text,
   client_id uuid references public.clients(id) on delete set null,
+  project_id uuid references public.projects(id) on delete set null,
   project_name text,
   brand_name text,
   detected_brand_name text,
@@ -45,6 +112,12 @@ create table if not exists public.submissions (
   installer_state text,
   installer_region text,
   installer_lga text,
+  resolved_address text,
+  resolved_street text,
+  resolved_lga text,
+  resolved_city text,
+  resolved_state text,
+  deployment_stage_code text references public.deployment_stages(stage_code) on delete set null,
   state_region text,
   status text not null default 'Pending' check (status in ('Pending', 'Flagged', 'Approved', 'Rejected')),
   image_url text not null,
@@ -92,6 +165,7 @@ create table if not exists public.alert_events (
 
 alter table public.submissions add column if not exists installer_name text;
 alter table public.submissions add column if not exists client_id uuid references public.clients(id) on delete set null;
+alter table public.submissions add column if not exists project_id uuid references public.projects(id) on delete set null;
 alter table public.submissions add column if not exists project_name text;
 alter table public.submissions add column if not exists brand_name text;
 alter table public.submissions add column if not exists detected_brand_name text;
@@ -111,6 +185,12 @@ alter table public.submissions add column if not exists gps_longitude double pre
 alter table public.submissions add column if not exists installer_state text;
 alter table public.submissions add column if not exists installer_region text;
 alter table public.submissions add column if not exists installer_lga text;
+alter table public.submissions add column if not exists resolved_address text;
+alter table public.submissions add column if not exists resolved_street text;
+alter table public.submissions add column if not exists resolved_lga text;
+alter table public.submissions add column if not exists resolved_city text;
+alter table public.submissions add column if not exists resolved_state text;
+alter table public.submissions add column if not exists deployment_stage_code text references public.deployment_stages(stage_code) on delete set null;
 alter table public.submissions add column if not exists captured_at timestamptz;
 alter table public.submissions add column if not exists installation_date date;
 alter table public.submissions add column if not exists installation_time time;
@@ -146,7 +226,13 @@ alter table public.submissions drop constraint if exists submissions_status_chec
 alter table public.submissions add constraint submissions_status_check check (status in ('Pending', 'Flagged', 'Approved', 'Rejected'));
 
 insert into public.clients (name)
-values ('Godrej Nigeria Ltd')
+values
+  ('Godrej Nigeria Ltd'),
+  ('Monetium Nigeria Ltd'),
+  ('NNFEMS Industries Ltd'),
+  ('Evans Industries Ltd'),
+  ('Octoplus Marketing Agency Ltd'),
+  ('Trade Depot Ltd')
 on conflict (name) do nothing;
 
 insert into public.brands (client_id, brand_name)
@@ -164,6 +250,40 @@ from public.brands
 where submissions.client_id is null
   and submissions.brand_name = brands.brand_name;
 
+insert into public.deployment_stages (stage_code, stage_name, sort_order)
+values
+  ('production', 'Production', 1),
+  ('warehouse', 'Warehouse', 2),
+  ('in_transit', 'In Transit', 3),
+  ('installed', 'Installed', 4),
+  ('approved', 'Approved', 5)
+on conflict (stage_code) do nothing;
+
+insert into public.projects (client_id, brand_id, project_name, campaign_name, target_quantity, status, regions_covered, assigned_installers)
+select clients.id, null, 'Salon Dealer Board for Godrej', 'Salon Dealer Board', 0, 'Active', '{}', '{}'
+from public.clients
+where clients.name = 'Godrej Nigeria Ltd'
+on conflict (client_id, project_name) do nothing;
+
+insert into public.client_projects (client_id, project_id)
+select projects.client_id, projects.id
+from public.projects
+on conflict (client_id, project_id) do nothing;
+
+update public.submissions
+set project_id = projects.id
+from public.projects
+where submissions.project_id is null
+  and submissions.client_id = projects.client_id
+  and submissions.project_name = projects.project_name;
+
+update public.submissions
+set deployment_stage_code = case
+  when status = 'Approved' then 'approved'
+  else 'installed'
+end
+where deployment_stage_code is null;
+
 create index if not exists submissions_submitted_at_idx on public.submissions (submitted_at desc);
 create index if not exists submissions_state_region_idx on public.submissions (state_region);
 create index if not exists submissions_installer_state_idx on public.submissions (installer_state);
@@ -171,17 +291,28 @@ create index if not exists submissions_installer_region_idx on public.submission
 create index if not exists submissions_installer_name_idx on public.submissions (installer_name);
 create index if not exists submissions_brand_name_idx on public.submissions (brand_name);
 create index if not exists submissions_client_id_idx on public.submissions (client_id);
+create index if not exists submissions_project_id_idx on public.submissions (project_id);
 create index if not exists submissions_project_name_idx on public.submissions (project_name);
 create index if not exists submissions_status_idx on public.submissions (status);
 create index if not exists submissions_image_fingerprint_idx on public.submissions (image_fingerprint);
 create index if not exists submissions_duplicate_status_idx on public.submissions (duplicate_status);
 create index if not exists brands_client_id_idx on public.brands (client_id);
+create index if not exists projects_client_id_idx on public.projects (client_id);
+create index if not exists projects_brand_id_idx on public.projects (brand_id);
+create index if not exists project_targets_project_id_idx on public.project_targets (project_id);
+create index if not exists deployment_progress_project_id_idx on public.deployment_progress (project_id);
 create index if not exists submission_status_history_submission_id_idx on public.submission_status_history (submission_id, created_at desc);
 create index if not exists alert_events_submission_id_idx on public.alert_events (submission_id, created_at desc);
 
 alter table public.submissions enable row level security;
 alter table public.clients enable row level security;
 alter table public.brands enable row level security;
+alter table public.projects enable row level security;
+alter table public.project_targets enable row level security;
+alter table public.deployment_stages enable row level security;
+alter table public.deployment_progress enable row level security;
+alter table public.installer_performance enable row level security;
+alter table public.client_projects enable row level security;
 alter table public.user_roles enable row level security;
 alter table public.submission_status_history enable row level security;
 alter table public.alert_events enable row level security;
@@ -236,6 +367,59 @@ using (
     where user_roles.user_id = auth.uid()
       and user_roles.role = 'client'
       and user_roles.client_id = submissions.client_id
+  )
+);
+
+drop policy if exists "Clients can read linked projects" on public.projects;
+create policy "Clients can read linked projects"
+on public.projects
+for select
+using (
+  exists (
+    select 1
+    from public.client_projects
+    join public.user_roles on user_roles.client_id = client_projects.client_id
+    where client_projects.project_id = projects.id
+      and user_roles.user_id = auth.uid()
+      and user_roles.role = 'client'
+  )
+);
+
+drop policy if exists "Clients can read linked project targets" on public.project_targets;
+create policy "Clients can read linked project targets"
+on public.project_targets
+for select
+using (
+  exists (
+    select 1
+    from public.projects
+    join public.client_projects on client_projects.project_id = projects.id
+    join public.user_roles on user_roles.client_id = client_projects.client_id
+    where projects.id = project_targets.project_id
+      and user_roles.user_id = auth.uid()
+      and user_roles.role = 'client'
+  )
+);
+
+drop policy if exists "Clients can read deployment stages" on public.deployment_stages;
+create policy "Clients can read deployment stages"
+on public.deployment_stages
+for select
+using (auth.uid() is not null);
+
+drop policy if exists "Clients can read linked deployment progress" on public.deployment_progress;
+create policy "Clients can read linked deployment progress"
+on public.deployment_progress
+for select
+using (
+  exists (
+    select 1
+    from public.projects
+    join public.client_projects on client_projects.project_id = projects.id
+    join public.user_roles on user_roles.client_id = client_projects.client_id
+    where projects.id = deployment_progress.project_id
+      and user_roles.user_id = auth.uid()
+      and user_roles.role = 'client'
   )
 );
 

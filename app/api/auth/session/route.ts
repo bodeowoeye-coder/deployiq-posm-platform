@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { getCurrentAccessToken, getCurrentUserContext } from "@/lib/auth";
 import { createUserSupabase } from "@/lib/supabaseUser";
 import { inspectSupabaseEnvironment } from "@/lib/supabaseEnv";
@@ -64,24 +63,10 @@ export async function DELETE() {
 }
 
 export async function GET() {
-  console.info("[auth-session] GET entered");
-  const cookieStore = cookies();
-  console.info("[auth-session] cookie names seen", {
-    names: cookieStore.getAll().map((cookie) => cookie.name)
-  });
   const accessToken = await getCurrentAccessToken();
-  console.info("[auth-session] access cookie present", {
-    hasAccessCookie: Boolean(accessToken)
-  });
-  console.info("[auth-session] before getCurrentUserContext");
   const context = await getCurrentUserContext();
-  console.info("[auth-session] after getCurrentUserContext", {
-    hasContext: Boolean(context)
-  });
 
   if (!context) {
-    console.error("[auth-session] getCurrentUserContext returned null");
-    console.error("[auth-session] returning verification failed");
     console.error("[auth-session] verification failed", {
       hasAccessCookie: Boolean(accessToken),
       failureStage: "getCurrentUserContext"

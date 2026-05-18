@@ -113,6 +113,7 @@ export async function GET(request: Request) {
   const region = searchParams.get("region")?.trim();
   const installer = searchParams.get("installer")?.trim();
   const project = searchParams.get("project")?.trim();
+  const campaign = searchParams.get("campaign")?.trim();
   const brand = searchParams.get("brand")?.trim();
   const status = searchParams.get("status")?.trim();
   const startDate = searchParams.get("startDate")?.trim();
@@ -120,6 +121,10 @@ export async function GET(request: Request) {
   const search = searchParams.get("query")?.trim();
   const supabase = createAdminSupabase();
   let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
+  if (campaign) {
+    const { data: matchingProjects } = await supabase.from("projects").select("id").eq("campaign_name", campaign);
+    query = matchingProjects?.length ? query.in("project_id", matchingProjects.map((item) => item.id)) : query.eq("project_id", "00000000-0000-0000-0000-000000000000");
+  }
 
   if (region) query = query.or(`installer_region.ilike.%${region}%,installer_state.ilike.%${region}%,installer_lga.ilike.%${region}%,state_region.ilike.%${region}%`);
   if (installer) query = query.ilike("installer_name", `%${installer}%`);
@@ -215,6 +220,7 @@ export async function GET(request: Request) {
       `Status: ${item.status} | Match: ${item.brand_match_status || "Unreviewed"}`,
       `GPS: ${item.gps_latitude ?? "n/a"}, ${item.gps_longitude ?? "n/a"} | Date: ${item.installation_date || item.submitted_at.slice(0, 10)} ${item.installation_time || ""}`,
       `Address: ${item.address || "Address not visible"}`,
+      `Resolved GPS address: ${item.resolved_address || "Not resolved"}`,
       `Confidence: ${item.ai_confidence_level || "n/a"} (${item.ai_confidence_score ?? "n/a"}) | Duplicate: ${item.duplicate_status || "Unique"}`,
       `OCR: ${item.ocr_text || item.ai_raw_text || "No text extracted"}`,
       `AI review: ${item.ai_review_note || "No AI review note"}`

@@ -43,12 +43,21 @@ export async function GET(request: Request) {
   const state = searchParams.get("state")?.trim();
   const region = searchParams.get("region")?.trim();
   const project = searchParams.get("project")?.trim();
+  const campaign = searchParams.get("campaign")?.trim();
   const brand = searchParams.get("brand")?.trim();
   const startDate = searchParams.get("startDate")?.trim();
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
   const supabase = createAdminSupabase();
   let query = supabase.from("submissions").select("*").eq("client_id", context.role.client_id).order("submitted_at", { ascending: false });
+  if (campaign) {
+    const { data: matchingProjects } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("client_id", context.role.client_id)
+      .eq("campaign_name", campaign);
+    query = matchingProjects?.length ? query.in("project_id", matchingProjects.map((item) => item.id)) : query.eq("project_id", "00000000-0000-0000-0000-000000000000");
+  }
 
   if (state) query = query.eq("installer_state", state);
   if (region) query = query.eq("installer_region", region);
@@ -89,6 +98,7 @@ export async function GET(request: Request) {
       `Region: ${item.installer_region || item.state_region || "Unknown"} | State: ${item.installer_state || "Unknown"} | LGA: ${item.installer_lga || "n/a"}`,
       `GPS: ${item.gps_latitude ?? "n/a"}, ${item.gps_longitude ?? "n/a"}`,
       `Address: ${item.address || "Address not visible"}`,
+      `Resolved GPS address: ${item.resolved_address || "Not resolved"}`,
       `OCR: ${item.ocr_text || item.ai_raw_text || "No text extracted"}`
     ].map((row) => wrappedLines(doc, row, textWidth));
     const titleLines = wrappedLines(doc, item.salon_name || "Name not visible", textWidth);

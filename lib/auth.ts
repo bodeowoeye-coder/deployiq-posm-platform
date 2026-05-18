@@ -9,19 +9,12 @@ export async function getCurrentAccessToken() {
 }
 
 export async function getCurrentUserContext() {
-  console.info("[auth-context] entered");
-
   try {
     const accessToken = await getCurrentAccessToken();
     if (!accessToken) return null;
 
     const userClient = createUserSupabase(accessToken);
-    console.info("[auth-context] before auth.getUser");
     const { data, error } = await userClient.auth.getUser();
-    console.info("[auth-context] after auth.getUser", {
-      hasUser: Boolean(data.user),
-      hasError: Boolean(error)
-    });
     if (error || !data.user) {
       console.error("[auth-context] auth.getUser failed", {
         message: error?.message ?? "No user returned"
@@ -29,20 +22,11 @@ export async function getCurrentUserContext() {
       return null;
     }
 
-    console.info("[auth-context] user resolved", {
-      userId: data.user.id
-    });
-
-    console.info("[auth-context] before role lookup");
     const { data: userRole, error: userRoleError } = await userClient
       .from("user_roles")
       .select("user_id, role, client_id")
       .eq("user_id", data.user.id)
       .maybeSingle();
-    console.info("[auth-context] role lookup result", {
-      found: Boolean(userRole),
-      hasError: Boolean(userRoleError)
-    });
 
     if (userRoleError) {
       console.error("[auth-context] user-scoped role lookup failed", {
@@ -51,9 +35,6 @@ export async function getCurrentUserContext() {
     }
 
     let role = userRole;
-    console.info("[auth-context] user-scoped role row", {
-      found: Boolean(role)
-    });
 
     if (!role) {
       try {
@@ -71,9 +52,6 @@ export async function getCurrentUserContext() {
         }
 
         role = adminRole;
-        console.info("[auth-context] fallback role row", {
-          found: Boolean(role)
-        });
       } catch (adminFallbackError) {
         console.error("[auth-context] admin fallback unavailable", {
           message: adminFallbackError instanceof Error ? adminFallbackError.message : "Unknown error"

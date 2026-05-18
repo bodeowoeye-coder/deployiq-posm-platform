@@ -53,7 +53,7 @@ export function DashboardSidebar({
       {open ? <button className="fixed inset-0 z-30 bg-slate-950/35 lg:hidden" aria-label="Close navigation" onClick={() => setOpen(false)} /> : null}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[min(280px,calc(100%-48px))] min-w-0 flex-col border-r border-slate-200 bg-white p-4 shadow-xl transition-transform lg:sticky lg:top-24 lg:z-0 lg:h-[calc(100vh-7rem)] lg:w-52 lg:translate-x-0 lg:rounded-lg lg:border lg:shadow-sm ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-[min(280px,calc(100%-48px))] min-w-0 flex-col border-r border-slate-200 bg-slate-100 p-4 shadow-xl transition-transform lg:sticky lg:top-24 lg:z-0 lg:h-[calc(100vh-7rem)] lg:w-52 lg:translate-x-0 lg:rounded-lg lg:border lg:border-slate-200 lg:bg-slate-100 lg:shadow-sm ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -75,7 +75,7 @@ export function DashboardSidebar({
                   setOpen(false);
                 }}
                 className={`flex min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition hover:bg-orange-50 hover:text-slate-950 ${
-                  activeView === view ? "bg-orange-50 text-slate-950" : "text-slate-700"
+                  activeView === view ? "bg-white text-slate-950 shadow-sm" : "text-slate-700"
                 }`}
               >
                 <Icon aria-hidden size={17} className="shrink-0 text-orange-500" />

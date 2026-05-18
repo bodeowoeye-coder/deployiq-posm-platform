@@ -9,6 +9,7 @@ import { detectDuplicate, fingerprintImage } from "@/lib/duplicates";
 import { buildAlertEvent } from "@/lib/alerts";
 import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
 import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
+import { reverseGeocode } from "@/lib/reverseGeocoding";
 import type { Submission } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -71,6 +72,14 @@ export async function POST(request: Request) {
     const { data: matchingBrand } = brandName
       ? await supabase.from("brands").select("client_id, brand_name").eq("brand_name", brandName).maybeSingle()
       : { data: null };
+    const { data: matchingProject } = matchingBrand?.client_id
+      ? await supabase
+          .from("projects")
+          .select("id, project_name")
+          .eq("client_id", matchingBrand.client_id)
+          .eq("project_name", projectName)
+          .maybeSingle()
+      : { data: null };
     const resolvedBrandName = matchingBrand?.brand_name ?? null;
     const brandReview = reviewBrandMatch(resolvedBrandName, extraction, allBrands ?? []);
     const confidence = scoreBrandVerification(extraction.confidence, brandReview.brandMatchStatus);
@@ -121,11 +130,13 @@ export async function POST(request: Request) {
     ]
       .filter(Boolean)
       .join(" ");
+    const resolvedLocation = await reverseGeocode(latitude, longitude);
 
     const { data, error } = await supabase
       .from("submissions")
       .insert({
         installer_name: installerName || null,
+        project_id: matchingProject?.id ?? null,
         project_name: projectName,
         client_id: matchingBrand?.client_id ?? null,
         brand_name: resolvedBrandName,
@@ -140,13 +151,19 @@ export async function POST(request: Request) {
         duplicate_reason: duplicateReview.reason,
         image_fingerprint: imageFingerprint,
         salon_name: extraction.salonName || null,
-        address: extraction.address || null,
+        address: extraction.address || resolvedLocation.resolvedAddress || null,
         phone: extraction.phone || null,
         gps_latitude: latitude,
         gps_longitude: longitude,
         installer_state: installerState,
         installer_region: installerRegion,
         installer_lga: installerLga || null,
+        resolved_address: resolvedLocation.resolvedAddress,
+        resolved_street: resolvedLocation.resolvedStreet,
+        resolved_lga: resolvedLocation.resolvedLga,
+        resolved_city: resolvedLocation.resolvedCity,
+        resolved_state: resolvedLocation.resolvedState,
+        deployment_stage_code: autoApproved ? "approved" : "installed",
         state_region: extraction.stateRegion || null,
         status,
         image_url: publicUrl,
@@ -240,6 +257,7 @@ export async function PATCH(request: Request) {
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
     const approvalComments = typeof body.approvalComments === "string" ? body.approvalComments.trim() : "";
     const rejectionReason = typeof body.rejectionReason === "string" ? body.rejectionReason.trim() : "";
+    const deploymentStageCode = typeof body.deploymentStageCode === "string" ? body.deploymentStageCode.trim() : "";
 
     if (!id) {
       return NextResponse.json({ error: "Missing submission id." }, { status: 400 });
@@ -270,6 +288,13 @@ export async function PATCH(request: Request) {
     if (phone) updates.phone = phone;
     if (approvalComments) updates.approval_comments = approvalComments;
     if (rejectionReason) updates.rejection_reason = rejectionReason;
+    if (deploymentStageCode) {
+      const validStages = ["production", "warehouse", "in_transit", "installed", "approved"];
+      if (!validStages.includes(deploymentStageCode)) {
+        return NextResponse.json({ error: "Unsupported deployment stage." }, { status: 400 });
+      }
+      updates.deployment_stage_code = deploymentStageCode;
+    }
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No changes supplied." }, { status: 400 });

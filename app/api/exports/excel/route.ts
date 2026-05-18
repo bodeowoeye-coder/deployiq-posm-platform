@@ -23,6 +23,7 @@ export async function GET(request: Request) {
   const region = searchParams.get("region")?.trim();
   const installer = searchParams.get("installer")?.trim();
   const project = searchParams.get("project")?.trim();
+  const campaign = searchParams.get("campaign")?.trim();
   const brand = searchParams.get("brand")?.trim();
   const status = searchParams.get("status")?.trim();
   const startDate = searchParams.get("startDate")?.trim();
@@ -30,6 +31,10 @@ export async function GET(request: Request) {
   const search = searchParams.get("query")?.trim();
   const supabase = createAdminSupabase();
   let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
+  if (campaign) {
+    const { data: matchingProjects } = await supabase.from("projects").select("id").eq("campaign_name", campaign);
+    query = matchingProjects?.length ? query.in("project_id", matchingProjects.map((item) => item.id)) : query.eq("project_id", "00000000-0000-0000-0000-000000000000");
+  }
 
   if (region) query = query.or(`installer_region.ilike.%${region}%,installer_state.ilike.%${region}%,installer_lga.ilike.%${region}%,state_region.ilike.%${region}%`);
   if (installer) query = query.ilike("installer_name", `%${installer}%`);
@@ -80,6 +85,11 @@ export async function GET(request: Request) {
     "Installer Selected State": item.installer_state ?? "",
     "Installer Selected Region": item.installer_region ?? "",
     "Installer Selected LGA": item.installer_lga ?? "",
+    "Resolved Address": item.resolved_address ?? "",
+    "Resolved Street": item.resolved_street ?? "",
+    "Resolved LGA": item.resolved_lga ?? "",
+    "Resolved City": item.resolved_city ?? "",
+    "Resolved State": item.resolved_state ?? "",
     "Installation Date": item.installation_date ?? new Date(item.submitted_at).toISOString().slice(0, 10),
     "Installation Time": item.installation_time ?? "",
     "OCR Extracted Text": item.ocr_text ?? item.ai_raw_text ?? "",
@@ -111,6 +121,11 @@ export async function GET(request: Request) {
     "Installer Selected State": "",
     "Installer Selected Region": "",
     "Installer Selected LGA": "",
+    "Resolved Address": "",
+    "Resolved Street": "",
+    "Resolved LGA": "",
+    "Resolved City": "",
+    "Resolved State": "",
     "Installation Date": "",
     "Installation Time": "",
     "OCR Extracted Text": "",

@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, Camera, CheckCircle2, Loader2, MapPin, Upload } from "lucide-react";
+import { AlertTriangle, Camera, CheckCircle2, ImagePlus, Loader2, MapPin, Upload, Video, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandMark } from "@/components/BrandMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { compressImage } from "@/lib/imageCompression";
-import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
+import { getRegionForState } from "@/lib/geography";
 import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
+import { StateCombobox } from "@/components/StateCombobox";
 
 type PositionState = {
   latitude: number | null;
@@ -50,7 +51,20 @@ export default function SubmitPage() {
   const [result, setResult] = useState<"idle" | "success" | "error">("idle");
   const [error, setError] = useState("");
   const [mismatchWarning, setMismatchWarning] = useState<MismatchWarning | null>(null);
+  const [role, setRole] = useState<"admin" | "client" | "installer" | null>(null);
+  const [showWebcam, setShowWebcam] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const { showToast } = useToast();
+
+  useEffect(() => {
+    fetch("/api/auth/session", { credentials: "include" })
+      .then(async (response) => (response.ok ? response.json() : null))
+      .then((body) => setRole(body?.role ?? null))
+      .catch(() => setRole(null));
+  }, []);
 
   useEffect(() => {
     async function loadBrands() {
@@ -98,6 +112,25 @@ export default function SubmitPage() {
     setPreviewUrl(nextUrl);
     return () => URL.revokeObjectURL(nextUrl);
   }, [image]);
+
+  useEffect(() => {
+    if (!showWebcam) {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      return;
+    }
+
+    navigator.mediaDevices
+      ?.getUserMedia({ video: true })
+      .then((stream) => {
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      })
+      .catch(() => {
+        showToast("Camera is not available on this device.", "error");
+        setShowWebcam(false);
+      });
+  }, [showToast, showWebcam]);
 
   const canSubmit = useMemo(() => Boolean(image && projectName.trim() && installerState && installerRegion && !isSubmitting), [image, installerRegion, installerState, isSubmitting, projectName]);
 
@@ -169,16 +202,39 @@ export default function SubmitPage() {
     await submitReport(false);
   }
 
+  function captureWebcamPhoto() {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      setImage(new File([blob], `webcam-${Date.now()}.jpg`, { type: "image/jpeg" }));
+      setShowWebcam(false);
+    }, "image/jpeg", 0.9);
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex min-h-16 w-[min(760px,calc(100%-28px))] min-w-0 flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
           <BrandMark />
           <div className="flex min-w-0 flex-wrap gap-2">
-          <ThemeToggle />
-          <Link className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" href="/admin">
-            Admin
-          </Link>
+            <ThemeToggle />
+            {role === "admin" ? (
+              <Link className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" href="/admin">
+                Admin
+              </Link>
+            ) : null}
+            {role === "client" ? (
+              <Link className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" href="/client">
+                Client
+              </Link>
+            ) : null}
           </div>
         </div>
       </header>
@@ -234,21 +290,7 @@ export default function SubmitPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="State">
-                <select
-                  className="min-h-11 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                  id="installerState"
-                  name="installerState"
-                  value={installerState}
-                  onChange={(event) => setInstallerState(event.target.value)}
-                  required
-                >
-                  <option value="">Select state</option>
-                  {NIGERIA_STATES.map((state) => (
-                    <option key={state} value={state}>
-                      {state}
-                    </option>
-                  ))}
-                </select>
+                <StateCombobox value={installerState} onChange={setInstallerState} />
               </Field>
 
               <Field label="Region/zone">
@@ -286,16 +328,22 @@ export default function SubmitPage() {
                   </div>
                 </div>
               )}
-              <input
-                className="min-h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                id="image"
-                name="image"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(event) => setImage(event.target.files?.[0] ?? null)}
-                required
-              />
+              <div className="grid gap-2 sm:grid-cols-3">
+                <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => cameraInputRef.current?.click()}>
+                  <Camera aria-hidden size={17} />
+                  Take Photo
+                </button>
+                <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => galleryInputRef.current?.click()}>
+                  <ImagePlus aria-hidden size={17} />
+                  Choose Gallery
+                </button>
+                <button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => setShowWebcam(true)}>
+                  <Video aria-hidden size={17} />
+                  Use Webcam
+                </button>
+              </div>
+              <input ref={cameraInputRef} className="hidden" type="file" accept="image/*" capture="environment" onChange={(event) => setImage(event.target.files?.[0] ?? null)} />
+              <input ref={galleryInputRef} className="hidden" id="image" name="image" type="file" accept="image/*" onChange={(event) => setImage(event.target.files?.[0] ?? null)} />
             </Field>
 
             <div className="flex min-h-11 min-w-0 items-start gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm leading-snug text-slate-600">
@@ -367,6 +415,25 @@ export default function SubmitPage() {
               >
                 {isSubmitting ? <Loader2 className="animate-spin" aria-hidden size={18} /> : null}
                 Submit Anyway
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {showWebcam ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-4 backdrop-blur-sm sm:items-center">
+          <section className="w-full max-w-xl overflow-hidden rounded-lg bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 p-4">
+              <h2 className="text-base font-bold">Capture from webcam</h2>
+              <button className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200" type="button" onClick={() => setShowWebcam(false)} aria-label="Close webcam">
+                <X aria-hidden size={16} />
+              </button>
+            </div>
+            <div className="p-4">
+              <video ref={videoRef} className="aspect-video w-full rounded-lg bg-slate-950 object-cover" autoPlay playsInline muted />
+              <button className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white" type="button" onClick={captureWebcamPhoto}>
+                <Camera aria-hidden size={18} />
+                Capture photo
               </button>
             </div>
           </section>

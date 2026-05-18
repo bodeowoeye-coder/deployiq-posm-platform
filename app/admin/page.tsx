@@ -1,7 +1,7 @@
 import { AdminDashboard } from "@/components/AdminDashboard";
 import { requireRole } from "@/lib/auth";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
-import type { Submission, SubmissionStatusHistory } from "@/lib/types";
+import type { Brand, Client, DeploymentProgress, Project, ProjectTarget, Submission, SubmissionStatusHistory } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,13 @@ export default async function AdminPage() {
   }
 
   const submissionIds = (data ?? []).map((item) => item.id);
+  const [{ data: projects }, { data: projectTargets }, { data: deploymentProgress }, { data: clients }, { data: brands }] = await Promise.all([
+    supabase.from("projects").select("*").order("created_at", { ascending: false }),
+    supabase.from("project_targets").select("*"),
+    supabase.from("deployment_progress").select("*"),
+    supabase.from("clients").select("*").order("name", { ascending: true }),
+    supabase.from("brands").select("*").order("brand_name", { ascending: true })
+  ]);
   const { data: history } =
     submissionIds.length > 0
       ? await supabase
@@ -27,5 +34,15 @@ export default async function AdminPage() {
           .order("created_at", { ascending: false })
       : { data: [] };
 
-  return <AdminDashboard submissions={(data ?? []) as Submission[]} history={(history ?? []) as SubmissionStatusHistory[]} />;
+  return (
+    <AdminDashboard
+      submissions={(data ?? []) as Submission[]}
+      history={(history ?? []) as SubmissionStatusHistory[]}
+      projects={(projects ?? []) as Project[]}
+      projectTargets={(projectTargets ?? []) as ProjectTarget[]}
+      deploymentProgress={(deploymentProgress ?? []) as DeploymentProgress[]}
+      clients={(clients ?? []) as Client[]}
+      brands={(brands ?? []) as Brand[]}
+    />
+  );
 }

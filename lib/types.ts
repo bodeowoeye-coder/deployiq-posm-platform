@@ -2,10 +2,13 @@ export type SubmissionStatus = "Pending" | "Flagged" | "Approved" | "Rejected";
 export type BrandMatchStatus = "Matched" | "Mismatch" | "Uncertain";
 export type AiConfidenceLevel = "High" | "Medium" | "Low";
 export type DuplicateStatus = "Unique" | "Possible Duplicate" | "Duplicate";
+export type ProjectStatus = "Planning" | "Active" | "On Hold" | "Completed";
+export type DeploymentStageCode = "production" | "warehouse" | "in_transit" | "installed" | "approved";
 
 export type Submission = {
   id: string;
   client_id: string | null;
+  project_id: string | null;
   project_name: string | null;
   installer_name: string | null;
   brand_name: string | null;
@@ -27,6 +30,12 @@ export type Submission = {
   installer_state: string | null;
   installer_region: string | null;
   installer_lga: string | null;
+  resolved_address: string | null;
+  resolved_street: string | null;
+  resolved_lga: string | null;
+  resolved_city: string | null;
+  resolved_state: string | null;
+  deployment_stage_code: DeploymentStageCode | null;
   state_region: string | null;
   status: SubmissionStatus;
   image_url: string;
@@ -62,6 +71,53 @@ export type Brand = {
   client_id: string;
   brand_name: string;
   created_at: string;
+};
+
+export type Project = {
+  id: string;
+  client_id: string;
+  brand_id: string | null;
+  project_name: string;
+  campaign_name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  target_quantity: number;
+  status: ProjectStatus;
+  regions_covered: string[];
+  assigned_installers: string[];
+  created_at: string;
+  client?: Client | null;
+  brand?: Brand | null;
+};
+
+export type ProjectTarget = {
+  id: string;
+  project_id: string;
+  installer_name: string | null;
+  agency_name: string | null;
+  region: string | null;
+  state: string | null;
+  target_quantity: number;
+  deployment_timeline_start: string | null;
+  deployment_timeline_end: string | null;
+  created_at: string;
+};
+
+export type DeploymentStage = {
+  id: string;
+  stage_code: DeploymentStageCode;
+  stage_name: string;
+  sort_order: number;
+  created_at: string;
+};
+
+export type DeploymentProgress = {
+  id: string;
+  project_id: string;
+  stage_code: DeploymentStageCode;
+  quantity: number;
+  updated_by: string | null;
+  updated_at: string;
 };
 
 export type RoleRecord = {
