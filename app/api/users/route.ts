@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
-import { cleanArray, cleanString, listManagedUsers, requireAdminContext, writeAuditLog } from "@/lib/userManagement";
+import { cleanArray, cleanString, dbErrorPayload, listManagedUsers, requireAdminContext, upsertUserProfileWithRetry, writeAuditLog } from "@/lib/userManagement";
 import type { UserRole } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -32,19 +32,21 @@ export async function POST(request: Request) {
 
   const supabase = createAdminSupabase();
   const { data: authUsers } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (authUsers.users.some((user) => user.email?.toLowerCase() === email)) {
-    return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
+  const existingAuthUser = authUsers.users.find((user) => user.email?.toLowerCase() === email);
+  let authUser = existingAuthUser ?? null;
+  if (!authUser) {
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { full_name: fullName }
+      });
+    if (authError || !authData.user) return NextResponse.json({ error: authError?.message || "Could not create auth user." }, { status: 500 });
+    authUser = authData.user;
   }
-  const { data, error } = await supabase.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { full_name: fullName }
-  });
-  if (error || !data.user) return NextResponse.json({ error: error?.message || "Could not create auth user." }, { status: 500 });
 
   const profilePayload = {
-    user_id: data.user.id,
+    user_id: authUser.id,
     full_name: fullName,
     email,
     phone,
@@ -54,15 +56,38 @@ export async function POST(request: Request) {
     assigned_states: cleanArray(body.assignedStates),
     status
   };
-  const [{ error: roleError }, { error: profileError }] = await Promise.all([
-    supabase.from("user_roles").upsert({ user_id: data.user.id, role, client_id: clientId }),
-    supabase.from("user_profiles").upsert(profilePayload)
-  ]);
-  if (roleError || profileError) return NextResponse.json({ error: roleError?.message || profileError?.message }, { status: 500 });
+  const { data: existingProfile, error: existingProfileError } = await supabase
+    .schema("public")
+    .from("user_profiles")
+    .select("user_id")
+    .eq("user_id", authUser.id)
+    .maybeSingle();
+
+  if (existingAuthUser && existingProfile) {
+    return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
+  }
+
+  const roleResult = await supabase.schema("public").from("user_roles").upsert({ user_id: authUser.id, role, client_id: clientId });
+  if (roleResult.error) {
+    return NextResponse.json({ error: "Could not save user role.", dbError: dbErrorPayload(roleResult.error) }, { status: 500 });
+  }
+
+  const profileResult = await upsertUserProfileWithRetry(supabase, profilePayload);
+  if (profileResult.error) {
+    return NextResponse.json(
+      {
+        error: "Could not save user profile in public.user_profiles.",
+        dbError: dbErrorPayload(profileResult.error || existingProfileError),
+        recovery:
+          "If this mentions schema cache, run: NOTIFY pgrst, 'reload schema'; in Supabase SQL Editor, then retry. The Supabase Auth user may already exist and this endpoint will safely fill the missing profile row on retry."
+      },
+      { status: 500 }
+    );
+  }
 
   if (role === "installer") {
-    await supabase.from("installers").upsert({
-      user_id: data.user.id,
+    await supabase.schema("public").from("installers").upsert({
+      user_id: authUser.id,
       installer_name: fullName,
       agency_id: agencyId,
       assigned_regions: profilePayload.assigned_regions,
@@ -73,11 +98,11 @@ export async function POST(request: Request) {
   }
   await writeAuditLog({
     actorUserId: context.user.id,
-    targetUserId: data.user.id,
+    targetUserId: authUser.id,
     actionType: "user_created",
     newValue: { email, fullName, role, clientId, agencyId, status }
   });
-  return NextResponse.json({ userId: data.user.id });
+  return NextResponse.json({ userId: authUser.id, recoveredExistingAuthUser: Boolean(existingAuthUser && !existingProfile) });
 }
 
 export async function PATCH(request: Request) {
@@ -87,14 +112,14 @@ export async function PATCH(request: Request) {
   const userId = cleanString(body.userId);
   if (!userId) return NextResponse.json({ error: "Missing user id." }, { status: 400 });
   const supabase = createAdminSupabase();
-  const { data: previousRole } = await supabase.from("user_roles").select("*").eq("user_id", userId).maybeSingle();
-  const { data: previousProfile } = await supabase.from("user_profiles").select("*").eq("user_id", userId).maybeSingle();
+  const { data: previousRole } = await supabase.schema("public").from("user_roles").select("*").eq("user_id", userId).maybeSingle();
+  const { data: previousProfile } = await supabase.schema("public").from("user_profiles").select("*").eq("user_id", userId).maybeSingle();
   const nextRole = cleanString(body.role) as UserRole;
   const nextStatus = cleanString(body.status);
   if (nextRole && !roles.includes(nextRole)) return NextResponse.json({ error: "Invalid role." }, { status: 400 });
 
   if (nextRole) {
-    await supabase.from("user_roles").update({ role: nextRole, client_id: cleanString(body.clientId) || null }).eq("user_id", userId);
+    await supabase.schema("public").from("user_roles").update({ role: nextRole, client_id: cleanString(body.clientId) || null }).eq("user_id", userId);
   }
   const profileUpdates = {
     full_name: cleanString(body.fullName) || previousProfile?.full_name || "",
@@ -107,9 +132,9 @@ export async function PATCH(request: Request) {
     archived_at: nextStatus === "Archived" ? new Date().toISOString() : null,
     updated_at: new Date().toISOString()
   };
-  await supabase.from("user_profiles").update(profileUpdates).eq("user_id", userId);
+  await supabase.schema("public").from("user_profiles").update(profileUpdates).eq("user_id", userId);
   if (previousRole?.role === "installer" || nextRole === "installer") {
-    await supabase.from("installers").upsert({
+    await supabase.schema("public").from("installers").upsert({
       user_id: userId,
       installer_name: profileUpdates.full_name,
       agency_id: profileUpdates.agency_id,

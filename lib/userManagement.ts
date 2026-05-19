@@ -1,5 +1,6 @@
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { AuditLog, ManagedUser, RoleRecord, UserProfile } from "@/lib/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export function cleanString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -40,15 +41,70 @@ export async function writeAuditLog({
   });
 }
 
+function isSchemaCacheMiss(error: { code?: string; message?: string } | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return error?.code === "PGRST205" || message.includes("schema cache") || message.includes("could not find the table");
+}
+
+function dbErrorPayload(error: { code?: string; message?: string; details?: string; hint?: string } | null | undefined) {
+  if (!error) return null;
+  return {
+    code: error.code ?? null,
+    message: error.message ?? "Unknown database error",
+    details: error.details ?? null,
+    hint: error.hint ?? null
+  };
+}
+
+async function pause(milliseconds: number) {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function upsertUserProfileWithRetry(
+  supabase: SupabaseClient,
+  profilePayload: {
+    user_id: string;
+    full_name: string;
+    email: string;
+    phone: string | null;
+    agency_id: string | null;
+    assigned_project_ids: string[];
+    assigned_regions: string[];
+    assigned_states: string[];
+    status: string;
+  }
+) {
+  const writeProfile = () =>
+    supabase
+      .schema("public")
+      .from("user_profiles")
+      .upsert(profilePayload, { onConflict: "user_id" })
+      .select("user_id")
+      .single();
+
+  let result = await writeProfile();
+  if (result.error && isSchemaCacheMiss(result.error)) {
+    console.warn("[user-management] user_profiles schema cache miss, retrying profile write", dbErrorPayload(result.error));
+    await pause(700);
+    result = await writeProfile();
+  }
+  return result;
+}
+
+export { dbErrorPayload, isSchemaCacheMiss };
+
 export async function listManagedUsers(): Promise<ManagedUser[]> {
   const supabase = createAdminSupabase();
-  const [{ data: authUsers }, { data: roles }, { data: profiles }] = await Promise.all([
+  const [{ data: authUsers }, { data: roles }, profilesResult] = await Promise.all([
     supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
-    supabase.from("user_roles").select("user_id, role, client_id"),
-    supabase.from("user_profiles").select("*")
+    supabase.schema("public").from("user_roles").select("user_id, role, client_id"),
+    supabase.schema("public").from("user_profiles").select("*")
   ]);
+  if (profilesResult.error) {
+    console.warn("[user-management] could not read public.user_profiles", dbErrorPayload(profilesResult.error));
+  }
   const roleById = new Map((roles ?? []).map((row) => [row.user_id, row as RoleRecord]));
-  const profileById = new Map((profiles ?? []).map((row) => [row.user_id, row as UserProfile]));
+  const profileById = new Map((profilesResult.data ?? []).map((row) => [row.user_id, row as UserProfile]));
 
   return authUsers.users
     .map((user) => {
