@@ -9,12 +9,6 @@ export async function getCurrentAccessToken() {
   return cookieStore.getAll().find((cookie) => cookie.name === "deployiq-access-token")?.value ?? null;
 }
 
-export async function getCurrentAccessTokenCandidates() {
-  const cookieStore = cookies();
-  const deployiqAccessToken = cookieStore.getAll().find((cookie) => cookie.name === "deployiq-access-token")?.value ?? null;
-  return deployiqAccessToken ? [{ name: "deployiq-access-token", value: deployiqAccessToken }] : [];
-}
-
 export async function getCurrentRefreshToken() {
   const cookieStore = cookies();
   return cookieStore.getAll().find((cookie) => cookie.name === "deployiq-refresh-token")?.value ?? null;
@@ -27,58 +21,38 @@ export function inspectAuthCookiePresence() {
     names: allCookies.map((cookie) => cookie.name),
     deployiqAccessToken: allCookies.some((cookie) => cookie.name === "deployiq-access-token" && Boolean(cookie.value)),
     deployiqRefreshToken: allCookies.some((cookie) => cookie.name === "deployiq-refresh-token" && Boolean(cookie.value)),
-    legacySbAccessToken: allCookies.some((cookie) => cookie.name === "sb-access-token" && Boolean(cookie.value)),
-    legacySbRefreshToken: allCookies.some((cookie) => cookie.name === "sb-refresh-token" && Boolean(cookie.value))
+    accessTokenPrefix: allCookies.find((cookie) => cookie.name === "deployiq-access-token")?.value?.slice(0, 20) ?? null
   };
 }
 
 export async function getCurrentUserContext() {
   try {
-    const accessTokens = await getCurrentAccessTokenCandidates();
-    if (accessTokens.length === 0) {
+    const accessToken = await getCurrentAccessToken();
+    if (!accessToken) {
       console.info("[auth-context] missing access token", inspectAuthCookiePresence());
       return null;
     }
 
-    let verified:
-      | {
-          tokenName: string;
-          accessToken: string;
-          user: NonNullable<Awaited<ReturnType<ReturnType<typeof createUserSupabase>["auth"]["getUser"]>>["data"]["user"]>;
-          userClient: ReturnType<typeof createUserSupabase>;
-        }
-      | null = null;
-
-    for (const candidate of accessTokens) {
-      const userClient = createUserSupabase(candidate.value);
-      const { data, error } = await userClient.auth.getUser(candidate.value);
-      if (error || !data.user) {
-        console.error("[auth-context] auth.getUser failed", {
-          tokenName: candidate.name,
-          message: error?.message ?? "No user returned",
-          cookies: inspectAuthCookiePresence()
-        });
-        continue;
-      }
-      verified = { tokenName: candidate.name, accessToken: candidate.value, user: data.user, userClient };
-      break;
-    }
-
-    if (!verified) {
-      console.error("[auth-context] no access token verified", inspectAuthCookiePresence());
+    const userClient = createUserSupabase(accessToken);
+    const { data, error } = await userClient.auth.getUser(accessToken);
+    if (error || !data.user) {
+      console.error("[auth-context] auth.getUser failed", {
+        message: error?.message ?? "No user returned",
+        cookies: inspectAuthCookiePresence()
+      });
       return null;
     }
 
     console.info("[auth-context] token verified", {
-      tokenName: verified.tokenName,
-      userId: verified.user.id,
-      email: verified.user.email ?? null
+      userId: data.user.id,
+      email: data.user.email ?? null,
+      accessTokenPrefix: accessToken.slice(0, 20)
     });
 
-    const { data: userRole, error: userRoleError } = await verified.userClient
+    const { data: userRole, error: userRoleError } = await userClient
       .from("user_roles")
       .select("user_id, role, client_id")
-      .eq("user_id", verified.user.id)
+      .eq("user_id", data.user.id)
       .maybeSingle();
 
     if (userRoleError) {
@@ -95,7 +69,7 @@ export async function getCurrentUserContext() {
         const { data: adminRole, error: adminRoleError } = await admin
           .from("user_roles")
           .select("user_id, role, client_id")
-          .eq("user_id", verified.user.id)
+          .eq("user_id", data.user.id)
           .maybeSingle();
 
         if (adminRoleError) {
@@ -115,14 +89,14 @@ export async function getCurrentUserContext() {
     if (!role) return null;
 
     console.info("[auth-context] resolved user", {
-      userId: verified.user.id,
-      email: verified.user.email ?? null,
+      userId: data.user.id,
+      email: data.user.email ?? null,
       role: role.role
     });
 
     let client: Client | null = null;
     if (role.client_id) {
-      const { data: clientRow } = await verified.userClient
+      const { data: clientRow } = await userClient
         .from("clients")
         .select("id, name, can_review")
         .eq("id", role.client_id)
@@ -131,7 +105,7 @@ export async function getCurrentUserContext() {
     }
 
     return {
-      user: verified.user,
+      user: data.user,
       role: role as RoleRecord,
       client
     };
