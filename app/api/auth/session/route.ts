@@ -9,7 +9,7 @@ function setAuthCookie(response: NextResponse, name: string, value: string, maxA
   response.cookies.set(name, value, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: true,
     path: "/",
     maxAge
   });
@@ -41,14 +41,18 @@ export async function POST(request: Request) {
 
     const response = NextResponse.json({ ok: true });
     response.headers.set("Cache-Control", "private, no-store");
-    setAuthCookie(response, "sb-access-token", accessToken, 60 * 60);
-    setAuthCookie(response, "sb-refresh-token", refreshToken, 60 * 60 * 24 * 90);
     setAuthCookie(response, "deployiq-access-token", accessToken, 60 * 60);
     setAuthCookie(response, "deployiq-refresh-token", refreshToken, 60 * 60 * 24 * 90);
     console.info("[auth-session] cookies written", {
       userId: data.user.id,
       email: data.user.email ?? null,
-      cookieNames: ["sb-access-token", "sb-refresh-token", "deployiq-access-token", "deployiq-refresh-token"]
+      cookieNames: ["deployiq-access-token", "deployiq-refresh-token"],
+      cookieOptions: {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+        path: "/"
+      }
     });
     return response;
   } catch (error) {
@@ -71,8 +75,10 @@ export async function DELETE() {
 
 export async function GET(request: Request) {
   const accessToken = await getCurrentAccessToken();
+  const cookiePresence = inspectAuthCookiePresence();
   console.info("[auth-session] GET entered", {
-    cookiePresence: inspectAuthCookiePresence()
+    cookieNames: cookiePresence.names,
+    cookiePresence
   });
   console.info("[auth-session] access cookie present", {
     hasAccessCookie: Boolean(accessToken)

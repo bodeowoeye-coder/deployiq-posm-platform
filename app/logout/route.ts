@@ -4,7 +4,7 @@ function clearCookie(response: NextResponse, name: string) {
   response.cookies.set(name, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: true,
     path: "/",
     maxAge: 0
   });

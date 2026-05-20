@@ -6,30 +6,29 @@ import type { Client, RoleRecord, UserRole } from "@/lib/types";
 
 export async function getCurrentAccessToken() {
   const cookieStore = cookies();
-  return cookieStore.get("sb-access-token")?.value ?? cookieStore.get("deployiq-access-token")?.value ?? null;
+  return cookieStore.getAll().find((cookie) => cookie.name === "deployiq-access-token")?.value ?? null;
 }
 
 export async function getCurrentAccessTokenCandidates() {
   const cookieStore = cookies();
-  return [
-    { name: "sb-access-token", value: cookieStore.get("sb-access-token")?.value ?? null },
-    { name: "deployiq-access-token", value: cookieStore.get("deployiq-access-token")?.value ?? null }
-  ].filter((item): item is { name: string; value: string } => Boolean(item.value));
+  const deployiqAccessToken = cookieStore.getAll().find((cookie) => cookie.name === "deployiq-access-token")?.value ?? null;
+  return deployiqAccessToken ? [{ name: "deployiq-access-token", value: deployiqAccessToken }] : [];
 }
 
 export async function getCurrentRefreshToken() {
   const cookieStore = cookies();
-  return cookieStore.get("sb-refresh-token")?.value ?? cookieStore.get("deployiq-refresh-token")?.value ?? null;
+  return cookieStore.getAll().find((cookie) => cookie.name === "deployiq-refresh-token")?.value ?? null;
 }
 
 export function inspectAuthCookiePresence() {
   const cookieStore = cookies();
+  const allCookies = cookieStore.getAll();
   return {
-    names: cookieStore.getAll().map((cookie) => cookie.name),
-    sbAccessToken: Boolean(cookieStore.get("sb-access-token")?.value),
-    sbRefreshToken: Boolean(cookieStore.get("sb-refresh-token")?.value),
-    deployiqAccessToken: Boolean(cookieStore.get("deployiq-access-token")?.value),
-    deployiqRefreshToken: Boolean(cookieStore.get("deployiq-refresh-token")?.value)
+    names: allCookies.map((cookie) => cookie.name),
+    deployiqAccessToken: allCookies.some((cookie) => cookie.name === "deployiq-access-token" && Boolean(cookie.value)),
+    deployiqRefreshToken: allCookies.some((cookie) => cookie.name === "deployiq-refresh-token" && Boolean(cookie.value)),
+    legacySbAccessToken: allCookies.some((cookie) => cookie.name === "sb-access-token" && Boolean(cookie.value)),
+    legacySbRefreshToken: allCookies.some((cookie) => cookie.name === "sb-refresh-token" && Boolean(cookie.value))
   };
 }
 
