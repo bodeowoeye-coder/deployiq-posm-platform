@@ -7,6 +7,18 @@ export const dynamic = "force-dynamic";
 
 const roles: UserRole[] = ["admin", "client", "installer"];
 
+function partialResponse(stage: string, dbError: unknown, createdAuthUser: boolean) {
+  const payload = dbErrorPayload(dbError as Parameters<typeof dbErrorPayload>[0]);
+  return NextResponse.json(
+    {
+      partial: true,
+      message: `${createdAuthUser ? "Auth user created" : "Existing auth user found"}, but failed at ${stage}: ${payload?.message ?? "Unknown error"}`,
+      dbError: payload
+    },
+    { status: 207 }
+  );
+}
+
 export async function GET() {
   const context = await requireAdminContext();
   if (!context) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
@@ -31,9 +43,18 @@ export async function POST(request: Request) {
   if (role === "client" && !clientId) return NextResponse.json({ error: "Client users require an assigned client." }, { status: 400 });
 
   const supabase = createAdminSupabase();
-  const { data: authUsers } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const [{ data: authUsers }, { data: profileByEmail }] = await Promise.all([
+    supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+    supabase.schema("public").from("user_profiles").select("user_id, email").eq("email", email).maybeSingle()
+  ]);
   const existingAuthUser = authUsers.users.find((user) => user.email?.toLowerCase() === email);
   let authUser = existingAuthUser ?? null;
+  if (!authUser && profileByEmail?.user_id) {
+    const { data: authByProfile } = await supabase.auth.admin.getUserById(profileByEmail.user_id);
+    authUser = authByProfile.user ?? null;
+  }
+
+  const createdAuthUser = !authUser;
   if (!authUser) {
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
         email,
@@ -63,30 +84,18 @@ export async function POST(request: Request) {
     .eq("user_id", authUser.id)
     .maybeSingle();
 
-  if (existingAuthUser && existingProfile) {
-    return NextResponse.json({ error: "A user with this email already exists." }, { status: 409 });
-  }
-
   const roleResult = await supabase.schema("public").from("user_roles").upsert({ user_id: authUser.id, role, client_id: clientId });
   if (roleResult.error) {
-    return NextResponse.json({ error: "Could not save user role.", dbError: dbErrorPayload(roleResult.error) }, { status: 500 });
+    return partialResponse("role sync", roleResult.error, createdAuthUser);
   }
 
   const profileResult = await upsertUserProfileWithRetry(supabase, profilePayload);
   if (profileResult.error) {
-    return NextResponse.json(
-      {
-        error: "Could not save user profile in public.user_profiles.",
-        dbError: dbErrorPayload(profileResult.error || existingProfileError),
-        recovery:
-          "If this mentions schema cache, run: NOTIFY pgrst, 'reload schema'; in Supabase SQL Editor, then retry. The Supabase Auth user may already exist and this endpoint will safely fill the missing profile row on retry."
-      },
-      { status: 500 }
-    );
+    return partialResponse("profile sync in public.user_profiles", profileResult.error || existingProfileError, createdAuthUser);
   }
 
   if (role === "installer") {
-    await supabase.schema("public").from("installers").upsert({
+    const installerResult = await supabase.schema("public").from("installers").upsert({
       user_id: authUser.id,
       installer_name: fullName,
       agency_id: agencyId,
@@ -95,14 +104,27 @@ export async function POST(request: Request) {
       assigned_project_ids: profilePayload.assigned_project_ids,
       access_status: status === "Suspended" ? "Suspended" : status === "Inactive" ? "Inactive" : "Active"
     });
+    if (installerResult.error) return partialResponse("installer sync", installerResult.error, createdAuthUser);
+  }
+
+  if (role === "client" && clientId) {
+    const clientProfileResult = await supabase.schema("public").from("client_profiles").upsert({ client_id: clientId });
+    if (clientProfileResult.error) return partialResponse("client mapping sync", clientProfileResult.error, createdAuthUser);
   }
   await writeAuditLog({
     actorUserId: context.user.id,
     targetUserId: authUser.id,
-    actionType: "user_created",
+    actionType: createdAuthUser ? "user_created" : "existing_user_synced",
     newValue: { email, fullName, role, clientId, agencyId, status }
+  }).catch((error) => {
+    console.warn("[user-management] audit log write failed", dbErrorPayload(error));
   });
-  return NextResponse.json({ userId: authUser.id, recoveredExistingAuthUser: Boolean(existingAuthUser && !existingProfile) });
+  return NextResponse.json({
+    userId: authUser.id,
+    action: createdAuthUser ? "created" : "synced",
+    message: createdAuthUser ? "Created successfully." : "Existing user synced successfully.",
+    recoveredExistingAuthUser: Boolean(!createdAuthUser && !existingProfile)
+  });
 }
 
 export async function PATCH(request: Request) {

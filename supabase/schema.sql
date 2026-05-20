@@ -373,6 +373,8 @@ create index if not exists deployment_progress_project_id_idx on public.deployme
 create index if not exists installers_agency_id_idx on public.installers (agency_id);
 create index if not exists user_profiles_agency_id_idx on public.user_profiles (agency_id);
 create index if not exists user_profiles_status_idx on public.user_profiles (status);
+create unique index if not exists user_profiles_email_unique_idx on public.user_profiles (lower(email));
+create unique index if not exists installers_user_id_unique_idx on public.installers (user_id) where user_id is not null;
 create index if not exists audit_logs_target_user_id_idx on public.audit_logs (target_user_id);
 create index if not exists audit_logs_created_at_idx on public.audit_logs (created_at desc);
 create index if not exists submission_status_history_submission_id_idx on public.submission_status_history (submission_id, created_at desc);

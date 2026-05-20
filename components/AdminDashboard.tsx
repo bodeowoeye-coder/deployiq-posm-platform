@@ -27,6 +27,7 @@ import { displayProjectName } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, getStageTotals, getTargetAllocationRows } from "@/lib/operations";
 import { StateCombobox } from "@/components/StateCombobox";
+import { NIGERIA_REGIONS, NIGERIA_STATES } from "@/lib/geography";
 
 type Filters = {
   query: string;
@@ -428,8 +429,8 @@ export function AdminDashboard({
         clientId: formData.get("clientId"),
         agencyId: formData.get("agencyId"),
         assignedProjectIds: formData.getAll("assignedProjectIds"),
-        assignedRegions: String(formData.get("assignedRegions") || "").split(",").map((item) => item.trim()).filter(Boolean),
-        assignedStates: String(formData.get("assignedStates") || "").split(",").map((item) => item.trim()).filter(Boolean),
+        assignedRegions: formData.getAll("assignedRegions"),
+        assignedStates: formData.getAll("assignedStates"),
         status: formData.get("status"),
         temporaryPassword: formData.get("temporaryPassword")
       })
@@ -440,7 +441,7 @@ export function AdminDashboard({
       return;
     }
     await refreshUsers();
-    showToast("User created.");
+    showToast(body.message || "User created.", body.partial ? "error" : "success");
   }
 
   async function updateUser(payload: Record<string, unknown>) {
@@ -468,7 +469,7 @@ export function AdminDashboard({
         contactPerson: formData.get("contactPerson"),
         email: formData.get("email"),
         phone: formData.get("phone"),
-        assignedRegions: String(formData.get("assignedRegions") || "").split(",").map((item) => item.trim()).filter(Boolean),
+        assignedRegions: formData.getAll("assignedRegions"),
         status: formData.get("status")
       })
     });
@@ -1323,7 +1324,7 @@ function AgencyManagementPanel({
           <input name="contactPerson" placeholder="Contact person" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
           <input name="email" placeholder="Email" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
           <input name="phone" placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-          <input name="assignedRegions" placeholder="Regions, comma separated" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <MultiSelectOptions name="assignedRegions" label="Assigned regions" options={[...NIGERIA_REGIONS]} selected={[]} />
           <select name="status" defaultValue="Active" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
             <option>Active</option>
             <option>Inactive</option>
@@ -1440,8 +1441,8 @@ function UserManagementPanel({
           <select name="assignedProjectIds" multiple className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm">
             {projects.map((item) => <option key={item.id} value={item.id}>{item.project_name}</option>)}
           </select>
-          <input name="assignedRegions" placeholder="Regions, comma separated" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-          <input name="assignedStates" placeholder="States, comma separated" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <MultiSelectOptions name="assignedRegions" label="Assigned regions" options={[...NIGERIA_REGIONS]} selected={[]} />
+          <MultiSelectOptions name="assignedStates" label="Assigned states" options={[...NIGERIA_STATES]} selected={[]} />
           <select name="status" defaultValue="Active" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
             <option>Active</option>
             <option>Inactive</option>
@@ -1609,8 +1610,8 @@ function UserProfilePanel({
               clientId: formData.get("clientId"),
               agencyId: formData.get("agencyId"),
               assignedProjectIds: formData.getAll("assignedProjectIds"),
-              assignedRegions: String(formData.get("assignedRegions") || "").split(",").map((item) => item.trim()).filter(Boolean),
-              assignedStates: String(formData.get("assignedStates") || "").split(",").map((item) => item.trim()).filter(Boolean),
+              assignedRegions: formData.getAll("assignedRegions"),
+              assignedStates: formData.getAll("assignedStates"),
               status: nextStatus
             });
           }}
@@ -1633,8 +1634,8 @@ function UserProfilePanel({
           <select name="assignedProjectIds" multiple defaultValue={user.assigned_project_ids} className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm">
             {projects.map((item) => <option key={item.id} value={item.id}>{item.project_name}</option>)}
           </select>
-          <input name="assignedRegions" defaultValue={user.assigned_regions.join(", ")} placeholder="Regions" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-          <input name="assignedStates" defaultValue={user.assigned_states.join(", ")} placeholder="States" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <MultiSelectOptions name="assignedRegions" label="Assigned regions" options={[...NIGERIA_REGIONS]} selected={user.assigned_regions} />
+          <MultiSelectOptions name="assignedStates" label="Assigned states" options={[...NIGERIA_STATES]} selected={user.assigned_states} />
           <select name="status" defaultValue={user.status} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
             <option>Active</option>
             <option>Inactive</option>
@@ -1661,6 +1662,54 @@ function UserProfilePanel({
 
 function RoleBadge({ role }: { role: ManagedUser["role"] }) {
   return <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold capitalize">{role}</span>;
+}
+
+function MultiSelectOptions({
+  name,
+  label,
+  options,
+  selected
+}: {
+  name: string;
+  label: string;
+  options: string[];
+  selected: string[];
+}) {
+  const [values, setValues] = useState(selected);
+
+  useEffect(() => {
+    setValues(selected);
+  }, [selected.join("|")]);
+
+  function toggle(option: string) {
+    setValues((current) => (current.includes(option) ? current.filter((item) => item !== option) : [...current, option]));
+  }
+
+  return (
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+      {values.map((value) => (
+        <input key={value} type="hidden" name={name} value={value} />
+      ))}
+      <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+        <span className="text-xs font-semibold text-slate-600">{label}</span>
+        <span className="shrink-0 text-xs text-slate-400">{values.length} selected</span>
+      </div>
+      <div className="max-h-36 overflow-y-auto rounded-md bg-slate-50 p-1">
+        {options.map((option) => (
+          <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-orange-50">
+            <input
+              type="checkbox"
+              checked={values.includes(option)}
+              onChange={() => toggle(option)}
+              autoComplete="off-state-assignment"
+              className="h-4 w-4 rounded border-slate-300 text-orange-600"
+            />
+            <span className="min-w-0 break-words">{option}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function initials(value: string) {
