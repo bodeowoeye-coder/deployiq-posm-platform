@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     }
 
     const userClient = createUserSupabase(accessToken);
-    const { data, error } = await userClient.auth.getUser();
+    const { data, error } = await userClient.auth.getUser(accessToken);
     if (error || !data.user) {
       console.error("[auth-session] token validation failed", {
         message: error?.message ?? "No user returned",
@@ -71,8 +71,20 @@ export async function DELETE() {
 
 export async function GET(request: Request) {
   const accessToken = await getCurrentAccessToken();
-  console.info("[auth-session] cookie presence", inspectAuthCookiePresence());
+  console.info("[auth-session] GET entered", {
+    cookiePresence: inspectAuthCookiePresence()
+  });
+  console.info("[auth-session] access cookie present", {
+    hasAccessCookie: Boolean(accessToken)
+  });
+  console.info("[auth-session] before getCurrentUserContext");
   const context = await getCurrentUserContext();
+  console.info("[auth-session] after getCurrentUserContext", {
+    resolved: Boolean(context),
+    userId: context?.user.id ?? null,
+    email: context?.user.email ?? null,
+    role: context?.role.role ?? null
+  });
 
   if (!context) {
     console.error("[auth-session] verification failed", {
@@ -95,6 +107,7 @@ export async function GET(request: Request) {
     : defaultRouteForRole(context.role.role);
 
   console.info("[auth-session] redirect resolved", {
+    userId: context.user.id,
     email: context.user.email ?? null,
     role: context.role.role,
     requestedReturnTo,

@@ -9,6 +9,14 @@ export async function getCurrentAccessToken() {
   return cookieStore.get("sb-access-token")?.value ?? cookieStore.get("deployiq-access-token")?.value ?? null;
 }
 
+export async function getCurrentAccessTokenCandidates() {
+  const cookieStore = cookies();
+  return [
+    { name: "sb-access-token", value: cookieStore.get("sb-access-token")?.value ?? null },
+    { name: "deployiq-access-token", value: cookieStore.get("deployiq-access-token")?.value ?? null }
+  ].filter((item): item is { name: string; value: string } => Boolean(item.value));
+}
+
 export async function getCurrentRefreshToken() {
   const cookieStore = cookies();
   return cookieStore.get("sb-refresh-token")?.value ?? cookieStore.get("deployiq-refresh-token")?.value ?? null;
@@ -17,6 +25,7 @@ export async function getCurrentRefreshToken() {
 export function inspectAuthCookiePresence() {
   const cookieStore = cookies();
   return {
+    names: cookieStore.getAll().map((cookie) => cookie.name),
     sbAccessToken: Boolean(cookieStore.get("sb-access-token")?.value),
     sbRefreshToken: Boolean(cookieStore.get("sb-refresh-token")?.value),
     deployiqAccessToken: Boolean(cookieStore.get("deployiq-access-token")?.value),
@@ -26,31 +35,51 @@ export function inspectAuthCookiePresence() {
 
 export async function getCurrentUserContext() {
   try {
-    const accessToken = await getCurrentAccessToken();
-    if (!accessToken) {
+    const accessTokens = await getCurrentAccessTokenCandidates();
+    if (accessTokens.length === 0) {
       console.info("[auth-context] missing access token", inspectAuthCookiePresence());
       return null;
     }
 
-    const userClient = createUserSupabase(accessToken);
-    const { data, error } = await userClient.auth.getUser();
-    if (error || !data.user) {
-      console.error("[auth-context] auth.getUser failed", {
-        message: error?.message ?? "No user returned",
-        cookies: inspectAuthCookiePresence()
-      });
+    let verified:
+      | {
+          tokenName: string;
+          accessToken: string;
+          user: NonNullable<Awaited<ReturnType<ReturnType<typeof createUserSupabase>["auth"]["getUser"]>>["data"]["user"]>;
+          userClient: ReturnType<typeof createUserSupabase>;
+        }
+      | null = null;
+
+    for (const candidate of accessTokens) {
+      const userClient = createUserSupabase(candidate.value);
+      const { data, error } = await userClient.auth.getUser(candidate.value);
+      if (error || !data.user) {
+        console.error("[auth-context] auth.getUser failed", {
+          tokenName: candidate.name,
+          message: error?.message ?? "No user returned",
+          cookies: inspectAuthCookiePresence()
+        });
+        continue;
+      }
+      verified = { tokenName: candidate.name, accessToken: candidate.value, user: data.user, userClient };
+      break;
+    }
+
+    if (!verified) {
+      console.error("[auth-context] no access token verified", inspectAuthCookiePresence());
       return null;
     }
 
     console.info("[auth-context] token verified", {
-      userId: data.user.id,
-      email: data.user.email ?? null
+      tokenName: verified.tokenName,
+      userId: verified.user.id,
+      email: verified.user.email ?? null
     });
 
-    const { data: userRole, error: userRoleError } = await userClient
+    const { data: userRole, error: userRoleError } = await verified.userClient
       .from("user_roles")
       .select("user_id, role, client_id")
-      .eq("user_id", data.user.id)
+      .eq("user_id", verified.user.id)
       .maybeSingle();
 
     if (userRoleError) {
@@ -67,7 +96,7 @@ export async function getCurrentUserContext() {
         const { data: adminRole, error: adminRoleError } = await admin
           .from("user_roles")
           .select("user_id, role, client_id")
-          .eq("user_id", data.user.id)
+          .eq("user_id", verified.user.id)
           .maybeSingle();
 
         if (adminRoleError) {
@@ -87,13 +116,14 @@ export async function getCurrentUserContext() {
     if (!role) return null;
 
     console.info("[auth-context] resolved user", {
-      email: data.user.email ?? null,
+      userId: verified.user.id,
+      email: verified.user.email ?? null,
       role: role.role
     });
 
     let client: Client | null = null;
     if (role.client_id) {
-      const { data: clientRow } = await userClient
+      const { data: clientRow } = await verified.userClient
         .from("clients")
         .select("id, name, can_review")
         .eq("id", role.client_id)
@@ -102,7 +132,7 @@ export async function getCurrentUserContext() {
     }
 
     return {
-      user: data.user,
+      user: verified.user,
       role: role as RoleRecord,
       client
     };
