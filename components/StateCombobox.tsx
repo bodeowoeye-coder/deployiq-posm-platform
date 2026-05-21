@@ -38,7 +38,7 @@ export function StateCombobox({
     setQuery(nextValue);
     setOpen(true);
 
-    if (NIGERIA_STATES.includes(nextValue)) {
+    if (NIGERIA_STATES.includes(nextValue as (typeof NIGERIA_STATES)[number])) {
       onChange(nextValue);
     } else if (nextValue === "") {
       onChange("");
