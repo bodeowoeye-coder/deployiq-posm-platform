@@ -8,7 +8,7 @@ import { BrandMark } from "@/components/BrandMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { compressImage } from "@/lib/imageCompression";
-import { getRegionForState } from "@/lib/geography";
+import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
 import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
 import { StateCombobox } from "@/components/StateCombobox";
 import { queueSubmission, readInstallerDraft, readQueuedSubmissions, saveInstallerDraft } from "@/lib/installerDrafts";
@@ -313,7 +313,21 @@ export default function SubmitPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="State">
-                <StateCombobox value={installerState} onChange={setInstallerState} />
+                <select
+                  className="min-h-11 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                  name="installerState"
+                  id="installerState"
+                  value={installerState}
+                  onChange={(e) => setInstallerState(e.target.value)}
+                  required
+                >
+                  <option value="">Select state</option>
+                  {NIGERIA_STATES.map((state) => (
+                    <option key={state} value={state}>
+                      {state}
+                    </option>
+                  ))}
+                </select>
               </Field>
 
               <Field label="Region/zone">
