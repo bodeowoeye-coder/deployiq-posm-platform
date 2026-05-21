@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     const fileName = `${Date.now()}-${crypto.randomUUID()}.jpg`;
     const path = `installations/${fileName}`;
 
-    const { error: uploadError } = await supabase.storage.from("installation-images").upload(path, image, {
+    const { error: uploadError } = await supabase.storage.from("deployment-photos").upload(path, image, {
       contentType: image.type || "image/jpeg",
       upsert: false
     });
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
 
     const {
       data: { publicUrl }
-    } = supabase.storage.from("installation-images").getPublicUrl(path);
+    } = supabase.storage.from("deployment-photos").getPublicUrl(path);
 
     const extraction = await extractBoardTextFromImage(publicUrl);
     const { data: allBrands } = await supabase.from("brands").select("brand_name");
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     const confidence = scoreBrandVerification(extraction.confidence, brandReview.brandMatchStatus);
 
     if (brandReview.brandMatchStatus === "Mismatch" && !submitAnyway) {
-      await supabase.storage.from("installation-images").remove([path]);
+      await supabase.storage.from("deployment-photos").remove([path]);
       return NextResponse.json(
         {
           requiresConfirmation: true,
@@ -191,7 +191,7 @@ export async function POST(request: Request) {
       .single();
 
     if (error) {
-      await supabase.storage.from("installation-images").remove([path]);
+      await supabase.storage.from("deployment-photos").remove([path]);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
