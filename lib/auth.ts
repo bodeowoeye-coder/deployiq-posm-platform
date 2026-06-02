@@ -83,6 +83,10 @@ export async function getCurrentUserContext() {
       });
       return null;
     }
+    console.info("[auth-context] auth user resolved", {
+      userId: data.user.id,
+      email: data.user.email ?? null
+    });
 
     const { data: userRole, error: userRoleError } = await userClient
       .from("user_roles")
@@ -93,6 +97,12 @@ export async function getCurrentUserContext() {
     if (userRoleError) {
       console.error("[auth-context] user-scoped role lookup failed", dbErrorPayload(userRoleError));
     }
+    console.info("[auth-context] user-scoped role lookup result", {
+      userId: data.user.id,
+      found: Boolean(userRole),
+      role: userRole?.role ?? null,
+      clientId: userRole?.client_id ?? null
+    });
 
     let role = userRole as RoleRecord | null;
 
@@ -109,6 +119,12 @@ export async function getCurrentUserContext() {
         if (fallbackRoleError) {
           console.error("[auth-context] service role lookup failed", dbErrorPayload(fallbackRoleError));
         }
+        console.info("[auth-context] service role fallback result", {
+          userId: data.user.id,
+          found: Boolean(fallbackRole),
+          role: fallbackRole?.role ?? null,
+          clientId: fallbackRole?.client_id ?? null
+        });
 
         role = (fallbackRole as RoleRecord | null) ?? null;
       } catch (err) {
@@ -142,6 +158,12 @@ export async function getCurrentUserContext() {
 
     let client: Client | null = null;
     if (role.client_id) {
+      console.info("[auth-context] client lookup started", {
+        userId: data.user.id,
+        email: data.user.email ?? null,
+        clientId: role.client_id,
+        source: "user-scoped"
+      });
       const { data: clientRow, error: clientRowError } = await userClient
         .from("clients")
         .select("id, name")
@@ -151,7 +173,57 @@ export async function getCurrentUserContext() {
         console.error("[auth-context] client lookup failed", dbErrorPayload(clientRowError));
       }
       client = (clientRow as Client | null) ?? null;
+
+      console.info("[auth-context] user-scoped client lookup result", {
+        userId: data.user.id,
+        email: data.user.email ?? null,
+        clientId: role.client_id,
+        found: Boolean(client),
+        client: client ? { id: client.id, name: client.name } : null
+      });
+
+      if (!client) {
+        try {
+          const adminSupabase = createAdminSupabase();
+          const { data: fallbackClient, error: fallbackClientError } = await adminSupabase
+            .schema("public")
+            .from("clients")
+            .select("id, name")
+            .eq("id", role.client_id)
+            .maybeSingle();
+
+          if (fallbackClientError) {
+            console.error("[auth-context] service client lookup failed", dbErrorPayload(fallbackClientError));
+          }
+
+          client = (fallbackClient as Client | null) ?? null;
+          console.info("[auth-context] service client lookup result", {
+            userId: data.user.id,
+            email: data.user.email ?? null,
+            clientId: role.client_id,
+            found: Boolean(client),
+            client: client ? { id: client.id, name: client.name } : null
+          });
+        } catch (err) {
+          console.error("[auth-context] service client fallback threw", {
+            userId: data.user.id,
+            email: data.user.email ?? null,
+            clientId: role.client_id,
+            error: err instanceof Error ? { message: err.message, stack: err.stack } : err,
+            failureStage: "service_role_clients"
+          });
+        }
+      }
     }
+
+    console.info("[auth-context] final context result", {
+      userId: data.user.id,
+      email: data.user.email ?? null,
+      role: role.role,
+      clientId: role.client_id,
+      clientFound: Boolean(client),
+      client: client ? { id: client.id, name: client.name } : null
+    });
 
     return {
       user: data.user,
