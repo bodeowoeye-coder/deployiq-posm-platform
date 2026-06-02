@@ -16,6 +16,35 @@ export default function LoginPage() {
   const { showToast } = useToast();
   const router = useRouter();
 
+  function logLoginDiagnostic(stage: string, extra: Record<string, unknown> = {}) {
+    if (typeof window === "undefined") return;
+
+    const payload = {
+      stage,
+      emailPresent: Boolean(email.trim()),
+      passwordPresent: Boolean(password),
+      isSubmitting,
+      publicConfigLoaded: extra.publicConfigLoaded,
+      href: window.location.href,
+      userAgent: window.navigator.userAgent,
+      online: window.navigator.onLine,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      ...extra
+    };
+
+    console.info("[login] diagnostic", payload);
+
+    fetch("/api/auth/login-diagnostics", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).catch((diagnosticError) => {
+      console.warn("[login] diagnostic post failed", diagnosticError);
+    });
+  }
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const searchParams = new URLSearchParams(window.location.search);
@@ -43,31 +72,52 @@ export default function LoginPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     event.stopPropagation();
-    if (isSubmitting) return;
+    logLoginDiagnostic("submit-received");
+    if (isSubmitting) {
+      logLoginDiagnostic("submit-ignored-already-submitting");
+      return;
+    }
     setIsSubmitting(true);
     setError("");
-    console.info("[login] submit");
+    console.info("[login] submit", { emailPresent: Boolean(email.trim()), passwordPresent: Boolean(password), online: typeof navigator !== "undefined" ? navigator.onLine : null });
 
     try {
+      logLoginDiagnostic("public-config-fetch-start");
       const configResponse = await fetch("/api/auth/public-config", {
         cache: "no-store",
         credentials: "include"
       });
+      logLoginDiagnostic("public-config-fetch-complete", { status: configResponse.status, ok: configResponse.ok });
 
       if (!configResponse.ok) {
         throw new Error("Could not load login configuration.");
       }
 
       const config = (await configResponse.json()) as { url: string; anonKey: string };
+      logLoginDiagnostic("public-config-json-parsed", {
+        publicConfigLoaded: Boolean(config.url && config.anonKey),
+        supabaseUrlHost: config.url ? new URL(config.url).host : null,
+        anonKeyPresent: Boolean(config.anonKey)
+      });
       const supabase = createBrowserSupabase(config);
       const loginEmail = email.trim().toLowerCase();
+      logLoginDiagnostic("supabase-signin-start", { emailDomain: loginEmail.includes("@") ? loginEmail.split("@").pop() : null });
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
+      logLoginDiagnostic("supabase-signin-complete", {
+        hasSession: Boolean(data?.session),
+        hasUser: Boolean(data?.user),
+        errorMessage: signInError?.message ?? null,
+        errorName: signInError?.name ?? null,
+        errorStatus: "status" in (signInError ?? {}) ? (signInError as { status?: number }).status ?? null : null,
+        errorCode: "code" in (signInError ?? {}) ? (signInError as { code?: string }).code ?? null : null
+      });
 
       if (signInError || !data?.session) {
         throw new Error("Invalid email or password");
       }
       console.info("[login] supabase success");
 
+      logLoginDiagnostic("app-session-post-start");
       const response = await fetch("/api/auth/session", {
         method: "POST",
         credentials: "include",
@@ -78,17 +128,26 @@ export default function LoginPage() {
           refreshToken: data.session.refresh_token
         })
       });
+      logLoginDiagnostic("app-session-post-complete", { status: response.status, ok: response.ok });
 
       if (!response.ok) {
         throw new Error("Could not create app session.");
       }
 
+      logLoginDiagnostic("app-session-verify-start");
       const verificationResponse = await fetch(`/api/auth/session${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`, {
         cache: "no-store",
         credentials: "include"
       });
 
       const verifiedSession = (await verificationResponse.json()) as { authenticated: boolean; redirectTo?: string; reason?: string };
+      logLoginDiagnostic("app-session-verify-complete", {
+        status: verificationResponse.status,
+        ok: verificationResponse.ok,
+        authenticated: verifiedSession.authenticated,
+        redirectTo: verifiedSession.redirectTo ?? null,
+        reason: verifiedSession.reason ?? null
+      });
       if (!verificationResponse.ok) {
         throw new Error(
           verifiedSession.reason === "access_cookie_missing"
@@ -114,6 +173,11 @@ export default function LoginPage() {
       router.replace(redirectTo);
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : "Could not sign in.";
+      logLoginDiagnostic("login-error", {
+        message,
+        errorName: loginError instanceof Error ? loginError.name : null,
+        errorStack: loginError instanceof Error ? loginError.stack : null
+      });
       setError(message);
       showToast(message, "error");
     } finally {
@@ -167,6 +231,7 @@ export default function LoginPage() {
               <button
                 className="min-h-11 rounded-lg bg-slate-950 px-4 font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
                 disabled={isSubmitting}
+                onClick={() => logLoginDiagnostic("sign-in-button-click")}
                 type="submit"
               >
                 {isSubmitting ? "Signing in..." : "Sign in"}
