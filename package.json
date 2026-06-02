@@ -1,0 +1,40 @@
+{
+  "name": "ai-deployment-reporting",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "seed:admin": "node scripts/seed-test-client.mjs admin",
+    "seed:godrej-client": "node scripts/seed-test-client.mjs godrej-client",
+    "seed:darling-client": "node scripts/seed-test-client.mjs darling-client",
+    "seed:test-client": "node scripts/seed-test-client.mjs",
+    "seed:installer": "node scripts/seed-test-client.mjs installer"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "jspdf": "^2.5.2",
+    "lucide-react": "^0.468.0",
+    "next": "^14.2.23",
+    "openai": "^4.77.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.15.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "dotenv": "^16.6.1",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.23",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2"
+  }
+}
