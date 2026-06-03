@@ -175,9 +175,6 @@ export function ClientDashboard({
   const brandCounts = getBrandCounts(filtered);
   const stateCounts = getStateCounts(filtered);
   const projectCounts = getProjectCounts(filtered);
-  const approvedCount = filtered.filter((item) => item.status === "Approved").length;
-  const pendingCount = filtered.filter((item) => item.status === "Pending").length;
-  const rejectedCount = filtered.filter((item) => item.status === "Rejected").length;
   const mappedCount = filtered.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null).length;
   const exportQuery = buildExportQuery(filters);
   const metrics = getExecutiveMetrics(filtered);
@@ -189,8 +186,9 @@ export function ClientDashboard({
   const projectOperations = getProjectOperations(projects, projectTargets, filtered, deploymentProgress);
   const portfolio = getPortfolioOperations(projectOperations);
   const statesCovered = stateCounts.filter((item) => item.state !== "Unknown").length;
+  const regionsCovered = regionCounts.filter((item) => item.region !== "Unknown").length;
   const brandsCovered = brandCounts.length;
-  const recentApproved = filtered.filter((item) => item.status === "Approved").slice(0, 5);
+  const recentEvidence = filtered.slice(0, 5);
 
   function setFilter(key: keyof Filters, value: string) {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -259,7 +257,7 @@ export function ClientDashboard({
               <div className="inline-flex rounded-lg border border-orange-300/40 bg-orange-500/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-orange-200">DeployIQ</div>
               <h2 className="mt-4 whitespace-normal break-words text-2xl font-extrabold leading-tight sm:text-3xl">Client Executive Deployment Summary</h2>
               <p className="mt-2 max-w-3xl whitespace-normal break-words text-sm leading-relaxed text-slate-300">
-                {clientDisplayName} deployment visibility for {activeProjectName}. Review progress, geographic coverage, brand execution, and approved photo evidence.
+                {clientDisplayName} deployment visibility for {activeProjectName}. Review progress, geographic coverage, brand execution, and field photo evidence.
               </p>
             </div>
             <div className="grid min-w-0 gap-2 rounded-xl border border-white/10 bg-white/5 p-4 text-sm">
@@ -269,20 +267,20 @@ export function ClientDashboard({
             </div>
           </div>
           <div className="grid min-w-0 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-6">
-            <SummaryCard label="Total deployments" value={filtered.length} />
-            <SummaryCard label="Approved" value={approvedCount} />
-            <SummaryCard label="Pending" value={pendingCount} />
-            <SummaryCard label="Rejected" value={rejectedCount} />
-            <SummaryCard label="States covered" value={statesCovered} />
-            <SummaryCard label="Brands covered" value={brandsCovered} />
+            <SummaryCard label="Expected deployment" value={portfolio.expected} />
+            <SummaryCard label="Actual deployment" value={portfolio.actual} />
+            <SummaryCard label="Outstanding" value={portfolio.outstanding} />
+            <SummaryCard label="Completion" value={portfolio.completion} suffix="%" />
+            <SummaryCard label="State coverage" value={statesCovered} />
+            <SummaryCard label="Evidence records" value={filtered.length} />
           </div>
         </div>
 
         <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
-          <SummaryCard label="Expected deployments" value={portfolio.expected} />
-          <SummaryCard label="Actual deployments" value={portfolio.actual} />
-          <SummaryCard label="Outstanding deployments" value={portfolio.outstanding} />
-          <SummaryCard label="Completion percentage" value={portfolio.completion} suffix="%" />
+          <SummaryCard label="States covered" value={statesCovered} />
+          <SummaryCard label="Regions covered" value={regionsCovered} />
+          <SummaryCard label="GPS/location evidence" value={mappedCount} />
+          <SummaryCard label="Brands covered" value={brandsCovered} />
         </div>
 
         <div className={`${activeView === "overview" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
@@ -385,7 +383,7 @@ export function ClientDashboard({
               View Full Deployment Map
             </button>
           </div>
-          <ApprovedInstallationsPanel rows={recentApproved} onOpen={(item) => setLightboxIndex(filtered.findIndex((record) => record.id === item.id))} />
+          <EvidenceInstallationsPanel rows={recentEvidence} onOpen={(item) => setLightboxIndex(filtered.findIndex((record) => record.id === item.id))} />
         </div>
 
         {activeView === "map" ? (
@@ -540,13 +538,13 @@ function ExecutiveBars({ title, rows, accent = "#0b7c59" }: { title: string; row
   );
 }
 
-function ApprovedInstallationsPanel({ rows, onOpen }: { rows: Submission[]; onOpen: (item: Submission) => void }) {
+function EvidenceInstallationsPanel({ rows, onOpen }: { rows: Submission[]; onOpen: (item: Submission) => void }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="whitespace-normal break-words text-base font-bold leading-snug">Recent approved installations</h2>
-      <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">Latest approved outlet evidence available to the client team.</p>
+      <h2 className="whitespace-normal break-words text-base font-bold leading-snug">Recent photo evidence</h2>
+      <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">Latest outlet evidence available to the client team.</p>
       <div className="mt-4 grid min-w-0 gap-3">
-        {rows.length === 0 ? <EmptyState title="No approved installations yet" message="Approved evidence will appear here once reviewed." /> : null}
+        {rows.length === 0 ? <EmptyState title="No photo evidence yet" message="Installation evidence will appear here once available." /> : null}
         {rows.map((item) => (
           <button
             key={item.id}

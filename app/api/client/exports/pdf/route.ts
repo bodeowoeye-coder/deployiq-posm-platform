@@ -4,7 +4,8 @@ import { getCurrentUserContext } from "@/lib/auth";
 import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getBrandCounts, getRegionCounts } from "@/lib/reporting";
-import type { Submission } from "@/lib/types";
+import { getPortfolioOperations, getProjectOperations } from "@/lib/operations";
+import type { DeploymentProgress, ProjectTarget, Submission } from "@/lib/types";
 import { DEFAULT_PROJECT_NAME, displayProjectName } from "@/lib/projects";
 import { createReportId, drawReportFooter, drawReportHeader } from "@/lib/reportBranding";
 
@@ -94,9 +95,18 @@ export async function GET(request: Request) {
   const clientDisplayName = scoped.effectiveClient.name;
   const regionCounts = getRegionCounts(submissions);
   const brandCounts = getBrandCounts(submissions);
-  const approvedCount = submissions.filter((item) => item.status === "Approved").length;
-  const pendingCount = submissions.filter((item) => item.status === "Pending").length;
-  const rejectedCount = submissions.filter((item) => item.status === "Rejected").length;
+  const projectIds = scoped.projects.map((item) => item.id);
+  const [{ data: projectTargets }, { data: deploymentProgress }] =
+    projectIds.length > 0
+      ? await Promise.all([
+          supabase.from("project_targets").select("*").in("project_id", projectIds),
+          supabase.from("deployment_progress").select("*").in("project_id", projectIds)
+        ])
+      : [{ data: [] }, { data: [] }];
+  const projectOperations = getProjectOperations(scoped.projects, (projectTargets ?? []) as ProjectTarget[], submissions, (deploymentProgress ?? []) as DeploymentProgress[]);
+  const portfolio = getPortfolioOperations(projectOperations);
+  const statesCovered = new Set(submissions.map((item) => item.installer_state).filter(Boolean)).size;
+  const gpsEvidence = submissions.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null).length;
   drawReportHeader(doc, pageWidth, `${isFiltered ? "Filtered" : "Full"} Client Deployment Report`, [
     ["Client Name", clientDisplayName],
     ["Project Name", projectTitle],
@@ -107,12 +117,12 @@ export async function GET(request: Request) {
   doc.setFillColor(248, 250, 252);
   doc.roundedRect(margin, y, pageWidth - margin * 2, 30, 2, 2, "F");
   const summary = [
-    ["Total", submissions.length],
-    ["Approved", approvedCount],
-    ["Pending", pendingCount],
-    ["Rejected", rejectedCount],
-    ["Regions", regionCounts.length],
-    ["Brands", brandCounts.length]
+    ["Expected", portfolio.expected],
+    ["Actual", portfolio.actual],
+    ["Outstanding", portfolio.outstanding],
+    ["Complete", `${portfolio.completion}%`],
+    ["States", statesCovered],
+    ["GPS evidence", gpsEvidence]
   ];
   summary.forEach(([label, value], index) => {
     const x = margin + 8 + index * 29;
@@ -127,6 +137,35 @@ export async function GET(request: Request) {
   });
   y += 42;
 
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Deployment by Region", margin, y);
+  doc.text("Deployment by Brand", 112, y);
+  const maxRegion = Math.max(...regionCounts.map((item) => item.count), 1);
+  const maxBrand = Math.max(...brandCounts.map((item) => item.count), 1);
+  let breakdownY = y + 8;
+  regionCounts.slice(0, 6).forEach((item) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(item.region.slice(0, 18), margin, breakdownY);
+    doc.setFillColor(11, 124, 89);
+    doc.rect(margin + 34, breakdownY - 4, Math.max(4, (item.count / maxRegion) * 42), 4, "F");
+    doc.text(String(item.count), margin + 80, breakdownY);
+    breakdownY += 7;
+  });
+  breakdownY = y + 8;
+  brandCounts.slice(0, 6).forEach((item) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(item.brand.slice(0, 18), 112, breakdownY);
+    doc.setFillColor(124, 58, 237);
+    doc.rect(146, breakdownY - 4, Math.max(4, (item.count / maxBrand) * 34), 4, "F");
+    doc.text(String(item.count), 184, breakdownY);
+    breakdownY += 7;
+  });
+  y += 56;
+
   for (const item of submissions) {
     doc.setFontSize(8);
     const textX = margin + 30;
@@ -137,8 +176,7 @@ export async function GET(request: Request) {
       `Region: ${item.installer_region || item.state_region || "Unknown"} | State: ${item.installer_state || "Unknown"} | LGA: ${item.installer_lga || "n/a"}`,
       `GPS: ${item.gps_latitude ?? "n/a"}, ${item.gps_longitude ?? "n/a"}`,
       `Address: ${item.address || "Address not visible"}`,
-      `Resolved GPS address: ${item.resolved_address || "Not resolved"}`,
-      `OCR: ${item.ocr_text || item.ai_raw_text || "No text extracted"}`
+      `Resolved GPS address: ${item.resolved_address || "Not resolved"}`
     ].map((row) => wrappedLines(doc, row, textWidth));
     const titleLines = wrappedLines(doc, item.salon_name || "Name not visible", textWidth);
     const textHeight = titleLines.length * 5 + rows.reduce((total, lines) => total + lines.length * rowLineHeight + 1.6, 0);

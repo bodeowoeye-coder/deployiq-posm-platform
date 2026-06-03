@@ -63,11 +63,10 @@ export function drawReportFooter(doc: jsPDF, pageWidth: number, pageHeight: numb
     doc.setPage(page);
     doc.setDrawColor(226, 232, 240);
     doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
-    drawDeployIqLogo(doc, margin, pageHeight - 9, 22, 8);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
-    doc.text(reportFooter, margin + 27, pageHeight - 3.5);
+    doc.text(reportFooter, margin, pageHeight - 3.5);
     doc.text(`Page ${page} of ${pages}`, pageWidth - margin, pageHeight - 3.5, { align: "right" });
     doc.setTextColor(15, 23, 42);
   }
