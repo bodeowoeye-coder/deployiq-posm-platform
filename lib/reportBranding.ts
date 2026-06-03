@@ -14,9 +14,7 @@ export function drawDeployIqLogo(doc: jsPDF, x: number, y: number, width = 31, h
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.setTextColor(255, 255, 255);
-  doc.text("Deploy", x + 3.5, y + 8.5);
-  doc.setTextColor(255, 138, 61);
-  doc.text("IQ", x + 20.8, y + 8.5);
+  doc.text("DeployIQ", x + width / 2, y + 8.5, { align: "center" });
   doc.setTextColor(15, 23, 42);
 }
 
