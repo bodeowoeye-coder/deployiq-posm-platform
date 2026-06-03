@@ -5,45 +5,18 @@ import { getCurrentUserContext } from "@/lib/auth";
 import { getBrandCounts, getInstallerCounts, getRegionCounts } from "@/lib/reporting";
 import type { Installer, ManagedUser, Submission } from "@/lib/types";
 import { displayProjectName } from "@/lib/projects";
+import { createReportId, drawReportFooter, drawReportHeader } from "@/lib/reportBranding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const pageWidth = 210;
 const margin = 14;
-const contentBottom = 278;
+const contentBottom = 276;
 const rowLineHeight = 4.5;
 
 function reportDate() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function companyName() {
-  return process.env.COMPANY_NAME || "Deployment Reporting";
-}
-
-function footer(doc: jsPDF, generatedAt: string) {
-  const pages = doc.getNumberOfPages();
-  for (let page = 1; page <= pages; page += 1) {
-    doc.setPage(page);
-    doc.setDrawColor(226, 232, 240);
-    doc.line(margin, 285, pageWidth - margin, 285);
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text(companyName(), margin, 291);
-    doc.text(`Generated ${generatedAt}`, pageWidth / 2, 291, { align: "center" });
-    doc.text(`Page ${page} of ${pages}`, pageWidth - margin, 291, { align: "right" });
-  }
-}
-
-function drawFallbackLogo(doc: jsPDF) {
-  doc.setFillColor(11, 124, 89);
-  doc.roundedRect(margin, 12, 28, 14, 2, 2, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "bold");
-  doc.text("DR", margin + 14, 21, { align: "center" });
-  doc.setTextColor(15, 23, 42);
 }
 
 function drawBars(doc: jsPDF, title: string, rows: Array<[string, number]>, x: number, y: number, width: number) {
@@ -79,23 +52,6 @@ async function imageToDataUrl(url: string) {
   } catch {
     return null;
   }
-}
-
-async function drawLogo(doc: jsPDF) {
-  const logoUrl = process.env.COMPANY_LOGO_URL;
-  if (logoUrl) {
-    const logo = await imageToDataUrl(logoUrl);
-    if (logo) {
-      try {
-        doc.addImage(logo.dataUrl, logo.format, margin, 12, 28, 14);
-        return;
-      } catch {
-        // Fall back to a text mark when the configured logo cannot be rendered.
-      }
-    }
-  }
-
-  drawFallbackLogo(doc);
 }
 
 function wrappedLines(doc: jsPDF, text: string, width: number) {
@@ -161,6 +117,7 @@ export async function GET(request: Request) {
   }
 
   const submissions = (data ?? []) as Submission[];
+  const reportId = createReportId(isFiltered ? "DPIQ-FLT" : "DPIQ-FULL");
   const installerUserIds = Array.from(new Set(submissions.map((item) => item.installer_user_id).filter((id): id is string => Boolean(id))));
   const [{ data: installers }, { data: profiles }] =
     installerUserIds.length > 0
@@ -206,18 +163,15 @@ export async function GET(request: Request) {
   const pendingCount = submissions.filter((item) => item.status === "Pending").length;
   const rejectedCount = submissions.filter((item) => item.status === "Rejected").length;
 
-  await drawLogo(doc);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(18);
-  doc.text("Deployment Installation Report", 48, 18);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`${isFiltered ? "Filtered" : "Full"} report | Generated ${generatedAt}`, 48, 25);
-  doc.setTextColor(15, 23, 42);
+  drawReportHeader(doc, pageWidth, "Deployment Installation Report", [
+    ["Client Name", "All clients"],
+    ["Project Name", project || "All projects"],
+    ["Generated Date/Time", generatedAt],
+    ["Report ID", reportId]
+  ]);
 
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, 36, pageWidth - margin * 2, 28, 2, 2, "F");
+  doc.roundedRect(margin, 64, pageWidth - margin * 2, 28, 2, 2, "F");
   const summary = [
     ["Total", submissions.length],
     ["Approved", approvedCount],
@@ -230,24 +184,27 @@ export async function GET(request: Request) {
     const x = margin + 8 + index * 29;
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
-    doc.text(String(label), x, 46);
+	    doc.text(String(label), x, 74);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
     doc.setTextColor(15, 23, 42);
-    doc.text(String(value), x, 57);
+	    doc.text(String(value), x, 85);
     doc.setFont("helvetica", "normal");
   });
 
-  drawBars(doc, "Regional breakdown", regionCounts.map((item) => [item.region, item.count]), margin, 78, 82);
-  drawBars(doc, "Brand breakdown", brandCounts.map((item) => [item.brand, item.count]), 112, 78, 82);
-  drawBars(doc, "Installer performance", installerCounts.map((item) => [item.installer, item.count]), margin, 130, 176);
+  drawBars(doc, "Regional breakdown", regionCounts.map((item) => [item.region, item.count]), margin, 106, 82);
+  drawBars(doc, "Brand breakdown", brandCounts.map((item) => [item.brand, item.count]), 112, 106, 82);
+  drawBars(doc, "Installer performance", installerCounts.map((item) => [item.installer, item.count]), margin, 158, 176);
 
   doc.addPage();
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.text("Installation Table", margin, 18);
+  drawReportHeader(doc, pageWidth, "Installation Table", [
+    ["Client Name", "All clients"],
+    ["Project Name", project || "All projects"],
+    ["Generated Date/Time", generatedAt],
+    ["Report ID", reportId]
+  ]);
 
-  let y = 28;
+  let y = 64;
   for (const item of submissions) {
     const textX = margin + 30;
     const textWidth = pageWidth - margin - textX - 4;
@@ -271,7 +228,13 @@ export async function GET(request: Request) {
 
     if (y + cardHeight > contentBottom) {
       doc.addPage();
-      y = 18;
+      drawReportHeader(doc, pageWidth, "Installation Table", [
+        ["Client Name", "All clients"],
+        ["Project Name", project || "All projects"],
+        ["Generated Date/Time", generatedAt],
+        ["Report ID", reportId]
+      ]);
+      y = 64;
     }
 
     doc.setDrawColor(226, 232, 240);
@@ -302,7 +265,7 @@ export async function GET(request: Request) {
     y += cardHeight + 5;
   }
 
-  footer(doc, generatedAt);
+  drawReportFooter(doc, pageWidth, 297, margin);
 
   const buffer = Buffer.from(doc.output("arraybuffer"));
   const filename = `${isFiltered ? "filtered" : "full"}-deployment-report-${reportDate()}.pdf`;

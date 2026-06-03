@@ -6,6 +6,7 @@ import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getBrandCounts, getRegionCounts } from "@/lib/reporting";
 import type { Submission } from "@/lib/types";
 import { DEFAULT_PROJECT_NAME, displayProjectName } from "@/lib/projects";
+import { createReportId, drawReportFooter, drawReportHeader } from "@/lib/reportBranding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -85,22 +86,46 @@ export async function GET(request: Request) {
       (!searchText || searchable.includes(searchText))
     );
   }) as Submission[];
-  const doc = new jsPDF();
-  let y = 18;
-  doc.setFontSize(18);
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
+  const reportId = createReportId(isFiltered ? "DPIQ-CLT-FLT" : "DPIQ-CLT");
+  let y = 66;
   const projectTitle = project || DEFAULT_PROJECT_NAME;
   const clientDisplayName = scoped.effectiveClient.name;
-  doc.text(`${clientDisplayName} — ${projectTitle}`, 14, y);
-  y += 10;
-  doc.setFontSize(11);
-  doc.text(`${isFiltered ? "Filtered" : "Full"} report generated ${new Date().toLocaleString()}`, 14, y);
-  y += 10;
-  doc.text(`Total installations: ${submissions.length}`, 14, y);
-  y += 8;
-  doc.text(`Regions covered: ${getRegionCounts(submissions).length}`, 14, y);
-  y += 8;
-  doc.text(`Brands represented: ${getBrandCounts(submissions).length}`, 14, y);
-  y += 12;
+  const regionCounts = getRegionCounts(submissions);
+  const brandCounts = getBrandCounts(submissions);
+  const approvedCount = submissions.filter((item) => item.status === "Approved").length;
+  const pendingCount = submissions.filter((item) => item.status === "Pending").length;
+  const rejectedCount = submissions.filter((item) => item.status === "Rejected").length;
+  drawReportHeader(doc, pageWidth, `${isFiltered ? "Filtered" : "Full"} Client Deployment Report`, [
+    ["Client Name", clientDisplayName],
+    ["Project Name", projectTitle],
+    ["Generated Date/Time", generatedAt],
+    ["Report ID", reportId]
+  ]);
+
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 30, 2, 2, "F");
+  const summary = [
+    ["Total", submissions.length],
+    ["Approved", approvedCount],
+    ["Pending", pendingCount],
+    ["Rejected", rejectedCount],
+    ["Regions", regionCounts.length],
+    ["Brands", brandCounts.length]
+  ];
+  summary.forEach(([label, value], index) => {
+    const x = margin + 8 + index * 29;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(String(label), x, y + 10);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(15, 23, 42);
+    doc.text(String(value), x, y + 22);
+  });
+  y += 42;
 
   for (const item of submissions) {
     doc.setFontSize(8);
@@ -121,7 +146,13 @@ export async function GET(request: Request) {
 
     if (y + cardHeight > contentBottom) {
       doc.addPage();
-      y = 18;
+      drawReportHeader(doc, pageWidth, "Client Deployment Evidence", [
+        ["Client Name", clientDisplayName],
+        ["Project Name", projectTitle],
+        ["Generated Date/Time", generatedAt],
+        ["Report ID", reportId]
+      ]);
+      y = 66;
     }
 
     doc.setDrawColor(226, 232, 240);
@@ -151,6 +182,7 @@ export async function GET(request: Request) {
     y += cardHeight + 5;
   }
 
+  drawReportFooter(doc, pageWidth, 297, margin);
   const buffer = Buffer.from(doc.output("arraybuffer"));
   const filename = `${isFiltered ? "filtered" : "full"}-client-deployment-report-${new Date().toISOString().slice(0, 10)}.pdf`;
   return new NextResponse(buffer, {

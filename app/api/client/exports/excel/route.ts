@@ -5,9 +5,36 @@ import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Submission } from "@/lib/types";
 import { displayProjectName } from "@/lib/projects";
+import { createReportId, reportFooter, reportSubtitle } from "@/lib/reportBranding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function addCoverSheet(workbook: XLSX.WorkBook, metadata: Array<[string, string]>) {
+  const rows = [
+    ["DeployIQ"],
+    [reportSubtitle],
+    [""],
+    ["Client Deployment Report"],
+    [""],
+    ...metadata,
+    [""],
+    [reportFooter]
+  ];
+  const cover = XLSX.utils.aoa_to_sheet(rows);
+  cover["!cols"] = [{ wch: 28 }, { wch: 52 }];
+  cover["!freeze"] = { xSplit: 0, ySplit: 4 };
+  ["A1", "A2", "A4"].forEach((address) => {
+    const cell = cover[address];
+    if (cell) {
+      cell.s = {
+        font: { bold: true, color: { rgb: address === "A1" ? "FF8A3D" : "0F172A" }, sz: address === "A1" ? 24 : 14 },
+        alignment: { horizontal: "left" }
+      };
+    }
+  });
+  XLSX.utils.book_append_sheet(workbook, cover, "Cover");
+}
 
 export async function GET(request: Request) {
   const context = await getCurrentUserContext();
@@ -62,6 +89,9 @@ export async function GET(request: Request) {
     );
   });
 
+  const projectTitle = project || "All projects";
+  const reportId = createReportId(isFiltered ? "DPIQ-CLT-XLS-FLT" : "DPIQ-CLT-XLS");
+  const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
   const rows = ((data ?? []) as Submission[]).map((item) => ({
     "Project Name": displayProjectName(item.project_name),
     "Brand Name": item.brand_name ?? "",
@@ -86,6 +116,13 @@ export async function GET(request: Request) {
   }));
 
   const workbook = XLSX.utils.book_new();
+  addCoverSheet(workbook, [
+    ["Client", scoped.effectiveClient.name],
+    ["Project", projectTitle],
+    ["Generated Date", generatedAt],
+    ["Report ID", reportId],
+    ["Report Type", isFiltered ? "Filtered Client Excel Report" : "Full Client Excel Report"]
+  ]);
   const sheet = XLSX.utils.json_to_sheet(rows);
   const headers = Object.keys(
     rows[0] ?? {

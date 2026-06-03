@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, FileText, Inbox, Loader2, Search } from "lucide-react";
+import { Download, FileText, Inbox, Loader2, MapPin, Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -175,7 +175,9 @@ export function ClientDashboard({
   const brandCounts = getBrandCounts(filtered);
   const stateCounts = getStateCounts(filtered);
   const projectCounts = getProjectCounts(filtered);
+  const approvedCount = filtered.filter((item) => item.status === "Approved").length;
   const pendingCount = filtered.filter((item) => item.status === "Pending").length;
+  const rejectedCount = filtered.filter((item) => item.status === "Rejected").length;
   const mappedCount = filtered.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null).length;
   const exportQuery = buildExportQuery(filters);
   const metrics = getExecutiveMetrics(filtered);
@@ -186,7 +188,9 @@ export function ClientDashboard({
   const clientDisplayName = client.name;
   const projectOperations = getProjectOperations(projects, projectTargets, filtered, deploymentProgress);
   const portfolio = getPortfolioOperations(projectOperations);
-  const stageTotals = getStageTotals(projectOperations);
+  const statesCovered = stateCounts.filter((item) => item.state !== "Unknown").length;
+  const brandsCovered = brandCounts.length;
+  const recentApproved = filtered.filter((item) => item.status === "Approved").slice(0, 5);
 
   function setFilter(key: keyof Filters, value: string) {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -249,17 +253,36 @@ export function ClientDashboard({
           <p className="mt-2 text-xs font-medium text-slate-500">Last updated: {lastUpdated || "Loading..."}</p>
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} min-w-0 gap-4 sm:grid-cols-3`}>
-          <SummaryCard label="Total installs" value={filtered.length} />
-          <SummaryCard label="Pending" value={pendingCount} />
-          <SummaryCard label="Avg. turnaround" value={metrics.approvalTurnaroundHours} suffix="h" />
+        <div className={`${activeView === "overview" ? "block" : "hidden"} min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm`}>
+          <div className="grid min-w-0 gap-4 bg-slate-950 p-5 text-white lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
+            <div className="min-w-0">
+              <div className="inline-flex rounded-lg border border-orange-300/40 bg-orange-500/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-orange-200">DeployIQ</div>
+              <h2 className="mt-4 whitespace-normal break-words text-2xl font-extrabold leading-tight sm:text-3xl">Client Executive Deployment Summary</h2>
+              <p className="mt-2 max-w-3xl whitespace-normal break-words text-sm leading-relaxed text-slate-300">
+                {clientDisplayName} deployment visibility for {activeProjectName}. Review progress, geographic coverage, brand execution, and approved photo evidence.
+              </p>
+            </div>
+            <div className="grid min-w-0 gap-2 rounded-xl border border-white/10 bg-white/5 p-4 text-sm">
+              <MetaLine label="Client" value={clientDisplayName} />
+              <MetaLine label="Project" value={activeProjectName} />
+              <MetaLine label="Generated" value={lastUpdated || "Loading..."} />
+            </div>
+          </div>
+          <div className="grid min-w-0 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-6">
+            <SummaryCard label="Total deployments" value={filtered.length} />
+            <SummaryCard label="Approved" value={approvedCount} />
+            <SummaryCard label="Pending" value={pendingCount} />
+            <SummaryCard label="Rejected" value={rejectedCount} />
+            <SummaryCard label="States covered" value={statesCovered} />
+            <SummaryCard label="Brands covered" value={brandsCovered} />
+          </div>
         </div>
 
         <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
           <SummaryCard label="Expected deployments" value={portfolio.expected} />
           <SummaryCard label="Actual deployments" value={portfolio.actual} />
-          <SummaryCard label="Completion" value={portfolio.completion} suffix="%" />
-          <SummaryCard label="Outstanding" value={portfolio.outstanding} />
+          <SummaryCard label="Outstanding deployments" value={portfolio.outstanding} />
+          <SummaryCard label="Completion percentage" value={portfolio.completion} suffix="%" />
         </div>
 
         <div className={`${activeView === "overview" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
@@ -339,30 +362,30 @@ export function ClientDashboard({
           {exportError ? <p className="mt-3 whitespace-normal break-words text-sm leading-snug text-rose-700">{exportError}</p> : null}
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
-          <ChartPanel title="Installations by region" data={regionCounts} xKey="region" />
-          <ChartPanel title="Installations by brand" data={brandCounts} xKey="brand" color="#7c3aed" />
-          <ChartPanel title="Daily uploads" data={dailyCounts} xKey="date" color="#2563eb" />
+        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-2`}>
+          <ExecutiveBars title="Regional breakdown" rows={regionCounts.map((item) => [item.region, item.count])} />
+          <ExecutiveBars title="Brand breakdown" rows={brandCounts.map((item) => [item.brand, item.count])} accent="#7c3aed" />
         </div>
 
-        <div className={`${activeView === "overview" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
-          <h2 className="mb-3 whitespace-normal break-words text-base font-bold leading-snug">Deployment progress trend</h2>
-          <div className="min-w-0 overflow-hidden">
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={trendSeries}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Line dataKey="submissions" stroke="#2563eb" strokeWidth={2} />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]`}>
+          <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex min-w-0 items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="whitespace-normal break-words text-base font-bold leading-snug">Deployment map summary</h2>
+                <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">GPS-backed coverage and deployment density overview.</p>
+              </div>
+              <MapPin className="shrink-0 text-orange-500" aria-hidden size={24} />
+            </div>
+            <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-3">
+              <MiniMetric label="States covered" value={statesCovered} />
+              <MiniMetric label="GPS verified" value={mappedCount} />
+              <MiniMetric label="Density" value={mappedCount === 0 ? "No GPS data" : `${mappedCount} mapped`} />
+            </div>
+            <button className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-orange-600" type="button" onClick={() => setActiveView("map")}>
+              View Full Deployment Map
+            </button>
           </div>
-        </div>
-
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]`}>
-          <ProjectPortfolioPanel rows={projectOperations} />
-          <FunnelPanel rows={stageTotals} />
+          <ApprovedInstallationsPanel rows={recentApproved} onOpen={(item) => setLightboxIndex(filtered.findIndex((record) => record.id === item.id))} />
         </div>
 
         {activeView === "map" ? (
@@ -463,6 +486,15 @@ function SummaryCard({ label, value, suffix = "" }: { label: string; value: numb
   );
 }
 
+function MetaLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-start justify-between gap-3 border-b border-white/10 pb-2 last:border-b-0 last:pb-0">
+      <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</span>
+      <span className="min-w-0 whitespace-normal break-words text-right text-sm font-semibold text-white">{value}</span>
+    </div>
+  );
+}
+
 function FilterField({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid min-w-0 gap-1 whitespace-normal break-words text-xs font-semibold leading-snug text-slate-600">
@@ -479,6 +511,60 @@ function ExportButton({ onClick, icon, label, loading }: { onClick: () => void; 
       {loading ? <Loader2 className="animate-spin" aria-hidden size={16} /> : <Icon aria-hidden size={16} />}
       {loading ? "Generating..." : label}
     </button>
+  );
+}
+
+function ExecutiveBars({ title, rows, accent = "#0b7c59" }: { title: string; rows: Array<[string, number]>; accent?: string }) {
+  const max = Math.max(...rows.map((row) => row[1]), 1);
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <h2 className="mb-4 whitespace-normal break-words text-base font-bold leading-snug">{title}</h2>
+      {rows.length === 0 ? (
+        <EmptyState title="No summary data" message="This summary will populate once matching submissions are available." />
+      ) : (
+        <div className="grid min-w-0 gap-3">
+          {rows.slice(0, 8).map(([label, value]) => (
+            <div className="grid min-w-0 gap-1" key={label}>
+              <div className="flex min-w-0 items-center justify-between gap-3 text-sm">
+                <span className="min-w-0 whitespace-normal break-words font-semibold leading-snug text-slate-700">{label}</span>
+                <span className="shrink-0 font-bold text-slate-950">{value}</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-full rounded-full" style={{ width: `${Math.max(6, (value / max) * 100)}%`, backgroundColor: accent }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ApprovedInstallationsPanel({ rows, onOpen }: { rows: Submission[]; onOpen: (item: Submission) => void }) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <h2 className="whitespace-normal break-words text-base font-bold leading-snug">Recent approved installations</h2>
+      <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">Latest approved outlet evidence available to the client team.</p>
+      <div className="mt-4 grid min-w-0 gap-3">
+        {rows.length === 0 ? <EmptyState title="No approved installations yet" message="Approved evidence will appear here once reviewed." /> : null}
+        {rows.map((item) => (
+          <button
+            key={item.id}
+            className="grid min-w-0 gap-3 rounded-lg bg-slate-50 p-3 text-left transition hover:bg-orange-50 sm:grid-cols-[72px_minmax(0,1fr)]"
+            type="button"
+            onClick={() => onOpen(item)}
+          >
+            <img className="h-16 w-16 rounded-lg object-cover" src={item.image_url} alt={item.salon_name || "Approved installation"} />
+            <span className="min-w-0">
+              <span className="block whitespace-normal break-words text-sm font-bold leading-snug text-slate-950">{item.salon_name || "Outlet name not visible"}</span>
+              <span className="mt-1 block whitespace-normal break-words text-xs leading-snug text-slate-500">
+                {item.installer_state || "Unknown state"} | {item.brand_name || "Unassigned brand"} | {item.installation_date ?? displaySubmissionDate(item.submitted_at)}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
