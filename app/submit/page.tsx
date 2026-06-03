@@ -888,6 +888,33 @@ export default function SubmitPage() {
               />
             </Field>
 
+            <div className="grid min-w-0 gap-3 rounded-lg border border-orange-100 bg-orange-50/70 p-3 sm:grid-cols-2">
+              <div className="min-w-0 sm:col-span-2">
+                <p className="text-sm font-bold text-slate-950">Location / Address details</p>
+                <p className="mt-1 text-xs leading-snug text-slate-600">
+                  Add the nearest address and landmark for field reporting. GPS will still be captured automatically when available.
+                </p>
+              </div>
+              <Field label="Location / Address">
+                <textarea
+                  className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                  value={manualLocationDescription}
+                  onChange={(event) => setManualLocationDescription(event.target.value)}
+                  placeholder="E.g. beside First Bank, Allen Avenue"
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Landmark">
+                <input
+                  className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                  value={manualLandmark}
+                  onChange={(event) => setManualLandmark(event.target.value)}
+                  placeholder="Nearest landmark"
+                  autoComplete="off"
+                />
+              </Field>
+            </div>
+
             <Field label="Installed board picture">
               {previewUrl ? (
                 <img className="max-h-80 w-full rounded-lg border border-slate-200 object-cover" src={previewUrl} alt="Selected installed board" />
@@ -946,33 +973,6 @@ export default function SubmitPage() {
                 ) : null}
               </div>
             </div>
-
-            {position.status !== "captured" ? (
-              <div className="grid min-w-0 gap-3 rounded-lg border border-orange-100 bg-orange-50/70 p-3 sm:grid-cols-2">
-                <div className="min-w-0 sm:col-span-2">
-                  <p className="text-sm font-bold text-slate-950">Manual location fallback</p>
-                  <p className="mt-1 text-xs leading-snug text-slate-600">Use these fields when GPS is unavailable. The upload will still be marked GPS unavailable.</p>
-                </div>
-                <Field label="Nearest address/location description">
-                  <textarea
-                    className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    value={manualLocationDescription}
-                    onChange={(event) => setManualLocationDescription(event.target.value)}
-                    placeholder="E.g. beside First Bank, Allen Avenue"
-                    autoComplete="off"
-                  />
-                </Field>
-                <Field label="Landmark">
-                  <input
-                    className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    value={manualLandmark}
-                    onChange={(event) => setManualLandmark(event.target.value)}
-                    placeholder="Nearest landmark"
-                    autoComplete="off"
-                  />
-                </Field>
-              </div>
-            ) : null}
 
             {result === "success" ? (
               <div className="flex min-w-0 items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm leading-snug text-emerald-700">
