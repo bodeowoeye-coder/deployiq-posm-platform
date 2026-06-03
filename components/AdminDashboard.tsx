@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BRANDS, STATUSES } from "@/lib/brands";
 import type { Agency, AuditLog, Brand, Client, ClientProfile, DeploymentProgress, Installer, ManagedUser, Project, ProjectTarget, Submission, SubmissionStatus, SubmissionStatusHistory } from "@/lib/types";
 import {
+  canonicalInstallerName,
   getBrandComplianceScores,
   getBrandCounts,
   getDailyCounts,
@@ -340,7 +341,8 @@ export function AdminDashboard({
   const dailyCounts = getDailyCounts(filtered);
   const regionCounts = getRegionCounts(filtered);
   const brandCounts = getBrandCounts(filtered);
-  const installerCounts = getInstallerCounts(filtered);
+  const installerIdentitySource = { installers: installerRecords, users: userRecords };
+  const installerCounts = getInstallerCounts(filtered, installerIdentitySource);
   const today = new Date().toISOString().slice(0, 10);
   const todayCount = dailyCounts.find((item) => item.date === today)?.count ?? 0;
   const approvedCount = filtered.filter((item) => item.status === "Approved").length;
@@ -349,7 +351,7 @@ export function AdminDashboard({
   const exportQuery = buildExportQuery(filters);
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
-  const installerAccuracy = getInstallerAccuracyRanking(filtered);
+  const installerAccuracy = getInstallerAccuracyRanking(filtered, installerIdentitySource);
   const regionPerformance = getRegionPerformanceRanking(filtered);
   const brandCompliance = getBrandComplianceScores(filtered);
   const projectOptions = Array.from(new Set(records.map((item) => displayProjectName(item.project_name)))).sort();
@@ -930,7 +932,7 @@ export function AdminDashboard({
                   </div>
                   <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-slate-600">{item.address || "Address not visible"}</p>
                   <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
-                    {item.brand_name || "Unassigned brand"} | {item.installer_name || "Unnamed installer"} | {item.installer_region || "Unknown region"}
+                    {item.brand_name || "Unassigned brand"} | {canonicalInstallerName(item.installer_user_id, item.installer_name, installerIdentitySource)} | {item.installer_region || "Unknown region"}
                   </p>
                   <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
                     Project: {displayProjectName(item.project_name)}
@@ -1069,7 +1071,9 @@ export function AdminDashboard({
         {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
         {activeView === "clients" ? <ClientManagementPanel clients={clients} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onSave={updateClientProfile} /> : null}
         {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clients} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
-        {activeView === "installers" ? <InstallerManagementPanel installers={installerRecords} submissions={records} projects={projectRecords} agencies={agencyRecords} /> : null}
+        {activeView === "installers" ? (
+          <InstallerManagementPanel installers={installerRecords} submissions={records} projects={projectRecords} agencies={agencyRecords} users={userRecords} />
+        ) : null}
         {activeView === "agencies" ? <AgencyManagementPanel agencies={agencyRecords} installers={installerRecords} submissions={records} projects={projectRecords} onCreate={createAgency} /> : null}
         {activeView === "regions" ? <AdminPlaceholder title="Regions & Territories" message="Coming soon: territory rules and coverage configuration." /> : null}
         {activeView === "preferences" ? <AdminPlaceholder title="System Preferences" message="Coming soon: operational defaults and platform preferences." /> : null}
@@ -1722,12 +1726,14 @@ function InstallerManagementPanel({
   installers,
   submissions,
   projects,
-  agencies
+  agencies,
+  users
 }: {
   installers: Installer[];
   submissions: Submission[];
   projects: Project[];
   agencies: Agency[];
+  users: ManagedUser[];
 }) {
   return (
     <div className="mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
@@ -1736,16 +1742,20 @@ function InstallerManagementPanel({
       <div className="mt-4 grid gap-3">
         {installers.length === 0 ? <div className="text-sm text-slate-500">No installers configured yet.</div> : null}
         {installers.map((installer) => {
-          const installerSubmissions = submissions.filter((item) => item.installer_name === installer.installer_name);
+          const installerSubmissions = submissions.filter((item) => {
+            if (installer.user_id && item.installer_user_id) return item.installer_user_id === installer.user_id;
+            return item.installer_name === installer.installer_name;
+          });
           const approved = installerSubmissions.filter((item) => item.status === "Approved").length;
           const rejected = installerSubmissions.filter((item) => item.status === "Rejected").length;
           const duplicates = installerSubmissions.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique").length;
           const agency = agencies.find((item) => item.id === installer.agency_id);
           const assignedProjects = projects.filter((project) => installer.assigned_project_ids.includes(project.id));
+          const displayName = canonicalInstallerName(installer.user_id, installer.installer_name, { installers, users });
           return (
             <div key={installer.id} className="grid min-w-0 gap-3 rounded-lg bg-slate-50 p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
               <div className="min-w-0">
-                <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{installer.installer_name}</p>
+                <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{displayName}</p>
                 <p className="mt-1 text-xs text-slate-500">
                   {agency?.agency_name || "Independent"} | {installer.status}
                 </p>
@@ -1813,7 +1823,11 @@ function AgencyManagementPanel({
           {agencies.map((agency) => {
             const assignedInstallers = installers.filter((installer) => installer.agency_id === agency.id);
             const installerNames = assignedInstallers.map((item) => item.installer_name);
-            const agencySubmissions = submissions.filter((item) => installerNames.includes(item.installer_name ?? ""));
+            const installerUserIds = new Set(assignedInstallers.map((item) => item.user_id).filter((id): id is string => Boolean(id)));
+            const agencySubmissions = submissions.filter((item) => {
+              if (item.installer_user_id && installerUserIds.has(item.installer_user_id)) return true;
+              return installerNames.includes(item.installer_name ?? "");
+            });
             const approved = agencySubmissions.filter((item) => item.status === "Approved").length;
             const reviewed = agencySubmissions.filter((item) => item.reviewed_at);
             const slaCompliant = reviewed.filter((item) => new Date(item.reviewed_at!).getTime() - new Date(item.submitted_at).getTime() <= 48 * 3600000).length;

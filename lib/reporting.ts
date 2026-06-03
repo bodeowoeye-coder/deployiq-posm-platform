@@ -1,4 +1,4 @@
-import type { Submission } from "@/lib/types";
+import type { Installer, ManagedUser, Submission } from "@/lib/types";
 import { safeDate, safeDateKey } from "@/lib/dateUtils";
 
 function sortCounts<T extends string>(counts: Map<T, number>, key: string) {
@@ -64,13 +64,30 @@ export function getProjectCounts(submissions: Submission[]) {
   return sortCounts(counts, "project") as Array<{ project: string; count: number }>;
 }
 
-export function getInstallerCounts(submissions: Submission[]) {
+type InstallerIdentitySource = {
+  installers?: Installer[];
+  users?: ManagedUser[];
+};
+
+export function canonicalInstallerName(userId: string | null | undefined, fallbackName: string | null | undefined, source?: InstallerIdentitySource) {
+  if (userId) {
+    const installer = source?.installers?.find((item) => item.user_id === userId);
+    if (installer?.installer_name?.trim()) return installer.installer_name.trim();
+
+    const user = source?.users?.find((item) => item.user_id === userId);
+    if (user?.full_name?.trim()) return user.full_name.trim();
+  }
+
+  return fallbackName?.trim() || "Unnamed installer";
+}
+
+export function getInstallerCounts(submissions: Submission[], source?: InstallerIdentitySource) {
   const counts = new Map<string, { installer: string; count: number }>();
 
   submissions.forEach((item) => {
     const key = item.installer_user_id || item.installer_name || "unknown-installer";
-    const current = counts.get(key) ?? { installer: item.installer_name || "Unnamed installer", count: 0 };
-    current.installer = item.installer_name || current.installer;
+    const current = counts.get(key) ?? { installer: canonicalInstallerName(item.installer_user_id, item.installer_name, source), count: 0 };
+    current.installer = canonicalInstallerName(item.installer_user_id, current.installer, source);
     current.count += 1;
     counts.set(key, current);
   });
@@ -112,12 +129,12 @@ export function getExecutiveMetrics(submissions: Submission[]) {
   };
 }
 
-export function getInstallerAccuracyRanking(submissions: Submission[]) {
+export function getInstallerAccuracyRanking(submissions: Submission[], source?: InstallerIdentitySource) {
   const buckets = new Map<string, { installer: string; total: number; matched: number }>();
   submissions.forEach((item) => {
     const key = item.installer_user_id || item.installer_name || "unknown-installer";
-    const current = buckets.get(key) ?? { installer: item.installer_name || "Unnamed installer", total: 0, matched: 0 };
-    current.installer = item.installer_name || current.installer;
+    const current = buckets.get(key) ?? { installer: canonicalInstallerName(item.installer_user_id, item.installer_name, source), total: 0, matched: 0 };
+    current.installer = canonicalInstallerName(item.installer_user_id, current.installer, source);
     current.total += 1;
     if (item.brand_match_status === "Matched") current.matched += 1;
     buckets.set(key, current);

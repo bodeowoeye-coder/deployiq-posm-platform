@@ -3,7 +3,7 @@ import { jsPDF } from "jspdf";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getCurrentUserContext } from "@/lib/auth";
 import { getBrandCounts, getInstallerCounts, getRegionCounts } from "@/lib/reporting";
-import type { Submission } from "@/lib/types";
+import type { Installer, ManagedUser, Submission } from "@/lib/types";
 import { displayProjectName } from "@/lib/projects";
 
 export const runtime = "nodejs";
@@ -161,11 +161,47 @@ export async function GET(request: Request) {
   }
 
   const submissions = (data ?? []) as Submission[];
+  const installerUserIds = Array.from(new Set(submissions.map((item) => item.installer_user_id).filter((id): id is string => Boolean(id))));
+  const [{ data: installers }, { data: profiles }] =
+    installerUserIds.length > 0
+      ? await Promise.all([
+          supabase.from("installers").select("*").in("user_id", installerUserIds),
+          supabase.schema("public").from("user_profiles").select("user_id, full_name, email, phone, agency_id, assigned_project_ids, assigned_regions, assigned_states, status, created_at, updated_at").in("user_id", installerUserIds)
+        ])
+      : [{ data: [] }, { data: [] }];
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const generatedAt = new Date().toLocaleString();
   const regionCounts = getRegionCounts(submissions);
   const brandCounts = getBrandCounts(submissions);
-  const installerCounts = getInstallerCounts(submissions);
+  const installerCounts = getInstallerCounts(submissions, {
+    installers: (installers ?? []) as Installer[],
+    users: ((profiles ?? []) as Array<{
+      user_id: string;
+      full_name: string | null;
+      email: string | null;
+      phone: string | null;
+      agency_id: string | null;
+      assigned_project_ids: string[] | null;
+      assigned_regions: string[] | null;
+      assigned_states: string[] | null;
+      status: ManagedUser["status"];
+      created_at: string | null;
+    }>).map((profile) => ({
+      user_id: profile.user_id,
+      full_name: profile.full_name ?? "",
+      email: profile.email ?? "",
+      phone: profile.phone,
+      role: "installer",
+      client_id: null,
+      agency_id: profile.agency_id,
+      assigned_project_ids: profile.assigned_project_ids ?? [],
+      assigned_regions: profile.assigned_regions ?? [],
+      assigned_states: profile.assigned_states ?? [],
+      status: profile.status,
+      created_at: profile.created_at ?? "",
+      last_sign_in_at: null
+    }))
+  });
   const approvedCount = submissions.filter((item) => item.status === "Approved").length;
   const pendingCount = submissions.filter((item) => item.status === "Pending").length;
   const rejectedCount = submissions.filter((item) => item.status === "Rejected").length;
