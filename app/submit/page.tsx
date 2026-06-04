@@ -262,6 +262,7 @@ export default function SubmitPage() {
   }
 
   async function requestLocation() {
+    const gpsStart = performance.now();
     const manualSecureContextBlocked =
       typeof window !== "undefined" &&
       !window.isSecureContext &&
@@ -269,6 +270,7 @@ export default function SubmitPage() {
 
     if (!navigator.geolocation) {
       setIsGettingLocation(false);
+      console.info("[submit-timing]", { stage: "gps", result: "unsupported", durationMs: timingMs(gpsStart) });
       setPosition({
         latitude: null,
         longitude: null,
@@ -293,6 +295,7 @@ export default function SubmitPage() {
 
     if (manualSecureContextBlocked) {
       setIsGettingLocation(false);
+      console.info("[submit-timing]", { stage: "gps", result: "blocked-insecure-context", durationMs: timingMs(gpsStart) });
       setPosition({
         latitude: null,
         longitude: null,
@@ -308,6 +311,7 @@ export default function SubmitPage() {
       const permission = await permissionsApi?.query?.({ name: "geolocation" as PermissionName });
       if (permission?.state === "denied") {
         setIsGettingLocation(false);
+        console.info("[submit-timing]", { stage: "gps", result: "permission-denied-before-prompt", durationMs: timingMs(gpsStart) });
         setPosition({
           latitude: null,
           longitude: null,
@@ -341,12 +345,14 @@ export default function SubmitPage() {
           address: null
         });
         setIsGettingLocation(false);
+        console.info("[submit-timing]", { stage: "gps", result: "captured", durationMs: timingMs(gpsStart) });
         await resolveCapturedAddress(latitude, longitude);
       },
       (geoError) => {
         if (locationAttemptRef.current !== attemptId) return;
         const denied = geoError.code === geoError.PERMISSION_DENIED;
         if (!denied && retryOnTimeout) {
+          console.info("[submit-timing]", { stage: "gps", result: "retrying-balanced-fallback", durationMs: timingMs(gpsStart) });
           setPosition((prev) => ({
             ...prev,
             status: "pending",
@@ -356,6 +362,11 @@ export default function SubmitPage() {
           return;
         }
         setIsGettingLocation(false);
+        console.info("[submit-timing]", {
+          stage: "gps",
+          result: denied ? "permission-denied" : "unavailable",
+          durationMs: timingMs(gpsStart)
+        });
         setPosition({
           latitude: null,
           longitude: null,
@@ -409,45 +420,81 @@ export default function SubmitPage() {
   }
 
   function prepareImagePreview(file: File) {
+    const previewStart = performance.now();
     resetPreviewObjectUrl();
-    setPreviewUrl("");
     setPreviewError("");
     setPreviewStatus("preparing");
 
     const objectUrl = URL.createObjectURL(file);
+    previewObjectUrlRef.current = objectUrl;
+    setPreviewUrl(objectUrl);
+    setPreviewStatus("ready");
+    console.info("[submit-timing]", {
+      stage: "photo-preview",
+      method: "object-url-immediate",
+      fileSize: file.size,
+      fileType: file.type,
+      durationMs: timingMs(previewStart)
+    });
+
+    function useFileReaderFallback(reason: string) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          resetPreviewObjectUrl();
+          setPreviewUrl(reader.result);
+          setPreviewStatus("ready");
+          setPreviewError("");
+          console.info("[submit-timing]", {
+            stage: "photo-preview",
+            method: "filereader-fallback",
+            reason,
+            fileSize: file.size,
+            fileType: file.type,
+            durationMs: timingMs(previewStart)
+          });
+          return;
+        }
+        resetPreviewObjectUrl();
+        setPreviewUrl("");
+        setPreviewStatus("error");
+        setPreviewError("Photo attached. Preview unavailable.");
+      };
+      reader.onerror = () => {
+        resetPreviewObjectUrl();
+        setPreviewUrl("");
+        setPreviewStatus("error");
+        setPreviewError("Photo attached. Preview unavailable.");
+      };
+      reader.readAsDataURL(file);
+    }
+
     const probe = new Image();
     const timeout = window.setTimeout(() => {
       probe.onload = null;
       probe.onerror = null;
-      URL.revokeObjectURL(objectUrl);
-      setPreviewStatus("error");
-      setPreviewError("Image preview is taking too long. Please retry or choose the photo again.");
+      console.info("[submit-timing]", {
+        stage: "photo-preview",
+        method: "decode-timeout-nonblocking",
+        fileSize: file.size,
+        fileType: file.type,
+        durationMs: timingMs(previewStart)
+      });
     }, 10000);
 
     probe.onload = () => {
       window.clearTimeout(timeout);
-      previewObjectUrlRef.current = objectUrl;
-      setPreviewUrl(objectUrl);
-      setPreviewStatus("ready");
+      console.info("[submit-timing]", {
+        stage: "photo-preview",
+        method: "object-url-decode-confirmed",
+        fileSize: file.size,
+        fileType: file.type,
+        durationMs: timingMs(previewStart)
+      });
     };
     probe.onerror = () => {
       window.clearTimeout(timeout);
-      URL.revokeObjectURL(objectUrl);
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          setPreviewUrl(reader.result);
-          setPreviewStatus("ready");
-          return;
-        }
-        setPreviewStatus("error");
-        setPreviewError("Could not prepare image preview. Please retake or choose the photo again.");
-      };
-      reader.onerror = () => {
-        setPreviewStatus("error");
-        setPreviewError("Could not prepare image preview. Please retake or choose the photo again.");
-      };
-      reader.readAsDataURL(file);
+      useFileReaderFallback("object-url-probe-error");
     };
     probe.src = objectUrl;
   }
@@ -470,6 +517,10 @@ export default function SubmitPage() {
     if (!input) return;
     input.value = "";
     input.click();
+  }
+
+  function timingMs(start: number) {
+    return Math.round((performance.now() - start) * 10) / 10;
   }
 
   function currentQueueFields(submitAnyway: boolean, capturedAt = new Date().toISOString()) {
@@ -495,6 +546,7 @@ export default function SubmitPage() {
   }
 
   async function saveOfflineUpload(uploadImage: Blob, submitAnyway: boolean, id = createLocalSubmissionId(), message = "Saved offline. This upload will sync automatically when internet returns.") {
+    const offlineStart = performance.now();
     await queueSubmission({
       image: uploadImage,
       id,
@@ -510,6 +562,13 @@ export default function SubmitPage() {
     setResult("offline");
     setError(message);
     showToast(message);
+    console.info("[submit-timing]", {
+      stage: "offline-fallback",
+      result: "queued",
+      imageSize: uploadImage.size,
+      imageType: uploadImage.type,
+      durationMs: timingMs(offlineStart)
+    });
   }
 
   async function verifyQueueConnectivity() {
@@ -676,15 +735,24 @@ export default function SubmitPage() {
   async function submitReport(submitAnyway = false) {
     if (!image) return;
     const localSubmissionId = createLocalSubmissionId();
+    const totalSubmitStart = performance.now();
 
     setIsSubmitting(true);
     setResult("idle");
     setError("");
 
     try {
+      const compressionStart = performance.now();
       const compressed = await compressImage(image);
+      console.info("[submit-timing]", {
+        stage: "photo-compression",
+        originalSize: image.size,
+        compressedSize: compressed.size,
+        durationMs: timingMs(compressionStart)
+      });
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         await saveOfflineUpload(compressed, submitAnyway, localSubmissionId);
+        console.info("[submit-timing]", { stage: "submit-total", result: "queued-offline", durationMs: timingMs(totalSubmitStart) });
         return;
       }
 
@@ -706,7 +774,9 @@ export default function SubmitPage() {
       formData.append("capturedAt", new Date().toISOString());
       formData.append("submitAnyway", String(submitAnyway));
 
+      const apiSubmitStart = performance.now();
       const response = await fetch("/api/submissions", { method: "POST", body: formData });
+      console.info("[submit-timing]", { stage: "api-submit-roundtrip", status: response.status, ok: response.ok, durationMs: timingMs(apiSubmitStart) });
 
       const body = await response.json().catch(() => ({}));
 
@@ -718,12 +788,14 @@ export default function SubmitPage() {
           mismatchReason: body.mismatchReason ?? null,
           aiReviewNote: body.aiReviewNote ?? null
         });
+        console.info("[submit-timing]", { stage: "submit-total", result: "brand-review-confirmation", durationMs: timingMs(totalSubmitStart) });
         return;
       }
 
       if (!response.ok) {
         if (response.status >= 500) {
           await saveOfflineUpload(compressed, submitAnyway, localSubmissionId);
+          console.info("[submit-timing]", { stage: "submit-total", result: "queued-after-server-error", durationMs: timingMs(totalSubmitStart) });
           return;
         }
         throw new Error(body.error || "Submission failed.");
@@ -738,6 +810,7 @@ export default function SubmitPage() {
       setMismatchWarning(null);
       setResult("success");
       showToast("Report submitted successfully.");
+      console.info("[submit-timing]", { stage: "submit-total", result: "success", durationMs: timingMs(totalSubmitStart) });
     } catch (submitError) {
       setResult("error");
       const message = submitError instanceof Error ? submitError.message : "Submission failed.";
@@ -746,6 +819,7 @@ export default function SubmitPage() {
         try {
           const compressed = await compressImage(image);
           await saveOfflineUpload(compressed, submitAnyway, localSubmissionId);
+          console.info("[submit-timing]", { stage: "submit-total", result: "queued-after-network-error", durationMs: timingMs(totalSubmitStart) });
           return;
         } catch {
           // Keep the original submission error visible when the browser cannot persist the local file.
@@ -1003,7 +1077,42 @@ export default function SubmitPage() {
                   </div>
                 </div>
               ) : previewUrl ? (
-                <img className="max-h-80 w-full rounded-lg border border-slate-200 object-cover" src={previewUrl} alt="Selected installed board" />
+                <img
+                  className="max-h-80 w-full rounded-lg border border-slate-200 object-cover"
+                  src={previewUrl}
+                  alt="Selected installed board"
+                  onError={() => {
+                    if (previewUrl.startsWith("data:")) {
+                      setPreviewUrl("");
+                      setPreviewStatus("error");
+                      setPreviewError("Photo attached. Preview unavailable.");
+                      return;
+                    }
+                    if (image) {
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        if (typeof reader.result === "string") {
+                          resetPreviewObjectUrl();
+                          setPreviewUrl(reader.result);
+                          setPreviewStatus("ready");
+                          setPreviewError("");
+                          return;
+                        }
+                        resetPreviewObjectUrl();
+                        setPreviewUrl("");
+                        setPreviewStatus("error");
+                        setPreviewError("Photo attached. Preview unavailable.");
+                      };
+                      reader.onerror = () => {
+                        resetPreviewObjectUrl();
+                        setPreviewUrl("");
+                        setPreviewStatus("error");
+                        setPreviewError("Photo attached. Preview unavailable.");
+                      };
+                      reader.readAsDataURL(image);
+                    }
+                  }}
+                />
               ) : previewStatus === "error" ? (
                 <div className="flex min-h-36 min-w-0 items-center justify-center rounded-lg border border-dashed border-rose-200 bg-rose-50 p-5 text-center text-rose-700" aria-live="polite">
                   <div>
