@@ -544,6 +544,14 @@ export default function SubmitPage() {
     const file = event.target.files?.[0] ?? null;
     console.info("[android-preview]", { stage: "file-input-onchange-fired" });
     console.info("[android-preview]", { stage: "file-input-files-length", filesLength: event.target.files?.length ?? 0 });
+    sendAndroidPreviewDiagnostic("file-input-onchange-fired");
+    sendAndroidPreviewDiagnostic("file-input-files-length", {
+      filesLength: event.target.files?.length ?? 0,
+      hasFile: Boolean(file),
+      fileName: file?.name ?? null,
+      fileSize: file?.size ?? null,
+      fileType: file?.type ?? null
+    });
     console.info("[android-preview]", {
       stage: "input-change-fired",
       hasFile: Boolean(file),
@@ -569,15 +577,42 @@ export default function SubmitPage() {
   function openImageInput(input: HTMLInputElement | null, source: "camera" | "gallery") {
     if (!input) {
       console.info("[android-preview]", { stage: "file-input-click-called", source, inputAvailable: false });
+      sendAndroidPreviewDiagnostic("file-input-click-called", { source, inputAvailable: false });
       return;
     }
     input.value = "";
     console.info("[android-preview]", { stage: "file-input-click-called", source, inputAvailable: true });
+    sendAndroidPreviewDiagnostic("file-input-click-called", { source, inputAvailable: true });
     input.click();
   }
 
   function timingMs(start: number) {
     return Math.round((performance.now() - start) * 10) / 10;
+  }
+
+  function sendAndroidPreviewDiagnostic(stage: string, extra: Record<string, unknown> = {}) {
+    if (typeof window === "undefined") return;
+
+    const payload = {
+      diagnosticType: "android-preview",
+      stage,
+      href: window.location.href,
+      userAgent: window.navigator.userAgent,
+      online: window.navigator.onLine,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      ...extra
+    };
+
+    console.info("[android-preview]", payload);
+    fetch("/api/auth/login-diagnostics", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).catch((diagnosticError) => {
+      console.warn("[android-preview] diagnostic post failed", diagnosticError);
+    });
   }
 
   function currentQueueFields(submitAnyway: boolean, capturedAt = new Date().toISOString()) {
@@ -1207,6 +1242,7 @@ export default function SubmitPage() {
                   type="button"
                   onClick={() => {
                     console.info("[android-preview]", { stage: "upload-button-clicked", source: "camera" });
+                    sendAndroidPreviewDiagnostic("upload-button-clicked", { source: "camera" });
                     openImageInput(cameraInputRef.current, "camera");
                   }}
                 >
@@ -1218,6 +1254,7 @@ export default function SubmitPage() {
                   type="button"
                   onClick={() => {
                     console.info("[android-preview]", { stage: "upload-button-clicked", source: "gallery" });
+                    sendAndroidPreviewDiagnostic("upload-button-clicked", { source: "gallery" });
                     openImageInput(galleryInputRef.current, "gallery");
                   }}
                 >
