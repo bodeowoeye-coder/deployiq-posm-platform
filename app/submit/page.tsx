@@ -542,6 +542,8 @@ export default function SubmitPage() {
 
   function handleImageInputChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
+    console.info("[android-preview]", { stage: "file-input-onchange-fired" });
+    console.info("[android-preview]", { stage: "file-input-files-length", filesLength: event.target.files?.length ?? 0 });
     console.info("[android-preview]", {
       stage: "input-change-fired",
       hasFile: Boolean(file),
@@ -564,9 +566,13 @@ export default function SubmitPage() {
     }
   }
 
-  function openImageInput(input: HTMLInputElement | null) {
-    if (!input) return;
+  function openImageInput(input: HTMLInputElement | null, source: "camera" | "gallery") {
+    if (!input) {
+      console.info("[android-preview]", { stage: "file-input-click-called", source, inputAvailable: false });
+      return;
+    }
     input.value = "";
+    console.info("[android-preview]", { stage: "file-input-click-called", source, inputAvailable: true });
     input.click();
   }
 
@@ -1196,11 +1202,25 @@ export default function SubmitPage() {
                 </div>
               )}
               <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-3">
-                <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => openImageInput(cameraInputRef.current)}>
+                <button
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50"
+                  type="button"
+                  onClick={() => {
+                    console.info("[android-preview]", { stage: "upload-button-clicked", source: "camera" });
+                    openImageInput(cameraInputRef.current, "camera");
+                  }}
+                >
                   <Camera aria-hidden size={17} />
                   Take Photo
                 </button>
-                <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => openImageInput(galleryInputRef.current)}>
+                <button
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50"
+                  type="button"
+                  onClick={() => {
+                    console.info("[android-preview]", { stage: "upload-button-clicked", source: "gallery" });
+                    openImageInput(galleryInputRef.current, "gallery");
+                  }}
+                >
                   <ImagePlus aria-hidden size={17} />
                   Choose Gallery
                 </button>
@@ -1209,8 +1229,27 @@ export default function SubmitPage() {
                   Use Webcam
                 </button>
               </div>
-              <input ref={cameraInputRef} className="hidden" type="file" accept="image/*" capture="environment" onChange={handleImageInputChange} />
-              <input ref={galleryInputRef} className="hidden" id="image" name="image" type="file" accept="image/*" onChange={handleImageInputChange} />
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleImageInputChange}
+                style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+                tabIndex={-1}
+                aria-hidden="true"
+              />
+              <input
+                ref={galleryInputRef}
+                id="image"
+                name="image"
+                type="file"
+                accept="image/*"
+                onChange={handleImageInputChange}
+                style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+                tabIndex={-1}
+                aria-hidden="true"
+              />
             </Field>
 
             <div className="flex min-h-11 min-w-0 items-start gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm leading-snug text-slate-600">
