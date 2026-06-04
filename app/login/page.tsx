@@ -45,6 +45,10 @@ export default function LoginPage() {
     });
   }
 
+  function timingMs(start: number) {
+    return Math.round((performance.now() - start) * 10) / 10;
+  }
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const searchParams = new URLSearchParams(window.location.search);
@@ -80,14 +84,16 @@ export default function LoginPage() {
     setIsSubmitting(true);
     setError("");
     console.info("[login] submit", { emailPresent: Boolean(email.trim()), passwordPresent: Boolean(password), online: typeof navigator !== "undefined" ? navigator.onLine : null });
+    const totalStart = performance.now();
 
     try {
+      const publicConfigStart = performance.now();
       logLoginDiagnostic("public-config-fetch-start");
       const configResponse = await fetch("/api/auth/public-config", {
         cache: "no-store",
         credentials: "include"
       });
-      logLoginDiagnostic("public-config-fetch-complete", { status: configResponse.status, ok: configResponse.ok });
+      logLoginDiagnostic("public-config-fetch-complete", { status: configResponse.status, ok: configResponse.ok, durationMs: timingMs(publicConfigStart) });
 
       if (!configResponse.ok) {
         throw new Error("Could not load login configuration.");
@@ -101,15 +107,16 @@ export default function LoginPage() {
       });
       const supabase = createBrowserSupabase(config);
       const loginEmail = email.trim().toLowerCase();
+      const signInStart = performance.now();
       logLoginDiagnostic("supabase-signin-start", { emailDomain: loginEmail.includes("@") ? loginEmail.split("@").pop() : null });
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
       logLoginDiagnostic("supabase-signin-complete", {
+        durationMs: timingMs(signInStart),
         hasSession: Boolean(data?.session),
         hasUser: Boolean(data?.user),
         errorMessage: signInError?.message ?? null,
         errorName: signInError?.name ?? null,
-        errorStatus: "status" in (signInError ?? {}) ? (signInError as { status?: number }).status ?? null : null,
-        errorCode: "code" in (signInError ?? {}) ? (signInError as { code?: string }).code ?? null : null
+        errorStatus: "status" in (signInError ?? {}) ? (signInError as { status?: number }).status ?? null : null
       });
 
       if (signInError || !data?.session) {
@@ -117,6 +124,7 @@ export default function LoginPage() {
       }
       console.info("[login] supabase success");
 
+      const sessionCreateStart = performance.now();
       logLoginDiagnostic("app-session-post-start");
       const response = await fetch("/api/auth/session", {
         method: "POST",
@@ -128,12 +136,13 @@ export default function LoginPage() {
           refreshToken: data.session.refresh_token
         })
       });
-      logLoginDiagnostic("app-session-post-complete", { status: response.status, ok: response.ok });
+      logLoginDiagnostic("app-session-post-complete", { status: response.status, ok: response.ok, durationMs: timingMs(sessionCreateStart) });
 
       if (!response.ok) {
         throw new Error("Could not create app session.");
       }
 
+      const roleLookupStart = performance.now();
       logLoginDiagnostic("app-session-verify-start");
       const verificationResponse = await fetch(`/api/auth/session${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`, {
         cache: "no-store",
@@ -142,6 +151,7 @@ export default function LoginPage() {
 
       const verifiedSession = (await verificationResponse.json()) as { authenticated: boolean; redirectTo?: string; reason?: string };
       logLoginDiagnostic("app-session-verify-complete", {
+        durationMs: timingMs(roleLookupStart),
         status: verificationResponse.status,
         ok: verificationResponse.ok,
         authenticated: verifiedSession.authenticated,
@@ -168,7 +178,12 @@ export default function LoginPage() {
 
       const redirectTo = verifiedSession.redirectTo || "/portal";
       showToast("Signed in successfully.");
-      console.info("[login] redirect target", { redirectTo });
+      const redirectStart = performance.now();
+      console.info("[login-timing]", {
+        redirectTo,
+        redirectPreparationMs: timingMs(redirectStart),
+        totalLoginMs: timingMs(totalStart)
+      });
       window.history.replaceState(null, "", redirectTo);
       router.replace(redirectTo);
     } catch (loginError) {

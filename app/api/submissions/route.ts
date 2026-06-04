@@ -19,6 +19,14 @@ if (!STORAGE_BUCKET) {
 
 export const runtime = "nodejs";
 
+function nowMs() {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function timingMs(start: number) {
+  return Math.round((nowMs() - start) * 10) / 10;
+}
+
 function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -76,13 +84,18 @@ function getLagosInstallationParts(value: string) {
 }
 
 export async function POST(request: Request) {
+  const totalStart = nowMs();
   try {
+    const authStart = nowMs();
     const context = await getCurrentUserContext();
+    console.info("[submit-server-timing]", { stage: "auth-context", durationMs: timingMs(authStart), role: context?.role.role ?? null });
     if (!context || !["admin", "installer"].includes(context.role.role)) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
 
+    const formDataStart = nowMs();
     const formData = await request.formData();
+    console.info("[submit-server-timing]", { stage: "form-data-parse", durationMs: timingMs(formDataStart) });
     const image = formData.get("image");
 
     if (!(image instanceof File)) {
@@ -181,12 +194,15 @@ export async function POST(request: Request) {
     const fileName = `${Date.now()}-${crypto.randomUUID()}.jpg`;
     const path = `installations/${fileName}`;
 
+    const storageStart = nowMs();
     const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET).upload(path, image, {
       contentType: image.type || "image/jpeg",
       upsert: false
     });
+    console.info("[submit-server-timing]", { stage: "storage-upload", durationMs: timingMs(storageStart), imageSize: image.size, imageType: image.type || "image/jpeg" });
 
     if (uploadError) {
+      console.info("[submit-server-timing]", { stage: "submit-total", result: "storage-error", durationMs: timingMs(totalStart), message: uploadError.message });
       return NextResponse.json({ error: uploadError.message }, { status: 500 });
     }
 
@@ -194,7 +210,10 @@ export async function POST(request: Request) {
       data: { publicUrl }
     } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
 
+    const ocrStart = nowMs();
     const extraction = await extractBoardTextFromImage(publicUrl);
+    console.info("[submit-server-timing]", { stage: "ocr-vision", confidence: extraction.confidence, durationMs: timingMs(ocrStart) });
+    const brandLoadStart = nowMs();
     const { data: allBrands } = await supabase.from("brands").select("brand_name");
     const { data: matchingBrand } = brandName
       ? await supabase.from("brands").select("id, client_id, brand_name").ilike("brand_name", brandName).maybeSingle()
@@ -224,12 +243,21 @@ export async function POST(request: Request) {
     const resolvedBrandName = matchingBrand?.brand_name ?? (brandName || null);
     const brandReview = reviewBrandMatch(resolvedBrandName, extraction, allBrands ?? []);
     const confidence = scoreBrandVerification(extraction.confidence, brandReview.brandMatchStatus);
+    console.info("[submit-server-timing]", {
+      stage: "brand-validation",
+      selectedBrand: resolvedBrandName,
+      detectedBrand: brandReview.detectedBrandName,
+      matchStatus: brandReview.brandMatchStatus,
+      confidenceLevel: confidence.level,
+      durationMs: timingMs(brandLoadStart)
+    });
 
     const requiresBrandReviewConfirmation =
       (brandReview.brandMatchStatus === "Mismatch" || brandReview.brandMatchStatus === "Uncertain") && !submitAnyway;
 
     if (requiresBrandReviewConfirmation) {
       await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+      console.info("[submit-server-timing]", { stage: "submit-total", result: "brand-review-confirmation", durationMs: timingMs(totalStart) });
       return NextResponse.json(
         {
           requiresConfirmation: true,
@@ -244,6 +272,7 @@ export async function POST(request: Request) {
     }
 
     const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const duplicateStart = nowMs();
     const { data: recentData } = await supabase
       .from("submissions")
       .select("*")
@@ -261,6 +290,7 @@ export async function POST(request: Request) {
       },
       (recentData ?? []) as Submission[]
     );
+    console.info("[submit-server-timing]", { stage: "duplicate-detection", status: duplicateReview.status, durationMs: timingMs(duplicateStart) });
     const autoApproved = brandReview.brandMatchStatus === "Matched" && confidence.level === "High";
     const status =
       brandReview.brandMatchStatus === "Mismatch"
@@ -274,7 +304,9 @@ export async function POST(request: Request) {
     ]
       .filter(Boolean)
       .join(" ");
+    const reverseGeocodeStart = nowMs();
     const resolvedLocation = await reverseGeocode(latitude, longitude);
+    console.info("[submit-server-timing]", { stage: "reverse-geocoding", hasCoordinates: Boolean(latitude && longitude), resolved: Boolean(resolvedLocation.resolvedAddress), durationMs: timingMs(reverseGeocodeStart) });
     const manualFallbackAddress = [manualLocationDescription, manualLandmark ? `Landmark: ${manualLandmark}` : "", installerLga ? `LGA: ${installerLga}` : ""]
       .filter(Boolean)
       .join(" | ");
@@ -334,13 +366,16 @@ export async function POST(request: Request) {
         installation_time: installationParts.installationTime
       };
 
+    const insertStart = nowMs();
     let { data, error } = await supabase
       .from("submissions")
       .insert(submissionPayload)
       .select()
       .single();
+    console.info("[submit-server-timing]", { stage: "database-insert", usedFallbackPayload: false, durationMs: timingMs(insertStart), ok: !error });
 
     if (error && isOptionalSubmissionColumnError(error)) {
+      const fallbackInsertStart = nowMs();
       const fallbackPayload = stripOptionalSubmissionColumns(submissionPayload);
       const fallbackResult = await supabase
         .from("submissions")
@@ -349,6 +384,7 @@ export async function POST(request: Request) {
         .single();
       data = fallbackResult.data;
       error = fallbackResult.error;
+      console.info("[submit-server-timing]", { stage: "database-insert", usedFallbackPayload: true, durationMs: timingMs(fallbackInsertStart), ok: !error });
     }
 
     if (error) {
@@ -361,10 +397,12 @@ export async function POST(request: Request) {
           .maybeSingle();
         if (existingSubmission) {
           await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+          console.info("[submit-server-timing]", { stage: "submit-total", result: "already-synced", durationMs: timingMs(totalStart) });
           return NextResponse.json({ submission: existingSubmission, alreadySynced: true });
         }
       }
       await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+      console.info("[submit-server-timing]", { stage: "submit-total", result: "database-error", durationMs: timingMs(totalStart), message: error.message });
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
@@ -413,9 +451,11 @@ export async function POST(request: Request) {
       await supabase.from("alert_events").insert(alertEvents);
     }
 
+    console.info("[submit-server-timing]", { stage: "submit-total", result: "success", durationMs: timingMs(totalStart) });
     return NextResponse.json({ submission: data });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";
+    console.info("[submit-server-timing]", { stage: "submit-total", result: "error", durationMs: timingMs(totalStart), message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -31,9 +31,20 @@ function clearAuthCookie(response: NextResponse, request: Request, name: string)
   });
 }
 
+function nowMs() {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function timingMs(start: number) {
+  return Math.round((nowMs() - start) * 10) / 10;
+}
+
 export async function POST(request: Request) {
+  const totalStart = nowMs();
   try {
+    const bodyStart = nowMs();
     const body = await request.json();
+    console.info("[login-server-timing]", { stage: "session-body-parse", durationMs: timingMs(bodyStart) });
     const accessToken = typeof body.accessToken === "string" ? body.accessToken : "";
     const refreshToken = typeof body.refreshToken === "string" ? body.refreshToken : "";
 
@@ -46,7 +57,9 @@ export async function POST(request: Request) {
     }
 
     const userClient = createUserSupabase(accessToken);
+    const tokenValidationStart = nowMs();
     const { data, error } = await userClient.auth.getUser(accessToken);
+    console.info("[login-server-timing]", { stage: "session-token-validation", ok: Boolean(data.user && !error), durationMs: timingMs(tokenValidationStart) });
     if (error || !data.user) {
       console.error("[auth-session] token validation failed", {
         message: error?.message ?? "No user returned",
@@ -59,6 +72,7 @@ export async function POST(request: Request) {
     response.headers.set("Cache-Control", "private, no-store");
     setAuthCookie(response, request, "deployiq-access-token", accessToken, 60 * 60 * 24 * 7);
     setAuthCookie(response, request, "deployiq-refresh-token", refreshToken, 60 * 60 * 24 * 7);
+    console.info("[login-server-timing]", { stage: "session-create-total", durationMs: timingMs(totalStart) });
     return response;
   } catch (error) {
     console.error("[auth-session] unexpected failure", {
@@ -79,8 +93,13 @@ export async function DELETE(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const totalStart = nowMs();
+  const accessTokenStart = nowMs();
   const accessToken = await getCurrentAccessToken();
+  console.info("[login-server-timing]", { stage: "access-cookie-read", hasAccessToken: Boolean(accessToken), durationMs: timingMs(accessTokenStart) });
+  const contextStart = nowMs();
   const context = await getCurrentUserContext();
+  console.info("[login-server-timing]", { stage: "role-user-context-lookup", role: context?.role.role ?? null, durationMs: timingMs(contextStart) });
 
   if (!context) {
     console.error("[auth-session] verification failed", {
@@ -101,14 +120,17 @@ export async function GET(request: Request) {
   const redirectTo = isAllowedReturnTo(context.role.role, requestedReturnTo)
     ? requestedReturnTo
     : defaultRouteForRole(context.role.role);
+  const profileStart = nowMs();
   const { data: profile } = await createAdminSupabase()
     .schema("public")
     .from("user_profiles")
     .select("full_name, email, phone, assigned_regions, assigned_states, status")
     .eq("user_id", context.user.id)
     .maybeSingle();
+  console.info("[login-server-timing]", { stage: "profile-lookup", hasProfile: Boolean(profile), durationMs: timingMs(profileStart) });
   const metadataFullName = typeof context.user.user_metadata?.full_name === "string" ? context.user.user_metadata.full_name.trim() : "";
   const fullName = typeof profile?.full_name === "string" && profile.full_name.trim() ? profile.full_name.trim() : metadataFullName;
+  console.info("[login-server-timing]", { stage: "session-verify-total", redirectTo, durationMs: timingMs(totalStart) });
 
   return NextResponse.json({
     ok: true,

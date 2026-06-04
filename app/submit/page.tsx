@@ -176,6 +176,20 @@ export default function SubmitPage() {
   }, []);
 
   useEffect(() => {
+    console.info("[android-preview]", {
+      stage: "preview-state-rendered",
+      hasImage: Boolean(image),
+      imageName: image?.name ?? null,
+      imageSize: image?.size ?? null,
+      imageType: image?.type ?? null,
+      previewStatus,
+      hasPreviewUrl: Boolean(previewUrl),
+      previewUrlType: previewUrl ? (previewUrl.startsWith("blob:") ? "blob" : previewUrl.startsWith("data:") ? "data" : "other") : "none",
+      previewError
+    });
+  }, [image, previewError, previewStatus, previewUrl]);
+
+  useEffect(() => {
     if (!showWebcam) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -414,6 +428,7 @@ export default function SubmitPage() {
 
   function resetPreviewObjectUrl() {
     if (previewObjectUrlRef.current) {
+      console.info("[android-preview]", { stage: "preview-object-url-revoked" });
       URL.revokeObjectURL(previewObjectUrlRef.current);
       previewObjectUrlRef.current = null;
     }
@@ -421,14 +436,32 @@ export default function SubmitPage() {
 
   function prepareImagePreview(file: File) {
     const previewStart = performance.now();
+    console.info("[android-preview]", {
+      stage: "prepare-preview-start",
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      lastModified: file.lastModified
+    });
     resetPreviewObjectUrl();
     setPreviewError("");
     setPreviewStatus("preparing");
 
     const objectUrl = URL.createObjectURL(file);
+    console.info("[android-preview]", {
+      stage: "preview-object-url-created",
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      objectUrlPrefix: objectUrl.slice(0, 20)
+    });
     previewObjectUrlRef.current = objectUrl;
     setPreviewUrl(objectUrl);
     setPreviewStatus("ready");
+    console.info("[android-preview]", {
+      stage: "preview-state-set-ready",
+      hasObjectUrl: Boolean(objectUrl)
+    });
     console.info("[submit-timing]", {
       stage: "photo-preview",
       method: "object-url-immediate",
@@ -441,6 +474,11 @@ export default function SubmitPage() {
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === "string") {
+          console.info("[android-preview]", {
+            stage: "filereader-fallback-success",
+            reason,
+            dataUrlLength: reader.result.length
+          });
           resetPreviewObjectUrl();
           setPreviewUrl(reader.result);
           setPreviewStatus("ready");
@@ -455,12 +493,14 @@ export default function SubmitPage() {
           });
           return;
         }
+        console.info("[android-preview]", { stage: "filereader-fallback-invalid-result", reason });
         resetPreviewObjectUrl();
         setPreviewUrl("");
         setPreviewStatus("error");
         setPreviewError("Photo attached. Preview unavailable.");
       };
       reader.onerror = () => {
+        console.info("[android-preview]", { stage: "filereader-fallback-error", reason });
         resetPreviewObjectUrl();
         setPreviewUrl("");
         setPreviewStatus("error");
@@ -494,6 +534,7 @@ export default function SubmitPage() {
     };
     probe.onerror = () => {
       window.clearTimeout(timeout);
+      console.info("[android-preview]", { stage: "object-url-probe-error" });
       useFileReaderFallback("object-url-probe-error");
     };
     probe.src = objectUrl;
@@ -501,11 +542,21 @@ export default function SubmitPage() {
 
   function handleImageInputChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
+    console.info("[android-preview]", {
+      stage: "input-change-fired",
+      hasFile: Boolean(file),
+      fileName: file?.name ?? null,
+      fileSize: file?.size ?? null,
+      fileType: file?.type ?? null,
+      filesLength: event.target.files?.length ?? 0
+    });
     event.target.value = "";
+    console.info("[android-preview]", { stage: "input-value-reset-after-read", hadFile: Boolean(file) });
     setImage(file);
     if (file) {
       prepareImagePreview(file);
     } else {
+      console.info("[android-preview]", { stage: "input-change-no-file-clearing-preview" });
       resetPreviewObjectUrl();
       setPreviewUrl("");
       setPreviewError("");
@@ -553,6 +604,7 @@ export default function SubmitPage() {
       fields: currentQueueFields(submitAnyway)
     });
     await refreshQueue();
+    console.info("[android-preview]", { stage: "preview-cleared-after-offline-queue" });
     setImage(null);
     resetPreviewObjectUrl();
     setPreviewUrl("");
@@ -802,6 +854,7 @@ export default function SubmitPage() {
       }
 
       setImage(null);
+      console.info("[android-preview]", { stage: "preview-cleared-after-success" });
       resetPreviewObjectUrl();
       setPreviewUrl("");
       setPreviewError("");
@@ -1081,7 +1134,20 @@ export default function SubmitPage() {
                   className="max-h-80 w-full rounded-lg border border-slate-200 object-cover"
                   src={previewUrl}
                   alt="Selected installed board"
+                  onLoad={(event) => {
+                    console.info("[android-preview]", {
+                      stage: "preview-img-loaded",
+                      previewUrlType: previewUrl.startsWith("blob:") ? "blob" : previewUrl.startsWith("data:") ? "data" : "other",
+                      naturalWidth: event.currentTarget.naturalWidth,
+                      naturalHeight: event.currentTarget.naturalHeight
+                    });
+                  }}
                   onError={() => {
+                    console.info("[android-preview]", {
+                      stage: "preview-img-error",
+                      hasImage: Boolean(image),
+                      previewUrlType: previewUrl.startsWith("blob:") ? "blob" : previewUrl.startsWith("data:") ? "data" : "other"
+                    });
                     if (previewUrl.startsWith("data:")) {
                       setPreviewUrl("");
                       setPreviewStatus("error");
