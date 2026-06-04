@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { AlertTriangle, Camera, CheckCircle2, ImagePlus, Loader2, MapPin, Upload, Video, X } from "lucide-react";
-import type { FormEvent, ReactNode } from "react";
+import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandMark } from "@/components/BrandMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -79,6 +79,8 @@ export default function SubmitPage() {
   const [brandsError, setBrandsError] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [previewStatus, setPreviewStatus] = useState<"idle" | "preparing" | "ready" | "error">("idle");
+  const [previewError, setPreviewError] = useState("");
   const [position, setPosition] = useState<PositionState>({
     latitude: null,
     longitude: null,
@@ -104,6 +106,7 @@ export default function SubmitPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const syncInProgressRef = useRef(false);
   const locationAttemptRef = useRef(0);
+  const previewObjectUrlRef = useRef<string | null>(null);
   const { showToast } = useToast();
   const [showSyncedHistory, setShowSyncedHistory] = useState(false);
   const queuedCount = queuedItems.filter((item) => item.status !== "Synced").length;
@@ -167,15 +170,10 @@ export default function SubmitPage() {
   }, []);
 
   useEffect(() => {
-    if (!image) {
-      setPreviewUrl("");
-      return;
-    }
-
-    const nextUrl = URL.createObjectURL(image);
-    setPreviewUrl(nextUrl);
-    return () => URL.revokeObjectURL(nextUrl);
-  }, [image]);
+    return () => {
+      if (previewObjectUrlRef.current) URL.revokeObjectURL(previewObjectUrlRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!showWebcam) {
@@ -403,6 +401,77 @@ export default function SubmitPage() {
       .join(" | ");
   }
 
+  function resetPreviewObjectUrl() {
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
+  }
+
+  function prepareImagePreview(file: File) {
+    resetPreviewObjectUrl();
+    setPreviewUrl("");
+    setPreviewError("");
+    setPreviewStatus("preparing");
+
+    const objectUrl = URL.createObjectURL(file);
+    const probe = new Image();
+    const timeout = window.setTimeout(() => {
+      probe.onload = null;
+      probe.onerror = null;
+      URL.revokeObjectURL(objectUrl);
+      setPreviewStatus("error");
+      setPreviewError("Image preview is taking too long. Please retry or choose the photo again.");
+    }, 10000);
+
+    probe.onload = () => {
+      window.clearTimeout(timeout);
+      previewObjectUrlRef.current = objectUrl;
+      setPreviewUrl(objectUrl);
+      setPreviewStatus("ready");
+    };
+    probe.onerror = () => {
+      window.clearTimeout(timeout);
+      URL.revokeObjectURL(objectUrl);
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          setPreviewUrl(reader.result);
+          setPreviewStatus("ready");
+          return;
+        }
+        setPreviewStatus("error");
+        setPreviewError("Could not prepare image preview. Please retake or choose the photo again.");
+      };
+      reader.onerror = () => {
+        setPreviewStatus("error");
+        setPreviewError("Could not prepare image preview. Please retake or choose the photo again.");
+      };
+      reader.readAsDataURL(file);
+    };
+    probe.src = objectUrl;
+  }
+
+  function handleImageInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    setImage(file);
+    if (file) {
+      prepareImagePreview(file);
+    } else {
+      resetPreviewObjectUrl();
+      setPreviewUrl("");
+      setPreviewError("");
+      setPreviewStatus("idle");
+    }
+  }
+
+  function openImageInput(input: HTMLInputElement | null) {
+    if (!input) return;
+    input.value = "";
+    input.click();
+  }
+
   function currentQueueFields(submitAnyway: boolean, capturedAt = new Date().toISOString()) {
     const fallbackAddress = fallbackLocationText();
     return {
@@ -433,6 +502,10 @@ export default function SubmitPage() {
     });
     await refreshQueue();
     setImage(null);
+    resetPreviewObjectUrl();
+    setPreviewUrl("");
+    setPreviewError("");
+    setPreviewStatus("idle");
     setMismatchWarning(null);
     setResult("offline");
     setError(message);
@@ -657,6 +730,10 @@ export default function SubmitPage() {
       }
 
       setImage(null);
+      resetPreviewObjectUrl();
+      setPreviewUrl("");
+      setPreviewError("");
+      setPreviewStatus("idle");
       setBrandName("");
       setMismatchWarning(null);
       setResult("success");
@@ -696,7 +773,9 @@ export default function SubmitPage() {
     context.drawImage(video, 0, 0);
     canvas.toBlob((blob) => {
       if (!blob) return;
-      setImage(new File([blob], `webcam-${Date.now()}.jpg`, { type: "image/jpeg" }));
+      const file = new File([blob], `webcam-${Date.now()}.jpg`, { type: "image/jpeg" });
+      setImage(file);
+      prepareImagePreview(file);
       setShowWebcam(false);
     }, "image/jpeg", 0.9);
   }
@@ -916,8 +995,23 @@ export default function SubmitPage() {
             </div>
 
             <Field label="Installed board picture">
-              {previewUrl ? (
+              {previewStatus === "preparing" ? (
+                <div className="flex min-h-36 min-w-0 items-center justify-center rounded-lg border border-dashed border-orange-200 bg-orange-50/70 p-5 text-center text-orange-700" aria-live="polite">
+                  <div>
+                    <Loader2 className="mx-auto mb-2 animate-spin" aria-hidden size={28} />
+                    <div className="text-sm font-bold">Preparing image preview...</div>
+                  </div>
+                </div>
+              ) : previewUrl ? (
                 <img className="max-h-80 w-full rounded-lg border border-slate-200 object-cover" src={previewUrl} alt="Selected installed board" />
+              ) : previewStatus === "error" ? (
+                <div className="flex min-h-36 min-w-0 items-center justify-center rounded-lg border border-dashed border-rose-200 bg-rose-50 p-5 text-center text-rose-700" aria-live="polite">
+                  <div>
+                    <Camera className="mx-auto mb-2" aria-hidden size={28} />
+                    <div className="text-sm font-bold">Preview failed</div>
+                    <p className="mt-1 text-xs leading-snug">{previewError || "Please retake or choose the photo again."}</p>
+                  </div>
+                </div>
               ) : (
                 <div className="flex min-h-36 min-w-0 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-slate-500">
                   <div>
@@ -927,11 +1021,11 @@ export default function SubmitPage() {
                 </div>
               )}
               <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-3">
-                <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => cameraInputRef.current?.click()}>
+                <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => openImageInput(cameraInputRef.current)}>
                   <Camera aria-hidden size={17} />
                   Take Photo
                 </button>
-                <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => galleryInputRef.current?.click()}>
+                <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50" type="button" onClick={() => openImageInput(galleryInputRef.current)}>
                   <ImagePlus aria-hidden size={17} />
                   Choose Gallery
                 </button>
@@ -940,8 +1034,8 @@ export default function SubmitPage() {
                   Use Webcam
                 </button>
               </div>
-              <input ref={cameraInputRef} className="hidden" type="file" accept="image/*" capture="environment" onChange={(event) => setImage(event.target.files?.[0] ?? null)} />
-              <input ref={galleryInputRef} className="hidden" id="image" name="image" type="file" accept="image/*" onChange={(event) => setImage(event.target.files?.[0] ?? null)} />
+              <input ref={cameraInputRef} className="hidden" type="file" accept="image/*" capture="environment" onChange={handleImageInputChange} />
+              <input ref={galleryInputRef} className="hidden" id="image" name="image" type="file" accept="image/*" onChange={handleImageInputChange} />
             </Field>
 
             <div className="flex min-h-11 min-w-0 items-start gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm leading-snug text-slate-600">
