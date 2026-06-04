@@ -1364,7 +1364,9 @@ export default function SubmitPage() {
                   <h2 id="brand-warning-title" className="whitespace-normal break-words text-lg font-bold leading-snug text-red-900">
                     Brand verification warning
                   </h2>
-                  <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-red-800">Selected brand was not confidently verified from this image. Please check before continuing.</p>
+                  <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-red-800">
+                    This is a verification warning, not an upload failure. The selected brand was not confidently confirmed from the photo. Please check the brand/photo, then go back or submit anyway if the installation is correct.
+                  </p>
                 </div>
               </div>
             </div>
