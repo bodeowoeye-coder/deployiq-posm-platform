@@ -65,15 +65,21 @@ export async function POST(request: Request) {
   }
 
   const supabase = createAdminSupabase();
+  const { data: selectedBrand } = brandId
+    ? await supabase.from("brands").select("brand_name").eq("id", brandId).maybeSingle()
+    : { data: null };
   const projectInsertPayload = {
-    project_name: projectName,
+    name: projectName,
     client_id: clientId,
     brand_id: brandId,
-    campaign_name: campaignName,
+    brand: selectedBrand?.brand_name ?? null,
+    campaign: campaignName,
     target_quantity: targetQuantity,
     status,
     regions_covered: regionsCovered,
     assigned_installers: assignedInstallers,
+    primary_target_region: targetRegion,
+    primary_target_state: targetState,
     start_date: startDate,
     end_date: endDate
   };
@@ -140,7 +146,7 @@ export async function PATCH(request: Request) {
   if (!id) return NextResponse.json({ error: "Missing project id." }, { status: 400 });
 
   const updates = {
-    campaign_name: stringValue(body.campaignName) || null,
+    campaign: stringValue(body.campaignName) || null,
     target_quantity: Number(body.targetQuantity ?? 0),
     start_date: stringValue(body.startDate) || null,
     end_date: stringValue(body.endDate) || null,
