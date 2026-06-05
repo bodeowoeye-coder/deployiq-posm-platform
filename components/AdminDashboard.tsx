@@ -234,6 +234,7 @@ export function AdminDashboard({
   const [projectRecords, setProjectRecords] = useState(projects);
   const [targetRecords, setTargetRecords] = useState(projectTargets);
   const [userRecords, setUserRecords] = useState(managedUsers);
+  const [clientRecords, setClientRecords] = useState(clients);
   const [agencyRecords, setAgencyRecords] = useState(agencies);
   const [installerRecords, setInstallerRecords] = useState(installers);
   const [clientProfileRecords, setClientProfileRecords] = useState(clientProfiles);
@@ -545,9 +546,28 @@ export function AdminDashboard({
       if (!response.ok) return;
       const body = await response.json();
       setUserRecords(body.users ?? []);
+      console.info("[admin-user-management] users refreshed", {
+        count: Array.isArray(body.users) ? body.users.length : 0
+      });
     } finally {
       setUsersLoading(false);
     }
+  }
+
+  async function refreshClients() {
+    const response = await fetch("/api/clients");
+    const body = await response.json().catch(() => ({}));
+    console.info("[admin-user-management] clients refresh response", {
+      ok: response.ok,
+      count: Array.isArray(body.clients) ? body.clients.length : 0,
+      error: body.error ?? null
+    });
+    if (!response.ok) {
+      showToast(body.error || "Could not load clients for assignment.", "error");
+      return;
+    }
+    setClientRecords(body.clients ?? []);
+    setClientProfileRecords(body.profiles ?? []);
   }
 
   async function refreshAuditLogs() {
@@ -558,39 +578,62 @@ export function AdminDashboard({
   }
 
   useEffect(() => {
-    if ((activeView === "profile" || activeView === "user-management") && userRecords.length === 0) {
+    if ((activeView === "profile" || activeView === "user-management" || activeView === "clients") && userRecords.length === 0) {
       void refreshUsers();
+    }
+    if ((activeView === "user-management" || activeView === "clients" || activeView === "create-project") && clientRecords.length === 0) {
+      void refreshClients();
     }
     if (activeView === "audit-logs" && auditLogRecords.length === 0) {
       void refreshAuditLogs();
     }
-  }, [activeView, auditLogRecords.length, userRecords.length]);
+  }, [activeView, auditLogRecords.length, clientRecords.length, userRecords.length]);
 
   async function createUser(formData: FormData) {
+    const payload = {
+      fullName: formData.get("fullName"),
+      email: formData.get("email"),
+      phone: formData.get("phone"),
+      role: formData.get("role"),
+      clientId: formData.get("clientId"),
+      agencyId: formData.get("agencyId"),
+      assignedProjectIds: formData.getAll("assignedProjectIds"),
+      assignedRegions: formData.getAll("assignedRegions"),
+      assignedStates: formData.getAll("assignedStates"),
+      status: formData.get("status"),
+      temporaryPassword: formData.get("temporaryPassword")
+    };
+    console.info("[admin-user-management] create user payload", {
+      role: payload.role,
+      email: typeof payload.email === "string" ? payload.email : null,
+      selectedClientId: payload.clientId,
+      selectedAgencyId: payload.agencyId || null,
+      clientsLoaded: clientRecords.length,
+      assignedProjectCount: payload.assignedProjectIds.length,
+      assignedRegionCount: payload.assignedRegions.length,
+      assignedStateCount: payload.assignedStates.length
+    });
     const response = await fetch("/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fullName: formData.get("fullName"),
-        email: formData.get("email"),
-        phone: formData.get("phone"),
-        role: formData.get("role"),
-        clientId: formData.get("clientId"),
-        agencyId: formData.get("agencyId"),
-        assignedProjectIds: formData.getAll("assignedProjectIds"),
-        assignedRegions: formData.getAll("assignedRegions"),
-        assignedStates: formData.getAll("assignedStates"),
-        status: formData.get("status"),
-        temporaryPassword: formData.get("temporaryPassword")
-      })
+      body: JSON.stringify(payload)
     });
     const body = await response.json();
+    console.info("[admin-user-management] create user response", {
+      ok: response.ok,
+      status: response.status,
+      action: body.action ?? null,
+      partial: body.partial ?? false,
+      error: body.error ?? null,
+      message: body.message ?? null
+    });
     if (!response.ok) {
       showToast(body.error || "Could not create user.", "error");
-      return;
+      return false;
     }
     await refreshUsers();
     showToast(body.message || "User created.", body.partial ? "error" : "success");
+    return !body.partial;
   }
 
   async function updateUser(payload: Record<string, unknown>) {
@@ -1053,7 +1096,7 @@ export function AdminDashboard({
           <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
             <h2 className="text-base font-bold leading-snug">Create Project</h2>
             <p className="mt-2 text-sm leading-snug text-slate-600">Configure new deployment initiatives, targets, territories, and assigned teams.</p>
-            <ProjectManager clients={clients} brands={brands} agencies={agencyRecords} installers={installerRecords} users={userRecords} onCreate={createProject} />
+            <ProjectManager clients={clientRecords} brands={brands} agencies={agencyRecords} installers={installerRecords} users={userRecords} onCreate={createProject} />
           </div>
         ) : null}
         {activeView === "campaigns" ? (
@@ -1069,8 +1112,8 @@ export function AdminDashboard({
           </div>
         ) : null}
         {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
-        {activeView === "clients" ? <ClientManagementPanel clients={clients} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onSave={updateClientProfile} /> : null}
-        {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clients} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
+        {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onSave={updateClientProfile} /> : null}
+        {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
         {activeView === "installers" ? (
           <InstallerManagementPanel installers={installerRecords} submissions={records} projects={projectRecords} agencies={agencyRecords} users={userRecords} />
         ) : null}
@@ -1871,7 +1914,7 @@ function UserManagementPanel({
   agencies: Agency[];
   projects: Project[];
   submissions: Submission[];
-  onCreate: (formData: FormData) => Promise<void>;
+  onCreate: (formData: FormData) => Promise<boolean>;
   onUpdate: (payload: Record<string, unknown>) => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("");
@@ -1882,6 +1925,7 @@ function UserManagementPanel({
   const [region, setRegion] = useState("");
   const [project, setProject] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [formMessage, setFormMessage] = useState("");
   const selectedUser = users.find((user) => user.user_id === selectedUserId) ?? null;
   const filteredUsers = users.filter((user) => {
     const searchable = [user.full_name, user.email, user.phone].filter(Boolean).join(" ").toLowerCase();
@@ -1904,8 +1948,26 @@ function UserManagementPanel({
           className="mt-4 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3"
           onSubmit={async (event: FormEvent<HTMLFormElement>) => {
             event.preventDefault();
-            await onCreate(new FormData(event.currentTarget));
-            event.currentTarget.reset();
+            setFormMessage("");
+            const form = event.currentTarget;
+            const formData = new FormData(form);
+            const nextRole = String(formData.get("role") || "");
+            const nextClientId = String(formData.get("clientId") || "");
+            console.info("[admin-user-management] create user form submit", {
+              role: nextRole,
+              selectedClientId: nextClientId || null,
+              clientsLoaded: clients.length
+            });
+            if (nextRole === "client" && clients.length === 0) {
+              setFormMessage("No clients are loaded yet. Please refresh clients before creating a client user.");
+              return;
+            }
+            if (nextRole === "client" && !nextClientId) {
+              setFormMessage("Please select an assigned client before creating a client user.");
+              return;
+            }
+            const created = await onCreate(formData);
+            if (created) form.reset();
           }}
         >
           <input required name="fullName" placeholder="Full name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
@@ -1939,6 +2001,16 @@ function UserManagementPanel({
           <button className="inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 xl:col-span-3">
             Create user
           </button>
+          {formMessage ? (
+            <p className="whitespace-normal break-words rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold leading-snug text-rose-700 xl:col-span-3">
+              {formMessage}
+            </p>
+          ) : null}
+          {clients.length === 0 ? (
+            <p className="whitespace-normal break-words rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-semibold leading-snug text-orange-800 xl:col-span-3">
+              No client records are currently available for assignment. Client users cannot be created until a client is loaded.
+            </p>
+          ) : null}
         </form>
       </div>
 

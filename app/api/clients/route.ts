@@ -7,10 +7,21 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const context = await requireAdminContext();
   if (!context) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  const [{ data: clients }, { data: profiles }] = await Promise.all([
+  const [{ data: clients, error: clientsError }, { data: profiles, error: profilesError }, { data: roles, error: rolesError }] = await Promise.all([
     createAdminSupabase().from("clients").select("*").order("name"),
-    createAdminSupabase().from("client_profiles").select("*")
+    createAdminSupabase().from("client_profiles").select("*"),
+    createAdminSupabase().from("user_roles").select("user_id, role, client_id").eq("role", "client")
   ]);
+  console.info("[clients-api] clients loaded for admin", {
+    clients: clients?.length ?? 0,
+    profiles: profiles?.length ?? 0,
+    clientRoleAssignments: roles?.length ?? 0,
+    clientsError: clientsError?.message ?? null,
+    profilesError: profilesError?.message ?? null,
+    rolesError: rolesError?.message ?? null
+  });
+  if (clientsError) return NextResponse.json({ error: clientsError.message }, { status: 500 });
+  if (profilesError) return NextResponse.json({ error: profilesError.message }, { status: 500 });
   return NextResponse.json({ clients: clients ?? [], profiles: profiles ?? [] });
 }
 

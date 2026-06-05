@@ -52,6 +52,13 @@ export async function AdminRoutePage({ initialView, requestedPath }: { initialVi
     needsAdminManagementData ? listManagedUsers() : Promise.resolve([] as ManagedUser[]),
     needsAdminManagementData ? listAuditLogs() : Promise.resolve([] as AuditLog[])
   ]);
+  console.info("[admin-route] assignment data loaded", {
+    initialView,
+    clients: clients.length,
+    managedUsers: managedUsers.length,
+    clientProfiles: clientProfiles.length,
+    needsAdminManagementData
+  });
   const { data: history } =
     needsSubmissionHistory && submissionIds.length > 0
       ? await supabase

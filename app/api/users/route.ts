@@ -37,12 +37,41 @@ export async function POST(request: Request) {
   const agencyId = cleanString(body.agencyId) || null;
   const status = cleanString(body.status) || "Active";
   const password = cleanString(body.temporaryPassword);
+  console.info("[user-management-api] create user request", {
+    role,
+    email,
+    selectedClientId: clientId,
+    selectedAgencyId: agencyId,
+    assignedProjectCount: Array.isArray(body.assignedProjectIds) ? body.assignedProjectIds.length : 0,
+    assignedRegionCount: Array.isArray(body.assignedRegions) ? body.assignedRegions.length : 0,
+    assignedStateCount: Array.isArray(body.assignedStates) ? body.assignedStates.length : 0
+  });
   if (!email || !fullName || !roles.includes(role) || !password || password.length < 8) {
     return NextResponse.json({ error: "Name, email, role, and an 8+ character temporary password are required." }, { status: 400 });
   }
   if (role === "client" && !clientId) return NextResponse.json({ error: "Client users require an assigned client." }, { status: 400 });
 
   const supabase = createAdminSupabase();
+  if (role === "client" && clientId) {
+    const { data: assignedClient, error: assignedClientError } = await supabase
+      .schema("public")
+      .from("clients")
+      .select("id, name")
+      .eq("id", clientId)
+      .maybeSingle();
+    console.info("[user-management-api] assigned client lookup", {
+      selectedClientId: clientId,
+      found: Boolean(assignedClient?.id),
+      clientName: assignedClient?.name ?? null,
+      error: assignedClientError?.message ?? null
+    });
+    if (assignedClientError) {
+      return NextResponse.json({ error: `Could not verify assigned client: ${assignedClientError.message}` }, { status: 500 });
+    }
+    if (!assignedClient) {
+      return NextResponse.json({ error: "Selected assigned client was not found. Please reload clients and try again." }, { status: 400 });
+    }
+  }
   const [{ data: authUsers }, { data: profileByEmail }] = await Promise.all([
     supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
     supabase.schema("public").from("user_profiles").select("user_id, email").eq("email", email).maybeSingle()
@@ -89,7 +118,20 @@ export async function POST(request: Request) {
     return partialResponse("profile sync in public.user_profiles", profileResult.error || existingProfileError, createdAuthUser);
   }
 
-  const roleResult = await supabase.schema("public").from("user_roles").upsert({ user_id: authUser.id, role, client_id: clientId });
+  const roleResult = await supabase
+    .schema("public")
+    .from("user_roles")
+    .upsert({ user_id: authUser.id, role, client_id: clientId }, { onConflict: "user_id" })
+    .select("user_id, role, client_id")
+    .single();
+  console.info("[user-management-api] role sync result", {
+    ok: !roleResult.error,
+    userId: authUser.id,
+    role,
+    clientId,
+    savedClientId: roleResult.data?.client_id ?? null,
+    error: roleResult.error?.message ?? null
+  });
   if (roleResult.error) {
     return partialResponse("role sync", roleResult.error, createdAuthUser);
   }
@@ -108,7 +150,17 @@ export async function POST(request: Request) {
   }
 
   if (role === "client" && clientId) {
-    const clientProfileResult = await supabase.schema("public").from("client_profiles").upsert({ client_id: clientId });
+    const clientProfileResult = await supabase
+      .schema("public")
+      .from("client_profiles")
+      .upsert({ client_id: clientId }, { onConflict: "client_id" })
+      .select("client_id")
+      .single();
+    console.info("[user-management-api] client profile mapping sync result", {
+      ok: !clientProfileResult.error,
+      clientId,
+      error: clientProfileResult.error?.message ?? null
+    });
     if (clientProfileResult.error) return partialResponse("client mapping sync", clientProfileResult.error, createdAuthUser);
   }
   await writeAuditLog({
