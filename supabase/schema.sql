@@ -282,6 +282,7 @@ alter table public.submissions add column if not exists address text;
 alter table public.submissions add column if not exists phone text;
 alter table public.submissions add column if not exists state_region text;
 alter table public.submissions add column if not exists status text not null default 'Pending';
+alter table public.projects add column if not exists brand_id uuid references public.brands(id) on delete set null;
 alter table public.projects add column if not exists archived_at timestamptz;
 alter table public.agencies add column if not exists contact_person text;
 alter table public.agencies add column if not exists email text;

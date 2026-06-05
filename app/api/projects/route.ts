@@ -12,6 +12,15 @@ function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [];
 }
 
+function isMissingProjectBrandColumn(error: { code?: string; message?: string } | null) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return (
+    (message.includes("brand_id") && message.includes("projects") && message.includes("schema cache")) ||
+    (message.includes("brand_id") && message.includes("could not find")) ||
+    error?.code === "PGRST204"
+  );
+}
+
 export async function GET() {
   const context = await getCurrentUserContext();
   if (!context) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
@@ -72,7 +81,18 @@ export async function POST(request: Request) {
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    if (isMissingProjectBrandColumn(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "Project brand assignment is not ready in Supabase yet. Please run the projects.brand_id migration in Supabase SQL Editor, then retry Create Project."
+        },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   await Promise.all([
     supabase.from("client_projects").upsert({ client_id: clientId, project_id: project.id }),
