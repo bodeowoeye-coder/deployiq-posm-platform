@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUserContext } from "@/lib/auth";
+import { normalizeProjectRecord, normalizeProjectRecords } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +36,7 @@ export async function GET() {
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ projects: data ?? [] });
+  return NextResponse.json({ projects: normalizeProjectRecords(data ?? []) });
 }
 
 export async function POST(request: Request) {
@@ -134,7 +135,7 @@ export async function POST(request: Request) {
       : Promise.resolve()
   ]);
 
-  return NextResponse.json({ project });
+  return NextResponse.json({ project: normalizeProjectRecord(project) });
 }
 
 export async function PATCH(request: Request) {
@@ -162,5 +163,5 @@ export async function PATCH(request: Request) {
   const supabase = createAdminSupabase();
   const { data: project, error } = await supabase.from("projects").update(updates).eq("id", id).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ project });
+  return NextResponse.json({ project: normalizeProjectRecord(project) });
 }

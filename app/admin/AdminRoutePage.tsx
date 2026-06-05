@@ -1,6 +1,7 @@
 import { AdminDashboard } from "@/components/AdminDashboard";
 import type { DashboardView } from "@/components/DashboardSidebar";
 import { requireRole } from "@/lib/auth";
+import { normalizeProjectRecords } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { listAuditLogs, listManagedUsers } from "@/lib/userManagement";
 import type { Agency, AuditLog, Brand, Client, ClientProfile, DeploymentProgress, Installer, ManagedUser, Project, ProjectTarget, Submission, SubmissionStatusHistory } from "@/lib/types";
@@ -59,6 +60,8 @@ export async function AdminRoutePage({ initialView, requestedPath }: { initialVi
     clientProfiles: clientProfiles.length,
     needsAdminManagementData
   });
+  const normalizedProjects = normalizeProjectRecords(projects) as Project[];
+
   const { data: history } =
     needsSubmissionHistory && submissionIds.length > 0
       ? await supabase
@@ -71,7 +74,7 @@ export async function AdminRoutePage({ initialView, requestedPath }: { initialVi
     <AdminDashboard
       submissions={(data ?? []) as Submission[]}
       history={(history ?? []) as SubmissionStatusHistory[]}
-      projects={projects}
+      projects={normalizedProjects}
       projectTargets={projectTargets}
       deploymentProgress={deploymentProgress}
       clients={clients}
