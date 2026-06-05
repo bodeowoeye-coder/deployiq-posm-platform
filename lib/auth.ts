@@ -282,7 +282,7 @@ export function isAllowedReturnTo(role: UserRole, returnTo: string | null | unde
 
   if (normalized === "/admin" || normalized === "/admin/reports" || normalized === "/admin/submissions") return role === "admin";
   if (normalized === "/client") return role === "client";
-  if (normalized === "/submit") return role === "installer" || role === "admin";
+  if (normalized === "/submit") return role === "installer";
   if (normalized === "/installer/history") return role === "installer";
   if (normalized === "/portal") return true;
   return false;

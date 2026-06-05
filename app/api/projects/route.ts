@@ -12,12 +12,13 @@ function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [];
 }
 
-function isMissingProjectBrandColumn(error: { code?: string; message?: string } | null) {
+function isMissingProjectBrandColumn(error: { code?: string; message?: string; details?: string } | null) {
   const message = error?.message?.toLowerCase() ?? "";
+  const details = error?.details?.toLowerCase() ?? "";
+  const combined = `${message} ${details}`;
   return (
-    (message.includes("brand_id") && message.includes("projects") && message.includes("schema cache")) ||
-    (message.includes("brand_id") && message.includes("could not find")) ||
-    error?.code === "PGRST204"
+    combined.includes("brand_id") &&
+    (combined.includes("projects") || combined.includes("schema cache") || combined.includes("could not find"))
   );
 }
 
@@ -64,24 +65,33 @@ export async function POST(request: Request) {
   }
 
   const supabase = createAdminSupabase();
+  const projectInsertPayload = {
+    project_name: projectName,
+    client_id: clientId,
+    brand_id: brandId,
+    campaign_name: campaignName,
+    target_quantity: targetQuantity,
+    status,
+    regions_covered: regionsCovered,
+    assigned_installers: assignedInstallers,
+    start_date: startDate,
+    end_date: endDate
+  };
+
   const { data: project, error } = await supabase
     .from("projects")
-    .insert({
-      project_name: projectName,
-      client_id: clientId,
-      brand_id: brandId,
-      campaign_name: campaignName,
-      target_quantity: targetQuantity,
-      status,
-      regions_covered: regionsCovered,
-      assigned_installers: assignedInstallers,
-      start_date: startDate,
-      end_date: endDate
-    })
+    .insert(projectInsertPayload)
     .select()
     .single();
 
   if (error) {
+    console.error("[projects] create project insert failed", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      payloadKeys: Object.keys(projectInsertPayload)
+    });
+
     if (isMissingProjectBrandColumn(error)) {
       return NextResponse.json(
         {
@@ -91,7 +101,7 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: `Could not create project: ${error.message}` }, { status: 500 });
   }
 
   await Promise.all([

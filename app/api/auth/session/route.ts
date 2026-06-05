@@ -120,6 +120,13 @@ export async function GET(request: Request) {
   const redirectTo = isAllowedReturnTo(context.role.role, requestedReturnTo)
     ? requestedReturnTo
     : defaultRouteForRole(context.role.role);
+  console.info("[auth-session-redirect]", {
+    userId: context.user.id,
+    email: context.user.email ?? null,
+    resolvedRole: context.role.role,
+    requestedReturnTo,
+    redirectTo
+  });
   const profileStart = nowMs();
   const { data: profile } = await createAdminSupabase()
     .schema("public")
