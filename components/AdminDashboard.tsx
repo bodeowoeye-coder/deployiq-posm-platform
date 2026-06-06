@@ -482,6 +482,7 @@ export function AdminDashboard({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: formData.get("projectId"),
+        projectName: formData.get("projectName"),
         campaignName: formData.get("campaignName"),
         targetQuantity: Number(formData.get("targetQuantity") || 0),
         status: formData.get("status"),
@@ -1627,6 +1628,7 @@ function ProjectCrudPanel({
               <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{project.project_name}</p>
               <p className="mt-1 text-xs text-slate-500">{project.archived_at ? "Archived" : project.status}</p>
             </div>
+            <input required name="projectName" defaultValue={project.project_name ?? ""} placeholder="Project name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
             <input name="campaignName" defaultValue={project.campaign_name ?? ""} placeholder="Campaign name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
             <input name="targetQuantity" type="number" min="0" defaultValue={project.target_quantity} placeholder="Target quantity" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
             <input name="startDate" type="date" defaultValue={project.start_date ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />

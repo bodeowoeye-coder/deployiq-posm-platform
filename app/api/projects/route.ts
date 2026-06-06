@@ -145,8 +145,11 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const id = stringValue(body.id);
   if (!id) return NextResponse.json({ error: "Missing project id." }, { status: 400 });
+  const projectName = stringValue(body.projectName);
+  if (!projectName) return NextResponse.json({ error: "Project name is required." }, { status: 400 });
 
   const updates = {
+    name: projectName,
     campaign: stringValue(body.campaignName) || null,
     target_quantity: Number(body.targetQuantity ?? 0),
     start_date: stringValue(body.startDate) || null,
