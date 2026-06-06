@@ -477,6 +477,9 @@ export function AdminDashboard({
   }
 
   async function updateProject(formData: FormData) {
+    const assignedPeople = [formData.get("leadInstaller"), formData.get("agencyName")]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
     const response = await fetch("/api/projects", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -492,10 +495,12 @@ export function AdminDashboard({
           .split(",")
           .map((item) => item.trim())
           .filter(Boolean),
-        assignedInstallers: String(formData.get("assignedInstallers") || "")
-          .split(",")
-          .map((item) => item.trim())
-          .filter(Boolean),
+        assignedInstallers: assignedPeople.length > 0
+          ? assignedPeople
+          : String(formData.get("assignedInstallers") || "")
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean),
         archived: formData.get("archived") === "true"
       })
     });
@@ -1102,7 +1107,7 @@ export function AdminDashboard({
         ) : null}
         {activeView === "campaigns" ? (
           <div className="grid min-w-0 gap-4">
-            <ProjectCrudPanel projects={projectRecords} onUpdate={updateProject} />
+            <ProjectCrudPanel projects={projectRecords} clients={clientRecords} brands={brands} onUpdate={updateProject} />
             <TargetAllocationPanel
               projects={projectRecords}
               rows={allocationRows}
@@ -1603,9 +1608,13 @@ function ProjectManager({
 
 function ProjectCrudPanel({
   projects,
+  clients,
+  brands,
   onUpdate
 }: {
   projects: Project[];
+  clients: Client[];
+  brands: Brand[];
   onUpdate: (formData: FormData) => Promise<void>;
 }) {
   return (
@@ -1614,43 +1623,107 @@ function ProjectCrudPanel({
       <p className="mt-2 text-sm leading-snug text-slate-600">Edit campaign details, targets, dates, assignments, and archive projects without deleting history.</p>
       <div className="mt-4 grid gap-3">
         {projects.length === 0 ? <div className="text-sm text-slate-500">No projects configured yet.</div> : null}
-        {projects.map((project) => (
-          <form
-            key={project.id}
-            className="grid min-w-0 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-2"
-            onSubmit={async (event: FormEvent<HTMLFormElement>) => {
-              event.preventDefault();
-              await onUpdate(new FormData(event.currentTarget));
-            }}
-          >
-            <input type="hidden" name="projectId" value={project.id} />
-            <div className="md:col-span-2">
-              <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{project.project_name}</p>
-              <p className="mt-1 text-xs text-slate-500">{project.archived_at ? "Archived" : project.status}</p>
-            </div>
-            <input required name="projectName" defaultValue={project.project_name ?? ""} placeholder="Project name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <input name="campaignName" defaultValue={project.campaign_name ?? ""} placeholder="Campaign name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <input name="targetQuantity" type="number" min="0" defaultValue={project.target_quantity} placeholder="Target quantity" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <input name="startDate" type="date" defaultValue={project.start_date ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <input name="endDate" type="date" defaultValue={project.end_date ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <select name="status" defaultValue={project.status} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
-              <option>Planning</option>
-              <option>Active</option>
-              <option>On Hold</option>
-              <option>Completed</option>
-            </select>
-            <select name="archived" defaultValue={project.archived_at ? "true" : "false"} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
-              <option value="false">Keep active</option>
-              <option value="true">Archive safely</option>
-            </select>
-            <input name="regionsCovered" defaultValue={project.regions_covered.join(", ")} placeholder="Regions covered" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <input name="assignedInstallers" defaultValue={project.assigned_installers.join(", ")} placeholder="Assigned installers/agencies" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <button className="inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 md:col-span-2">
-              Save project changes
-            </button>
-          </form>
-        ))}
+        {projects.map((project) => {
+          const projectWithTargets = project as Project & {
+            brand?: Brand | string | null;
+            primary_target_region?: string | null;
+            primary_target_state?: string | null;
+          };
+          const clientName = clients.find((client) => client.id === project.client_id)?.name || "Unassigned client";
+          const brandName =
+            brands.find((brand) => brand.id === project.brand_id)?.brand_name ||
+            (typeof projectWithTargets.brand === "string" ? projectWithTargets.brand : projectWithTargets.brand?.brand_name) ||
+            "Unassigned brand";
+          const regionValue = projectWithTargets.primary_target_region || project.regions_covered[0] || "";
+          const stateValue = projectWithTargets.primary_target_state || "";
+          const leadInstaller = project.assigned_installers[0] || "";
+          const agencyName = project.assigned_installers[1] || "";
+
+          return (
+            <form
+              key={project.id}
+              className="grid min-w-0 gap-4 rounded-lg bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-3"
+              onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+                event.preventDefault();
+                await onUpdate(new FormData(event.currentTarget));
+              }}
+            >
+              <input type="hidden" name="projectId" value={project.id} />
+              <input type="hidden" name="campaignName" value={project.campaign_name ?? ""} />
+              <input type="hidden" name="assignedInstallers" value={project.assigned_installers.join(", ")} />
+              <div className="grid min-w-0 gap-3 rounded-lg border border-slate-200 bg-white p-3 md:col-span-2 xl:col-span-3">
+                <div className="min-w-0">
+                  <p className="whitespace-normal break-words text-sm font-semibold leading-snug">{project.project_name}</p>
+                  <p className="mt-1 text-xs text-slate-500">Project summary</p>
+                </div>
+                <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                  <SummaryPill label="Project Name" value={project.project_name} />
+                  <SummaryPill label="Client" value={clientName} />
+                  <SummaryPill label="Brand" value={brandName} />
+                  <SummaryPill label="Status" value={project.archived_at ? "Archived" : project.status} />
+                  <SummaryPill label="Target Quantity" value={project.target_quantity.toLocaleString()} />
+                </div>
+              </div>
+              <FilterField label="Project Name">
+                <input required name="projectName" defaultValue={project.project_name ?? ""} placeholder="Project name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+              </FilterField>
+              <FilterField label="Client">
+                <input readOnly value={clientName} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600" />
+              </FilterField>
+              <FilterField label="Brand">
+                <input readOnly value={brandName} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600" />
+              </FilterField>
+              <FilterField label="Status">
+                <select name="status" defaultValue={project.status} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+                  <option>Planning</option>
+                  <option>Active</option>
+                  <option>On Hold</option>
+                  <option>Completed</option>
+                </select>
+              </FilterField>
+              <FilterField label="Start Date">
+                <input name="startDate" type="date" defaultValue={project.start_date ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+              </FilterField>
+              <FilterField label="End Date">
+                <input name="endDate" type="date" defaultValue={project.end_date ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+              </FilterField>
+              <FilterField label="Target Quantity">
+                <input name="targetQuantity" type="number" min="0" defaultValue={project.target_quantity} placeholder="Target quantity" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+              </FilterField>
+              <FilterField label="Region">
+                <input name="regionsCovered" defaultValue={regionValue} placeholder="Region" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+              </FilterField>
+              <FilterField label="State">
+                <input readOnly value={stateValue || "Not set"} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600" />
+              </FilterField>
+              <FilterField label="Installer">
+                <input name="leadInstaller" defaultValue={leadInstaller} placeholder="Lead installer" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+              </FilterField>
+              <FilterField label="Agency">
+                <input name="agencyName" defaultValue={agencyName} placeholder="Assigned agency" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+              </FilterField>
+              <FilterField label="Archive Status">
+                <select name="archived" defaultValue={project.archived_at ? "true" : "false"} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+                  <option value="false">Keep active</option>
+                  <option value="true">Archive safely</option>
+                </select>
+              </FilterField>
+              <button className="inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 md:col-span-2 xl:col-span-3">
+                Save project changes
+              </button>
+            </form>
+          );
+        })}
       </div>
+    </div>
+  );
+}
+
+function SummaryPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+      <p className="mt-1 whitespace-normal break-words text-xs font-semibold leading-snug text-slate-950">{value || "Not set"}</p>
     </div>
   );
 }
