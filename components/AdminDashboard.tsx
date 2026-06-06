@@ -1107,7 +1107,7 @@ export function AdminDashboard({
         ) : null}
         {activeView === "campaigns" ? (
           <div className="grid min-w-0 gap-4">
-            <ProjectCrudPanel projects={projectRecords} clients={clientRecords} brands={brands} onUpdate={updateProject} />
+            <ProjectCrudPanel projects={projectRecords} clients={clientRecords} brands={brands} agencies={agencyRecords} onUpdate={updateProject} />
             <TargetAllocationPanel
               projects={projectRecords}
               rows={allocationRows}
@@ -1610,11 +1610,13 @@ function ProjectCrudPanel({
   projects,
   clients,
   brands,
+  agencies,
   onUpdate
 }: {
   projects: Project[];
   clients: Client[];
   brands: Brand[];
+  agencies: Agency[];
   onUpdate: (formData: FormData) => Promise<void>;
 }) {
   return (
@@ -1668,10 +1670,10 @@ function ProjectCrudPanel({
                 <input required name="projectName" defaultValue={project.project_name ?? ""} placeholder="Project name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
               </FilterField>
               <FilterField label="Client">
-                <input readOnly value={clientName} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600" />
+                <input disabled readOnly value={clientName} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600 disabled:opacity-100" />
               </FilterField>
               <FilterField label="Brand">
-                <input readOnly value={brandName} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600" />
+                <input disabled readOnly value={brandName} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600 disabled:opacity-100" />
               </FilterField>
               <FilterField label="Status">
                 <select name="status" defaultValue={project.status} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
@@ -1700,7 +1702,19 @@ function ProjectCrudPanel({
                 <input name="leadInstaller" defaultValue={leadInstaller} placeholder="Lead installer" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
               </FilterField>
               <FilterField label="Agency">
-                <input name="agencyName" defaultValue={agencyName} placeholder="Assigned agency" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+                <select
+                  name="agencyName"
+                  defaultValue={agencyName}
+                  disabled={agencies.length === 0}
+                  className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                >
+                  <option value="">{agencies.length === 0 ? "No agencies available" : "No agency assigned"}</option>
+                  {agencies.map((agency) => (
+                    <option key={agency.id} value={agency.agency_name}>
+                      {agency.agency_name}
+                    </option>
+                  ))}
+                </select>
               </FilterField>
               <FilterField label="Archive Status">
                 <select name="archived" defaultValue={project.archived_at ? "true" : "false"} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
