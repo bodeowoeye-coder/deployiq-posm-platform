@@ -5,20 +5,31 @@ import { ToastProvider } from "@/components/ToastProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "POSM Deployment & Intelligence Platform",
-  description: "Mobile-first AI reporting system for dealer board installations",
-  manifest: "/manifest.webmanifest",
+  title: "DeployIQ™ | Field Deployment Intelligence Platform",
+  description: "Execute. Track. Verify.",
+  applicationName: "DeployIQ",
+  manifest: "/site.webmanifest",
   icons: {
     icon: [
-      { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
-      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512x512.png", sizes: "512x512", type: "image/png" }
     ],
-    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }]
+    shortcut: [{ url: "/favicon.ico" }],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }]
+  },
+  openGraph: {
+    title: "DeployIQ™",
+    description: "Execute. Track. Verify.",
+    siteName: "DeployIQ",
+    images: [{ url: "/icon-512x512.png", width: 512, height: 512, alt: "DeployIQ DQ logo" }]
   },
   appleWebApp: {
     capable: true,
     title: "DeployIQ",
-    statusBarStyle: "default"
+    statusBarStyle: "black-translucent"
   }
 };
 
