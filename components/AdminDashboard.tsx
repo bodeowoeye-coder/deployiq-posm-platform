@@ -272,6 +272,18 @@ export function AdminDashboard({
 
   useEffect(() => {
     setLastUpdated(formatDateTime(new Date()));
+    if (typeof window !== "undefined") {
+      console.info("[admin-client-timing]", {
+        stage: "dashboard-mounted",
+        initialView,
+        submissions: submissions.length,
+        projects: projects.length,
+        brands: brands.length,
+        clients: clients.length,
+        agencies: agencies.length,
+        installers: installers.length
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -287,7 +299,15 @@ export function AdminDashboard({
 
     setDashboardPanelsReady(false);
     const frame = window.requestAnimationFrame(() => {
-      window.setTimeout(() => setDashboardPanelsReady(true), 0);
+      window.setTimeout(() => {
+        setDashboardPanelsReady(true);
+        console.info("[admin-client-timing]", {
+          stage: "dashboard-secondary-panels-ready",
+          activeView,
+          submissions: submissions.length,
+          projects: projects.length
+        });
+      }, 0);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [activeView]);

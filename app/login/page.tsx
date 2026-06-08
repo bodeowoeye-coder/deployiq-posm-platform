@@ -51,6 +51,12 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const mountStart = performance.now();
+    console.info("[login-timing]", {
+      stage: "login-page-mounted",
+      href: window.location.href,
+      viewport: `${window.innerWidth}x${window.innerHeight}`
+    });
     const searchParams = new URLSearchParams(window.location.search);
     const loggedOut = searchParams.get("loggedOut") === "1";
     const nextReturnTo = searchParams.get("returnTo");
@@ -58,19 +64,33 @@ export default function LoginPage() {
     window.history.replaceState(null, "", nextReturnTo ? `/login?returnTo=${encodeURIComponent(nextReturnTo)}` : "/login");
 
     if (loggedOut) {
+      console.info("[login-timing]", { stage: "logged-out-login-page", durationMs: timingMs(mountStart) });
       window.history.replaceState(null, "", "/login");
       return;
     }
 
+    const existingSessionStart = performance.now();
     fetch(`/api/auth/session${nextReturnTo ? `?returnTo=${encodeURIComponent(nextReturnTo)}` : ""}`, { cache: "no-store", credentials: "include" })
       .then(async (response) => (response.ok ? response.json() : null))
       .then((session) => {
+        console.info("[login-timing]", {
+          stage: "existing-session-check",
+          authenticated: Boolean(session?.authenticated),
+          redirectTo: session?.redirectTo ?? null,
+          durationMs: timingMs(existingSessionStart)
+        });
         if (session?.authenticated && session.redirectTo) {
           console.info("[login] existing session redirect", { redirectTo: session.redirectTo });
           router.replace(session.redirectTo);
         }
       })
-      .catch(() => null);
+      .catch((sessionError) => {
+        console.info("[login-timing]", {
+          stage: "existing-session-check-error",
+          message: sessionError instanceof Error ? sessionError.message : "Unknown error",
+          durationMs: timingMs(existingSessionStart)
+        });
+      });
   }, [router]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -180,6 +200,7 @@ export default function LoginPage() {
       showToast("Signed in successfully.");
       const redirectStart = performance.now();
       console.info("[login-timing]", {
+        stage: "redirect-start",
         redirectTo,
         redirectPreparationMs: timingMs(redirectStart),
         totalLoginMs: timingMs(totalStart)

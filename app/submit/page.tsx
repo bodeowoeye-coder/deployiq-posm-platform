@@ -120,6 +120,11 @@ export default function SubmitPage() {
   });
 
   useEffect(() => {
+    console.info("[submit-timing]", {
+      stage: "submit-page-mounted",
+      viewport: typeof window !== "undefined" ? `${window.innerWidth}x${window.innerHeight}` : null,
+      online: typeof navigator !== "undefined" ? navigator.onLine : null
+    });
     const draft = readInstallerDraft();
     if (draft) {
       setInstallerName(draft.installerName);
@@ -138,27 +143,52 @@ export default function SubmitPage() {
   }, [brandName, installerLga, installerName, installerState, manualLandmark, manualLocationDescription, projectName]);
 
   useEffect(() => {
+    const sessionStart = performance.now();
     fetch("/api/auth/session", { credentials: "include" })
       .then(async (response) => (response.ok ? response.json() : null))
       .then((body: AppSession | null) => {
+        console.info("[submit-timing]", {
+          stage: "app-session-fetch",
+          role: body?.role ?? null,
+          hasUserId: Boolean(body?.userId),
+          durationMs: timingMs(sessionStart)
+        });
         setRole(body?.role ?? null);
         setInstallerUserId(body?.userId ?? null);
         setInstallerEmail(body?.email ?? null);
         const accountName = body?.fullName?.trim() || body?.email?.trim() || "";
         if (accountName) setInstallerName(accountName);
       })
-      .catch(() => setRole(null));
+      .catch((sessionError) => {
+        console.info("[submit-timing]", {
+          stage: "app-session-fetch-error",
+          message: sessionError instanceof Error ? sessionError.message : "Unknown error",
+          durationMs: timingMs(sessionStart)
+        });
+        setRole(null);
+      });
   }, []);
 
   useEffect(() => {
     async function loadBrands() {
+      const brandsStart = performance.now();
       try {
         const response = await fetch("/api/brands");
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Could not load brands.");
         setBrands(body.brands ?? []);
+        console.info("[submit-timing]", {
+          stage: "brands-fetch",
+          count: body.brands?.length ?? 0,
+          durationMs: timingMs(brandsStart)
+        });
       } catch (loadError) {
         setBrandsError(loadError instanceof Error ? loadError.message : "Could not load brands.");
+        console.info("[submit-timing]", {
+          stage: "brands-fetch-error",
+          message: loadError instanceof Error ? loadError.message : "Unknown error",
+          durationMs: timingMs(brandsStart)
+        });
       }
     }
 
