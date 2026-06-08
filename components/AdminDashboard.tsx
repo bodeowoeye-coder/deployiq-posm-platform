@@ -1671,6 +1671,7 @@ function ProjectCrudPanel({
               }}
             >
               <input type="hidden" name="projectId" value={project.id} />
+              <input type="hidden" name="projectName" value={project.project_name ?? ""} />
               <input type="hidden" name="campaignName" value={project.campaign_name ?? ""} />
               <input type="hidden" name="assignedInstallers" value={project.assigned_installers.join(", ")} />
               <div className="grid min-w-0 gap-3 rounded-lg border border-slate-200 bg-white p-3 md:col-span-2 xl:col-span-3">
@@ -1687,7 +1688,7 @@ function ProjectCrudPanel({
                 </div>
               </div>
               <FilterField label="Project Name">
-                <input required name="projectName" defaultValue={project.project_name ?? ""} placeholder="Project name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+                <input disabled readOnly value={project.project_name ?? ""} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600 disabled:opacity-100" />
               </FilterField>
               <FilterField label="Client">
                 <input disabled readOnly value={clientName} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600 disabled:opacity-100" />
