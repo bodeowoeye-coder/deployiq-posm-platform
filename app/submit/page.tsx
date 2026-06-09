@@ -134,18 +134,24 @@ export default function SubmitPage() {
   });
   const selectedOutlet = deploymentLocations.find((location) => location.id === selectedLocationId) ?? null;
   const stateOutletOptions = installerState ? deploymentLocations.filter((location) => location.state === installerState) : [];
-  const stateFilteredOutlets = deploymentLocations.filter((location) => {
-    const matchesState = Boolean(installerState) && location.state === installerState;
+  const rankedOutletMatches = stateOutletOptions
+    .map((location) => {
     const query = outletSearch.trim().toLowerCase();
-    const matchesSearch =
-      !query ||
-      [location.outlet_name, location.outlet_code, location.address, location.brand_type]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(query);
-    return matchesState && matchesSearch;
-  });
+      const outletName = location.outlet_name.toLowerCase();
+      const outletCode = (location.outlet_code ?? "").toLowerCase();
+      const supportingText = [location.address, location.brand_type].filter(Boolean).join(" ").toLowerCase();
+      if (!query) return { location, score: 0 };
+      if (outletCode === query || outletName === query) return { location, score: 1 };
+      if (outletCode.startsWith(query) || outletName.startsWith(query)) return { location, score: 2 };
+      if (outletCode.includes(query) || outletName.includes(query)) return { location, score: 3 };
+      if (supportingText.includes(query)) return { location, score: 4 };
+      return null;
+    })
+    .filter((item): item is { location: DeploymentLocationOption; score: number } => Boolean(item))
+    .sort((a, b) => a.score - b.score || a.location.outlet_name.localeCompare(b.location.outlet_name));
+  const stateFilteredOutlets = rankedOutletMatches.map((item) => item.location);
+  const outletResultList = stateFilteredOutlets.slice(0, 10);
+  const hasOutletSearch = outletSearch.trim().length > 0;
 
   useEffect(() => {
     console.info("[submit-timing]", {
@@ -1245,14 +1251,43 @@ export default function SubmitPage() {
               </div>
               <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                 <Field label="Search outlet">
-                  <input
-                    className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    value={outletSearch}
-                    onChange={(event) => setOutletSearch(event.target.value)}
-                    placeholder="Search name, code, address"
-                    autoComplete="off"
-                    disabled={!installerState}
-                  />
+                  <div className="grid min-w-0 gap-2">
+                    <input
+                      className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 disabled:bg-slate-100 disabled:text-slate-500"
+                      value={outletSearch}
+                      onChange={(event) => setOutletSearch(event.target.value)}
+                      placeholder={installerState ? "Type outlet name or code" : "Select a State first"}
+                      autoComplete="off"
+                      disabled={!installerState}
+                    />
+                    {!installerState ? <p className="text-xs font-semibold text-slate-600">Select a State first.</p> : null}
+                    {installerState && hasOutletSearch && outletResultList.length > 0 ? (
+                      <div className="grid max-h-72 min-w-0 gap-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+                        {outletResultList.map((location) => (
+                          <button
+                            key={location.id}
+                            type="button"
+                            className="min-h-12 rounded-lg border border-slate-100 px-3 py-2 text-left text-sm transition hover:border-orange-200 hover:bg-orange-50 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                            onClick={() => {
+                              setSelectedLocationId(location.id);
+                              setOutletSearch([location.outlet_code, location.outlet_name].filter(Boolean).join(" - "));
+                            }}
+                          >
+                            <span className="block whitespace-normal break-words font-bold leading-snug text-slate-950">
+                              {[location.outlet_code, location.outlet_name, location.address].filter(Boolean).join(" - ")}
+                            </span>
+                            {location.brand_type ? <span className="mt-1 block text-xs leading-snug text-slate-500">{location.brand_type}</span> : null}
+                          </button>
+                        ))}
+                        {stateFilteredOutlets.length > 10 ? (
+                          <p className="px-2 pb-1 text-xs font-semibold text-slate-600">Showing first 10 matches. Keep typing to narrow results.</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {installerState && hasOutletSearch && stateOutletOptions.length > 0 && stateFilteredOutlets.length === 0 ? (
+                      <p className="text-xs font-semibold text-slate-600">No matching approved outlet found.</p>
+                    ) : null}
+                  </div>
                 </Field>
                 <Field label="Approved outlet">
                   <select
@@ -1278,9 +1313,6 @@ export default function SubmitPage() {
                   </select>
                 </Field>
               </div>
-              {installerState && stateOutletOptions.length > 0 && stateFilteredOutlets.length === 0 ? (
-                <p className="text-xs font-semibold text-slate-600">No matching approved outlet found.</p>
-              ) : null}
               {locationsError ? <p className="text-xs font-medium text-rose-700">{locationsError}</p> : null}
               {selectedOutlet ? (
                 <div className="grid gap-2 rounded-lg border border-orange-100 bg-white p-3 text-xs text-slate-600 sm:grid-cols-2">
