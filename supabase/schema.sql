@@ -403,6 +403,18 @@ create index if not exists submissions_brand_name_idx on public.submissions (bra
 create index if not exists submissions_brand_id_idx on public.submissions (brand_id);
 create index if not exists submissions_client_id_idx on public.submissions (client_id);
 create index if not exists submissions_project_id_idx on public.submissions (project_id);
+create unique index if not exists submissions_project_outlet_id_active_uidx
+  on public.submissions (project_id, selected_outlet_id)
+  where project_id is not null
+    and selected_outlet_id is not null
+    and lower(status) in ('submitted', 'pending', 'approved');
+create unique index if not exists submissions_project_outlet_code_active_uidx
+  on public.submissions (project_id, lower(selected_outlet_code))
+  where project_id is not null
+    and selected_outlet_id is null
+    and selected_outlet_code is not null
+    and selected_outlet_code <> ''
+    and lower(status) in ('submitted', 'pending', 'approved');
 create index if not exists submissions_project_name_idx on public.submissions (project_name);
 create index if not exists submissions_status_idx on public.submissions (status);
 create index if not exists submissions_image_fingerprint_idx on public.submissions (image_fingerprint);

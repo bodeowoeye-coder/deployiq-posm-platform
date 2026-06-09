@@ -19,6 +19,9 @@ if (!STORAGE_BUCKET) {
 
 export const runtime = "nodejs";
 
+const ACTIVE_OUTLET_DUPLICATE_STATUSES = ["Submitted", "submitted", "Pending", "pending", "Approved", "approved"];
+const OUTLET_DUPLICATE_MESSAGE = "This approved outlet has already been submitted for this project. Please select another outlet.";
+
 function nowMs() {
   return Number(process.hrtime.bigint()) / 1_000_000;
 }
@@ -129,6 +132,44 @@ function reviewOutletMatch({
     status: "warning",
     notes: "The uploaded board photo may not match the selected outlet. Please confirm the outlet name and address before submitting."
   };
+}
+
+async function findActiveOutletSubmission({
+  supabase,
+  projectId,
+  selectedOutletId,
+  outletCode
+}: {
+  supabase: ReturnType<typeof createAdminSupabase>;
+  projectId: string | null | undefined;
+  selectedOutletId: string;
+  outletCode: string | null | undefined;
+}) {
+  if (!projectId || (!selectedOutletId && !outletCode)) return { duplicate: null, error: null };
+
+  const selectFields = "id,status,selected_outlet_id,selected_outlet_code";
+  const queryBase = () =>
+    supabase
+      .from("submissions")
+      .select(selectFields)
+      .eq("project_id", projectId)
+      .in("status", ACTIVE_OUTLET_DUPLICATE_STATUSES)
+      .limit(1);
+
+  if (selectedOutletId) {
+    const { data, error } = await queryBase().eq("selected_outlet_id", selectedOutletId);
+    if (error) return { duplicate: null, error };
+    if (data?.[0]) return { duplicate: data[0], error: null };
+  }
+
+  const normalizedOutletCode = (outletCode ?? "").trim();
+  if (normalizedOutletCode) {
+    const { data, error } = await queryBase().ilike("selected_outlet_code", normalizedOutletCode);
+    if (error) return { duplicate: null, error };
+    if (data?.[0]) return { duplicate: data[0], error: null };
+  }
+
+  return { duplicate: null, error: null };
 }
 
 function metadataFullName(user: { user_metadata?: Record<string, unknown> }) {
@@ -283,32 +324,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const imageBuffer = Buffer.from(await image.arrayBuffer());
-    const imageFingerprint = fingerprintImage(imageBuffer);
-    const fileName = `${Date.now()}-${crypto.randomUUID()}.jpg`;
-    const path = `installations/${fileName}`;
-
-    const storageStart = nowMs();
-    const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET).upload(path, image, {
-      contentType: image.type || "image/jpeg",
-      upsert: false
-    });
-    console.info("[submit-server-timing]", { stage: "storage-upload", durationMs: timingMs(storageStart), imageSize: image.size, imageType: image.type || "image/jpeg" });
-
-    if (uploadError) {
-      console.info("[submit-server-timing]", { stage: "submit-total", result: "storage-error", durationMs: timingMs(totalStart), message: uploadError.message });
-      return NextResponse.json({ error: uploadError.message }, { status: 500 });
-    }
-
-    const {
-      data: { publicUrl }
-    } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-
-    const ocrStart = nowMs();
-    const extraction = await extractBoardTextFromImage(publicUrl);
-    console.info("[submit-server-timing]", { stage: "ocr-vision", confidence: extraction.confidence, durationMs: timingMs(ocrStart) });
-    const brandLoadStart = nowMs();
-    const { data: allBrands } = await supabase.from("brands").select("brand_name");
+    const assignmentStart = nowMs();
     const { data: matchingBrand } = brandName
       ? await supabase.from("brands").select("id, client_id, brand_name").ilike("brand_name", brandName).maybeSingle()
       : { data: null };
@@ -335,6 +351,63 @@ export async function POST(request: Request) {
             .maybeSingle()
       : { data: null };
     const resolvedBrandName = matchingBrand?.brand_name ?? (brandName || null);
+    console.info("[submit-server-timing]", {
+      stage: "project-assignment",
+      projectId: matchingProject?.id ?? null,
+      clientId: assignmentClientId,
+      durationMs: timingMs(assignmentStart)
+    });
+
+    if (selectedLocationId || outletCode) {
+      const outletDuplicateStart = nowMs();
+      const { duplicate: activeOutletSubmission, error: outletDuplicateError } = await findActiveOutletSubmission({
+        supabase,
+        projectId: matchingProject?.id,
+        selectedOutletId: selectedLocationId,
+        outletCode
+      });
+      console.info("[submit-server-timing]", {
+        stage: "outlet-duplicate-check",
+        checked: Boolean(matchingProject?.id && (selectedLocationId || outletCode)),
+        duplicateFound: Boolean(activeOutletSubmission),
+        durationMs: timingMs(outletDuplicateStart)
+      });
+
+      if (outletDuplicateError && !isOptionalSubmissionColumnError(outletDuplicateError)) {
+        return NextResponse.json({ error: outletDuplicateError.message }, { status: 500 });
+      }
+
+      if (activeOutletSubmission) {
+        return NextResponse.json({ error: OUTLET_DUPLICATE_MESSAGE }, { status: 409 });
+      }
+    }
+
+    const imageBuffer = Buffer.from(await image.arrayBuffer());
+    const imageFingerprint = fingerprintImage(imageBuffer);
+    const fileName = `${Date.now()}-${crypto.randomUUID()}.jpg`;
+    const path = `installations/${fileName}`;
+
+    const storageStart = nowMs();
+    const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET).upload(path, image, {
+      contentType: image.type || "image/jpeg",
+      upsert: false
+    });
+    console.info("[submit-server-timing]", { stage: "storage-upload", durationMs: timingMs(storageStart), imageSize: image.size, imageType: image.type || "image/jpeg" });
+
+    if (uploadError) {
+      console.info("[submit-server-timing]", { stage: "submit-total", result: "storage-error", durationMs: timingMs(totalStart), message: uploadError.message });
+      return NextResponse.json({ error: uploadError.message }, { status: 500 });
+    }
+
+    const {
+      data: { publicUrl }
+    } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+
+    const ocrStart = nowMs();
+    const extraction = await extractBoardTextFromImage(publicUrl);
+    console.info("[submit-server-timing]", { stage: "ocr-vision", confidence: extraction.confidence, durationMs: timingMs(ocrStart) });
+    const brandLoadStart = nowMs();
+    const { data: allBrands } = await supabase.from("brands").select("brand_name");
     const brandReview = reviewBrandMatch(resolvedBrandName, extraction, allBrands ?? []);
     const confidence = scoreBrandVerification(extraction.confidence, brandReview.brandMatchStatus);
     const outletReview = reviewOutletMatch({
@@ -528,6 +601,11 @@ export async function POST(request: Request) {
           console.info("[submit-server-timing]", { stage: "submit-total", result: "already-synced", durationMs: timingMs(totalStart) });
           return NextResponse.json({ submission: existingSubmission, alreadySynced: true });
         }
+      }
+      if (error.code === "23505" && error.message.toLowerCase().includes("outlet")) {
+        await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+        console.info("[submit-server-timing]", { stage: "submit-total", result: "outlet-duplicate", durationMs: timingMs(totalStart) });
+        return NextResponse.json({ error: OUTLET_DUPLICATE_MESSAGE }, { status: 409 });
       }
       await supabase.storage.from(STORAGE_BUCKET).remove([path]);
       console.info("[submit-server-timing]", { stage: "submit-total", result: "database-error", durationMs: timingMs(totalStart), message: error.message });
