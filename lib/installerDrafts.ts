@@ -8,6 +8,7 @@ export type InstallerDraft = {
   installerLga: string;
   manualLocationDescription?: string;
   manualLandmark?: string;
+  selectedLocationId?: string;
   updatedAt: string;
 };
 
@@ -22,6 +23,12 @@ export type QueuedSubmissionFields = {
   installerState: string;
   installerRegion: string;
   installerLga: string;
+  selectedLocationId?: string;
+  selectedOutletName?: string;
+  selectedOutletOwnerName?: string | null;
+  selectedOutletAddress?: string | null;
+  selectedOutletBrandType?: string | null;
+  selectedOutletCode?: string | null;
   resolvedAddress: string | null;
   manualLocationDescription?: string;
   manualLandmark?: string;
@@ -272,6 +279,12 @@ export function buildQueuedSubmissionFormData(item: QueuedSubmissionRecord, subm
   formData.append("installerState", item.fields.installerState);
   formData.append("installerRegion", item.fields.installerRegion);
   formData.append("installerLga", item.fields.installerLga);
+  formData.append("selectedLocationId", item.fields.selectedLocationId ?? "");
+  formData.append("selectedOutletName", item.fields.selectedOutletName ?? "");
+  formData.append("selectedOutletOwnerName", item.fields.selectedOutletOwnerName ?? "");
+  formData.append("selectedOutletAddress", item.fields.selectedOutletAddress ?? "");
+  formData.append("selectedOutletBrandType", item.fields.selectedOutletBrandType ?? "");
+  formData.append("selectedOutletCode", item.fields.selectedOutletCode ?? "");
   formData.append("manualLocationDescription", item.fields.manualLocationDescription ?? "");
   formData.append("manualLandmark", item.fields.manualLandmark ?? "");
   formData.append("latitude", String(item.fields.latitude ?? ""));

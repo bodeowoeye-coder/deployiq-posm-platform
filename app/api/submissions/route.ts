@@ -105,13 +105,19 @@ export async function POST(request: Request) {
     const submittedInstallerName = cleanString(formData.get("installerName"));
     const localSubmissionId = cleanString(formData.get("localSubmissionId"));
     const projectName = cleanString(formData.get("projectName")) || DEFAULT_PROJECT_NAME;
-    const brandName = cleanString(formData.get("brandName"));
+    const submittedBrandName = cleanString(formData.get("brandName"));
     const installerState = cleanString(formData.get("installerState"));
     const submittedInstallerRegion = cleanString(formData.get("installerRegion"));
     const installerLga = cleanString(formData.get("installerLga"));
     const submittedResolvedAddress = cleanString(formData.get("resolvedAddress"));
     const manualLocationDescription = cleanString(formData.get("manualLocationDescription"));
     const manualLandmark = cleanString(formData.get("manualLandmark"));
+    const selectedLocationId = cleanString(formData.get("selectedLocationId"));
+    const selectedOutletName = cleanString(formData.get("selectedOutletName"));
+    const selectedOutletOwnerName = cleanString(formData.get("selectedOutletOwnerName"));
+    const selectedOutletAddress = cleanString(formData.get("selectedOutletAddress"));
+    const selectedOutletBrandType = cleanString(formData.get("selectedOutletBrandType"));
+    const selectedOutletCode = cleanString(formData.get("selectedOutletCode"));
     const submitAnyway = cleanString(formData.get("submitAnyway")) === "true";
     const latitude = Number(cleanString(formData.get("latitude"))) || null;
     const longitude = Number(cleanString(formData.get("longitude"))) || null;
@@ -129,6 +135,19 @@ export async function POST(request: Request) {
     const capturedIso = Number.isNaN(capturedDate.valueOf()) ? new Date().toISOString() : capturedDate.toISOString();
     const installationParts = getLagosInstallationParts(capturedIso);
     const supabase = createAdminSupabase();
+    const { data: selectedLocation } = selectedLocationId
+      ? await supabase
+          .from("deployment_locations")
+          .select("outlet_name, owner_name, address, brand_type, outlet_code")
+          .eq("id", selectedLocationId)
+          .maybeSingle()
+      : { data: null };
+    const outletName = selectedLocation?.outlet_name ?? selectedOutletName;
+    const outletOwnerName = selectedLocation?.owner_name ?? selectedOutletOwnerName;
+    const outletAddress = selectedLocation?.address ?? selectedOutletAddress;
+    const outletBrandType = selectedLocation?.brand_type ?? selectedOutletBrandType;
+    const outletCode = selectedLocation?.outlet_code ?? selectedOutletCode;
+    const brandName = submittedBrandName || outletBrandType;
     const { data: userProfile, error: userProfileError } = await supabase
       .schema("public")
       .from("user_profiles")
@@ -307,7 +326,14 @@ export async function POST(request: Request) {
     const reverseGeocodeStart = nowMs();
     const resolvedLocation = await reverseGeocode(latitude, longitude);
     console.info("[submit-server-timing]", { stage: "reverse-geocoding", hasCoordinates: Boolean(latitude && longitude), resolved: Boolean(resolvedLocation.resolvedAddress), durationMs: timingMs(reverseGeocodeStart) });
-    const manualFallbackAddress = [manualLocationDescription, manualLandmark ? `Landmark: ${manualLandmark}` : "", installerLga ? `LGA: ${installerLga}` : ""]
+    const manualFallbackAddress = [
+      outletAddress,
+      manualLocationDescription,
+      manualLandmark ? `Landmark: ${manualLandmark}` : "",
+      outletOwnerName ? `Owner: ${outletOwnerName}` : "",
+      outletCode ? `Outlet code: ${outletCode}` : "",
+      installerLga ? `LGA: ${installerLga}` : ""
+    ]
       .filter(Boolean)
       .join(" | ");
     const finalResolvedAddress = resolvedLocation.resolvedAddress || submittedResolvedAddress || manualFallbackAddress || null;
@@ -332,7 +358,7 @@ export async function POST(request: Request) {
         duplicate_status: duplicateReview.status,
         duplicate_reason: duplicateReview.reason,
         image_fingerprint: imageFingerprint,
-        salon_name: extraction.salonName || null,
+        salon_name: extraction.salonName || outletName || null,
         address: extraction.address || finalResolvedAddress,
         phone: extraction.phone || null,
         gps_latitude: latitude,

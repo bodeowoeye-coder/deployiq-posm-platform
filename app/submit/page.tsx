@@ -38,6 +38,16 @@ type BrandOption = {
   brand_name: string;
 };
 
+type DeploymentLocationOption = {
+  id: string;
+  state: string;
+  outlet_name: string;
+  owner_name: string | null;
+  address: string | null;
+  brand_type: string | null;
+  outlet_code: string | null;
+};
+
 type MismatchWarning = {
   selectedBrand: string | null;
   detectedBrand: string | null;
@@ -77,6 +87,10 @@ export default function SubmitPage() {
   const [manualLandmark, setManualLandmark] = useState("");
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [brandsError, setBrandsError] = useState("");
+  const [deploymentLocations, setDeploymentLocations] = useState<DeploymentLocationOption[]>([]);
+  const [locationsError, setLocationsError] = useState("");
+  const [selectedLocationId, setSelectedLocationId] = useState("");
+  const [outletSearch, setOutletSearch] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewStatus, setPreviewStatus] = useState<"idle" | "preparing" | "ready" | "error">("idle");
@@ -118,6 +132,19 @@ export default function SubmitPage() {
     const syncedAt = new Date(item.syncedAt).valueOf();
     return Number.isFinite(syncedAt) && Date.now() - syncedAt < syncedQueueVisibleMs;
   });
+  const selectedOutlet = deploymentLocations.find((location) => location.id === selectedLocationId) ?? null;
+  const stateFilteredOutlets = deploymentLocations.filter((location) => {
+    const matchesState = !installerState || location.state === installerState;
+    const query = outletSearch.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      [location.outlet_name, location.owner_name, location.address, location.brand_type, location.outlet_code]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    return matchesState && matchesSearch;
+  });
 
   useEffect(() => {
     console.info("[submit-timing]", {
@@ -134,13 +161,14 @@ export default function SubmitPage() {
       setInstallerLga(draft.installerLga);
       setManualLocationDescription(draft.manualLocationDescription ?? "");
       setManualLandmark(draft.manualLandmark ?? "");
+      setSelectedLocationId(draft.selectedLocationId ?? "");
     }
     refreshQueue();
   }, []);
 
   useEffect(() => {
-    saveInstallerDraft({ installerName, projectName, brandName, installerState, installerLga, manualLocationDescription, manualLandmark });
-  }, [brandName, installerLga, installerName, installerState, manualLandmark, manualLocationDescription, projectName]);
+    saveInstallerDraft({ installerName, projectName, brandName, installerState, installerLga, manualLocationDescription, manualLandmark, selectedLocationId });
+  }, [brandName, installerLga, installerName, installerState, manualLandmark, manualLocationDescription, projectName, selectedLocationId]);
 
   useEffect(() => {
     const sessionStart = performance.now();
@@ -194,6 +222,34 @@ export default function SubmitPage() {
 
     loadBrands();
   }, []);
+
+  useEffect(() => {
+    async function loadDeploymentLocations() {
+      try {
+        const response = await fetch("/api/deployment-locations", { credentials: "include" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Could not load approved outlets.");
+        setDeploymentLocations(body.locations ?? []);
+      } catch (loadError) {
+        setLocationsError(loadError instanceof Error ? loadError.message : "Could not load approved outlets.");
+      }
+    }
+
+    loadDeploymentLocations();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedOutlet) return;
+    if (selectedOutlet.state && installerState !== selectedOutlet.state) setInstallerState(selectedOutlet.state);
+    if (selectedOutlet.address && !manualLocationDescription.trim()) setManualLocationDescription(selectedOutlet.address);
+    if (selectedOutlet.outlet_name && !manualLandmark.trim()) setManualLandmark(selectedOutlet.outlet_name);
+    if (selectedOutlet.brand_type && !brandName.trim()) setBrandName(selectedOutlet.brand_type);
+  }, [brandName, installerState, manualLandmark, manualLocationDescription, selectedOutlet]);
+
+  useEffect(() => {
+    if (!selectedOutlet) return;
+    if (installerState && selectedOutlet.state !== installerState) setSelectedLocationId("");
+  }, [installerState, selectedOutlet]);
 
   useEffect(() => {
     requestLocation();
@@ -656,6 +712,12 @@ export default function SubmitPage() {
       installerState,
       installerRegion,
       installerLga,
+      selectedLocationId,
+      selectedOutletName: selectedOutlet?.outlet_name ?? "",
+      selectedOutletOwnerName: selectedOutlet?.owner_name ?? null,
+      selectedOutletAddress: selectedOutlet?.address ?? null,
+      selectedOutletBrandType: selectedOutlet?.brand_type ?? null,
+      selectedOutletCode: selectedOutlet?.outlet_code ?? null,
       resolvedAddress: position.address || fallbackAddress || null,
       manualLocationDescription,
       manualLandmark,
@@ -889,6 +951,12 @@ export default function SubmitPage() {
       formData.append("installerState", installerState);
       formData.append("installerRegion", installerRegion);
       formData.append("installerLga", installerLga);
+      formData.append("selectedLocationId", selectedLocationId);
+      formData.append("selectedOutletName", selectedOutlet?.outlet_name ?? "");
+      formData.append("selectedOutletOwnerName", selectedOutlet?.owner_name ?? "");
+      formData.append("selectedOutletAddress", selectedOutlet?.address ?? "");
+      formData.append("selectedOutletBrandType", selectedOutlet?.brand_type ?? "");
+      formData.append("selectedOutletCode", selectedOutlet?.outlet_code ?? "");
       formData.append("latitude", String(position.latitude ?? ""));
       formData.append("longitude", String(position.longitude ?? ""));
       formData.append("resolvedAddress", position.address || fallbackLocationText());
@@ -931,6 +999,8 @@ export default function SubmitPage() {
       setPreviewError("");
       setPreviewStatus("idle");
       setBrandName("");
+      setSelectedLocationId("");
+      setOutletSearch("");
       setMismatchWarning(null);
       setResult("success");
       showToast("Report submitted successfully.");
@@ -1164,6 +1234,57 @@ export default function SubmitPage() {
                 onChange={(event) => setInstallerLga(event.target.value)}
               />
             </Field>
+
+            <div className="grid min-w-0 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-slate-950">Approved outlet directory</p>
+                <p className="mt-1 text-xs leading-snug text-slate-600">
+                  Optional for the Godrej pilot. Select a pre-approved outlet when it appears in the list.
+                </p>
+              </div>
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                <Field label="Search outlet">
+                  <input
+                    className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    value={outletSearch}
+                    onChange={(event) => setOutletSearch(event.target.value)}
+                    placeholder="Search name, owner, code"
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field label="Approved outlet">
+                  <select
+                    className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 disabled:bg-slate-100 disabled:text-slate-500"
+                    value={selectedLocationId}
+                    onChange={(event) => setSelectedLocationId(event.target.value)}
+                    disabled={!installerState || deploymentLocations.length === 0}
+                  >
+                    <option value="">
+                      {!installerState
+                        ? "Select state first"
+                        : deploymentLocations.length === 0
+                          ? "No approved outlets imported"
+                          : "No outlet selected"}
+                    </option>
+                    {stateFilteredOutlets.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.outlet_name}
+                        {location.outlet_code ? ` (${location.outlet_code})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              {locationsError ? <p className="text-xs font-medium text-rose-700">{locationsError}</p> : null}
+              {selectedOutlet ? (
+                <div className="grid gap-2 rounded-lg border border-orange-100 bg-white p-3 text-xs text-slate-600 sm:grid-cols-2">
+                  <OutletMeta label="Owner" value={selectedOutlet.owner_name || "Not provided"} />
+                  <OutletMeta label="Brand type" value={selectedOutlet.brand_type || "Not provided"} />
+                  <OutletMeta label="Outlet code" value={selectedOutlet.outlet_code || "Not provided"} />
+                  <OutletMeta label="Address" value={selectedOutlet.address || "Not provided"} />
+                </div>
+              ) : null}
+            </div>
 
             <div className="grid min-w-0 gap-3 rounded-lg border border-orange-100 bg-orange-50/70 p-3 sm:grid-cols-2">
               <div className="min-w-0 sm:col-span-2">
@@ -1463,6 +1584,15 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       {label}
       {children}
     </label>
+  );
+}
+
+function OutletMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
+      <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
+      <strong className="mt-1 block whitespace-normal break-words text-xs leading-snug text-slate-950">{value}</strong>
+    </div>
   );
 }
 

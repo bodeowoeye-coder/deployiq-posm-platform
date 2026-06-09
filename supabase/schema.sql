@@ -147,6 +147,18 @@ create table if not exists public.audit_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.deployment_locations (
+  id uuid primary key default gen_random_uuid(),
+  state text not null,
+  outlet_name text not null,
+  owner_name text,
+  address text,
+  brand_type text,
+  outlet_code text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.submissions (
   id uuid primary key default gen_random_uuid(),
   local_submission_id text,
@@ -290,6 +302,14 @@ alter table public.agencies add column if not exists phone text;
 alter table public.installers add column if not exists user_id uuid unique references auth.users(id) on delete set null;
 alter table public.installers add column if not exists assigned_states text[] not null default '{}';
 alter table public.installers add column if not exists access_status text not null default 'Active';
+alter table public.deployment_locations add column if not exists state text;
+alter table public.deployment_locations add column if not exists outlet_name text;
+alter table public.deployment_locations add column if not exists owner_name text;
+alter table public.deployment_locations add column if not exists address text;
+alter table public.deployment_locations add column if not exists brand_type text;
+alter table public.deployment_locations add column if not exists outlet_code text;
+alter table public.deployment_locations add column if not exists created_at timestamptz not null default now();
+alter table public.deployment_locations add column if not exists updated_at timestamptz not null default now();
 
 update public.submissions
 set status = case
@@ -393,6 +413,11 @@ create index if not exists audit_logs_target_user_id_idx on public.audit_logs (t
 create index if not exists audit_logs_created_at_idx on public.audit_logs (created_at desc);
 create index if not exists submission_status_history_submission_id_idx on public.submission_status_history (submission_id, created_at desc);
 create index if not exists alert_events_submission_id_idx on public.alert_events (submission_id, created_at desc);
+create index if not exists deployment_locations_state_idx on public.deployment_locations (state);
+create index if not exists deployment_locations_outlet_name_idx on public.deployment_locations (outlet_name);
+create unique index if not exists deployment_locations_outlet_code_unique_idx
+  on public.deployment_locations (outlet_code)
+  where outlet_code is not null and outlet_code <> '';
 
 alter table public.submissions enable row level security;
 alter table public.clients enable row level security;
@@ -409,8 +434,16 @@ alter table public.client_projects enable row level security;
 alter table public.user_roles enable row level security;
 alter table public.user_profiles enable row level security;
 alter table public.audit_logs enable row level security;
+alter table public.deployment_locations enable row level security;
 alter table public.submission_status_history enable row level security;
 alter table public.alert_events enable row level security;
+
+drop policy if exists "Service role can manage deployment locations" on public.deployment_locations;
+create policy "Service role can manage deployment locations"
+on public.deployment_locations
+for all
+using (auth.role() = 'service_role')
+with check (auth.role() = 'service_role');
 
 drop policy if exists "Admin service role can manage submissions" on public.submissions;
 create policy "Admin service role can manage submissions"

@@ -39,6 +39,7 @@ export type DashboardView =
   | "profile"
   | "create-project"
   | "campaigns"
+  | "outlet-directory"
   | "installer-portal"
   | "user-management"
   | "agencies"

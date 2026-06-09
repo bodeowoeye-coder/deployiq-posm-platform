@@ -147,6 +147,18 @@ export type Agency = {
   created_at: string;
 };
 
+export type DeploymentLocation = {
+  id: string;
+  state: string;
+  outlet_name: string;
+  owner_name: string | null;
+  address: string | null;
+  brand_type: string | null;
+  outlet_code: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Installer = {
   id: string;
   user_id: string | null;

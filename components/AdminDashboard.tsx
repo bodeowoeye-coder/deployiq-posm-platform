@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BRANDS, STATUSES } from "@/lib/brands";
-import type { Agency, AuditLog, Brand, Client, ClientProfile, DeploymentProgress, Installer, ManagedUser, Project, ProjectTarget, Submission, SubmissionStatus, SubmissionStatusHistory } from "@/lib/types";
+import type { Agency, AuditLog, Brand, Client, ClientProfile, DeploymentLocation, DeploymentProgress, Installer, ManagedUser, Project, ProjectTarget, Submission, SubmissionStatus, SubmissionStatusHistory } from "@/lib/types";
 import {
   canonicalInstallerName,
   getBrandComplianceScores,
@@ -44,6 +44,15 @@ type Filters = {
   status: string;
 };
 
+type OutletImportRow = {
+  state: string;
+  outlet_name: string;
+  owner_name?: string | null;
+  address?: string | null;
+  brand_type?: string | null;
+  outlet_code?: string | null;
+};
+
 const blankFilters: Filters = {
   query: "",
   startDate: "",
@@ -62,6 +71,7 @@ const adminAccountSettingsItems: Array<{ view: DashboardView; label: string; sta
   { view: "profile", label: "Profile" },
   { view: "create-project", label: "Create Project" },
   { view: "campaigns", label: "Campaign Management" },
+  { view: "outlet-directory", label: "Outlet Directory" },
   { view: "installer-portal", label: "Installer Portal" },
   { view: "user-management", label: "User Management" },
   { view: "agencies", label: "Agencies" },
@@ -148,6 +158,7 @@ function adminViewTitle(view: DashboardView) {
     profile: "Profile",
     "create-project": "Create Project",
     campaigns: "Campaign Management",
+    "outlet-directory": "Outlet Directory",
     "installer-portal": "Installer Portal",
     "user-management": "User Management",
     agencies: "Agencies",
@@ -172,6 +183,7 @@ function adminViewDescription(view: DashboardView) {
     profile: "Admin account settings.",
     "create-project": "Project configuration and campaign setup.",
     campaigns: "Campaign planning and lifecycle management.",
+    "outlet-directory": "Import and view approved Godrej pilot outlet records.",
     "installer-portal": "Operational utility access for the installer submission workflow.",
     "user-management": "User provisioning and access controls.",
     agencies: "Agency directory and assignment configuration.",
@@ -239,6 +251,8 @@ export function AdminDashboard({
   const [installerRecords, setInstallerRecords] = useState(installers);
   const [clientProfileRecords, setClientProfileRecords] = useState(clientProfiles);
   const [auditLogRecords, setAuditLogRecords] = useState(auditLogs);
+  const [outletRecords, setOutletRecords] = useState<DeploymentLocation[]>([]);
+  const [outletsLoading, setOutletsLoading] = useState(false);
   const [usersLoading, setUsersLoading] = useState(false);
   const [filters, setFilters] = useState<Filters>(blankFilters);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -603,6 +617,38 @@ export function AdminDashboard({
     setAuditLogRecords(body.logs ?? []);
   }
 
+  async function refreshOutletRecords() {
+    setOutletsLoading(true);
+    try {
+      const response = await fetch("/api/deployment-locations", { credentials: "include" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showToast(body.error || "Could not load approved outlets.", "error");
+        return;
+      }
+      setOutletRecords(body.locations ?? []);
+    } finally {
+      setOutletsLoading(false);
+    }
+  }
+
+  async function importOutletRows(rows: OutletImportRow[]) {
+    const response = await fetch("/api/deployment-locations", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showToast(body.error || "Could not import outlet list.", "error");
+      return false;
+    }
+    showToast(`${body.imported ?? rows.length} outlet${(body.imported ?? rows.length) === 1 ? "" : "s"} imported.`);
+    await refreshOutletRecords();
+    return true;
+  }
+
   useEffect(() => {
     if ((activeView === "profile" || activeView === "user-management" || activeView === "clients") && userRecords.length === 0) {
       void refreshUsers();
@@ -613,7 +659,10 @@ export function AdminDashboard({
     if (activeView === "audit-logs" && auditLogRecords.length === 0) {
       void refreshAuditLogs();
     }
-  }, [activeView, auditLogRecords.length, clientRecords.length, userRecords.length]);
+    if (activeView === "outlet-directory" && outletRecords.length === 0) {
+      void refreshOutletRecords();
+    }
+  }, [activeView, auditLogRecords.length, clientRecords.length, outletRecords.length, userRecords.length]);
 
   async function createUser(formData: FormData) {
     const payload = {
@@ -1137,6 +1186,7 @@ export function AdminDashboard({
             />
           </div>
         ) : null}
+        {activeView === "outlet-directory" ? <OutletDirectoryPanel outlets={outletRecords} isLoading={outletsLoading} onImport={importOutletRows} /> : null}
         {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
         {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onSave={updateClientProfile} /> : null}
         {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
@@ -1164,6 +1214,179 @@ function SummaryCard({ label, value, suffix = "" }: { label: string; value: numb
       </div>
     </div>
   );
+}
+
+function OutletDirectoryPanel({
+  outlets,
+  isLoading,
+  onImport
+}: {
+  outlets: DeploymentLocation[];
+  isLoading: boolean;
+  onImport: (rows: OutletImportRow[]) => Promise<boolean>;
+}) {
+  const [importing, setImporting] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [parseError, setParseError] = useState("");
+
+  async function handleCsvFile(file: File | null) {
+    setParseError("");
+    setFileName(file?.name ?? "");
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const rows = parseOutletCsv(text);
+      if (rows.length === 0) {
+        setParseError("The CSV did not contain any outlet rows.");
+        return;
+      }
+      setImporting(true);
+      const imported = await onImport(rows);
+      if (imported) setFileName("");
+    } catch (error) {
+      setParseError(error instanceof Error ? error.message : "Could not read this CSV file.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div className="grid min-w-0 gap-4">
+      <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="text-base font-bold leading-snug">Import approved outlets</h2>
+        <p className="mt-2 text-sm leading-snug text-slate-600">
+          Upload a CSV with these columns: state, outlet_name, owner_name, address, brand_type, outlet_code.
+        </p>
+        <div className="mt-4 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+          <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50">
+            Choose CSV
+            <input
+              className="sr-only"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(event) => void handleCsvFile(event.target.files?.[0] ?? null)}
+            />
+          </label>
+          <span className="min-w-0 whitespace-normal break-words text-sm text-slate-600">{fileName || "No file selected"}</span>
+          {importing ? (
+            <span className="inline-flex items-center gap-2 text-sm font-semibold text-orange-700">
+              <Loader2 aria-hidden size={16} className="animate-spin" />
+              Importing...
+            </span>
+          ) : null}
+        </div>
+        {parseError ? <p className="mt-3 whitespace-normal break-words text-sm text-rose-700">{parseError}</p> : null}
+      </section>
+
+      <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+          <div>
+            <h2 className="text-base font-bold leading-snug">Imported outlets</h2>
+            <p className="mt-1 text-sm leading-snug text-slate-600">Approved outlet records available to installers during upload.</p>
+          </div>
+          <span className="text-sm text-slate-500">{isLoading ? "Loading..." : `${outlets.length} shown`}</span>
+        </div>
+        {outlets.length === 0 ? (
+          <div className="p-4">
+            <EmptyState
+              title={isLoading ? "Loading outlets" : "No outlets imported yet"}
+              message={isLoading ? "Approved outlet records are loading." : "Import the Godrej pilot outlet list to make outlets selectable on the installer page."}
+              icon={<Inbox aria-hidden size={22} />}
+            />
+          </div>
+        ) : (
+          <div className="min-w-0 overflow-x-auto">
+            <table className="min-w-[860px] w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">State</th>
+                  <th className="px-4 py-3">Outlet</th>
+                  <th className="px-4 py-3">Owner</th>
+                  <th className="px-4 py-3">Brand type</th>
+                  <th className="px-4 py-3">Outlet code</th>
+                  <th className="px-4 py-3">Address</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {outlets.map((outlet) => (
+                  <tr key={outlet.id} className="align-top">
+                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{outlet.state}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900">{outlet.outlet_name}</td>
+                    <td className="px-4 py-3 text-slate-600">{outlet.owner_name || "Not provided"}</td>
+                    <td className="px-4 py-3 text-slate-600">{outlet.brand_type || "Not provided"}</td>
+                    <td className="px-4 py-3 text-slate-600">{outlet.outlet_code || "Not provided"}</td>
+                    <td className="max-w-xs whitespace-normal break-words px-4 py-3 text-slate-600">{outlet.address || "Not provided"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function parseOutletCsv(text: string): OutletImportRow[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const headers = parseCsvLine(lines[0]).map((header) => header.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  const headerIndex = new Map(headers.map((header, index) => [header, index]));
+
+  function getValue(values: string[], keys: string[]) {
+    for (const key of keys) {
+      const index = headerIndex.get(key);
+      if (typeof index === "number") return values[index]?.trim() ?? "";
+    }
+    return "";
+  }
+
+  return lines.slice(1).flatMap((line) => {
+    const values = parseCsvLine(line);
+    const state = getValue(values, ["state"]);
+    const outletName = getValue(values, ["outletname", "outlet", "salonname", "storename"]);
+    if (!state && !outletName) return [];
+    return [
+      {
+        state,
+        outlet_name: outletName,
+        owner_name: getValue(values, ["ownername", "owner", "contactperson"]) || null,
+        address: getValue(values, ["address", "location"]) || null,
+        brand_type: getValue(values, ["brandtype", "brand"]) || null,
+        outlet_code: getValue(values, ["outletcode", "code"]) || null
+      }
+    ];
+  });
+}
+
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    const next = line[index + 1];
+    if (character === '"' && inQuotes && next === '"') {
+      current += '"';
+      index += 1;
+    } else if (character === '"') {
+      inQuotes = !inQuotes;
+    } else if (character === "," && !inQuotes) {
+      values.push(current);
+      current = "";
+    } else {
+      current += character;
+    }
+  }
+
+  values.push(current);
+  return values.map((value) => value.trim());
 }
 
 function InlineDashboardSkeleton() {
