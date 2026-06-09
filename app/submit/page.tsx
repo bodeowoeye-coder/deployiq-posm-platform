@@ -152,6 +152,10 @@ export default function SubmitPage() {
   const stateFilteredOutlets = rankedOutletMatches.map((item) => item.location);
   const outletResultList = stateFilteredOutlets.slice(0, 10);
   const hasOutletSearch = outletSearch.trim().length > 0;
+  const approvedOutletOptions =
+    selectedOutlet && selectedOutlet.state === installerState && !stateFilteredOutlets.some((location) => location.id === selectedOutlet.id)
+      ? [selectedOutlet, ...stateFilteredOutlets]
+      : stateFilteredOutlets;
 
   useEffect(() => {
     console.info("[submit-timing]", {
@@ -248,10 +252,8 @@ export default function SubmitPage() {
   useEffect(() => {
     if (!selectedOutlet) return;
     if (selectedOutlet.state && installerState !== selectedOutlet.state) setInstallerState(selectedOutlet.state);
-    if (selectedOutlet.address && !manualLocationDescription.trim()) setManualLocationDescription(selectedOutlet.address);
-    if (selectedOutlet.outlet_name && !manualLandmark.trim()) setManualLandmark(selectedOutlet.outlet_name);
     if (selectedOutlet.brand_type && !brandName.trim()) setBrandName(selectedOutlet.brand_type);
-  }, [brandName, installerState, manualLandmark, manualLocationDescription, selectedOutlet]);
+  }, [brandName, installerState, selectedOutlet]);
 
   useEffect(() => {
     if (!selectedOutlet) return;
@@ -1293,19 +1295,24 @@ export default function SubmitPage() {
                   <select
                     className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 disabled:bg-slate-100 disabled:text-slate-500"
                     value={selectedLocationId}
-                    onChange={(event) => setSelectedLocationId(event.target.value)}
-                    disabled={!installerState || stateFilteredOutlets.length === 0}
+                    onChange={(event) => {
+                      const nextId = event.target.value;
+                      setSelectedLocationId(nextId);
+                      const nextOutlet = deploymentLocations.find((location) => location.id === nextId);
+                      setOutletSearch(nextOutlet ? [nextOutlet.outlet_code, nextOutlet.outlet_name].filter(Boolean).join(" - ") : "");
+                    }}
+                    disabled={!installerState || approvedOutletOptions.length === 0}
                   >
                     <option value="">
                       {!installerState
                         ? "Select a State first"
                         : stateOutletOptions.length === 0
                           ? "No approved outlets for selected State"
-                          : stateFilteredOutlets.length === 0
+                          : approvedOutletOptions.length === 0
                             ? "No matching approved outlet found"
                           : "No outlet selected"}
                     </option>
-                    {stateFilteredOutlets.map((location) => (
+                    {approvedOutletOptions.map((location) => (
                       <option key={location.id} value={location.id}>
                         {[location.outlet_code, location.outlet_name, location.address].filter(Boolean).join(" - ")}
                       </option>
