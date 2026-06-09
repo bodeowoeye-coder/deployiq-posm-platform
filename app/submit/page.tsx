@@ -133,12 +133,13 @@ export default function SubmitPage() {
     return Number.isFinite(syncedAt) && Date.now() - syncedAt < syncedQueueVisibleMs;
   });
   const selectedOutlet = deploymentLocations.find((location) => location.id === selectedLocationId) ?? null;
+  const stateOutletOptions = installerState ? deploymentLocations.filter((location) => location.state === installerState) : [];
   const stateFilteredOutlets = deploymentLocations.filter((location) => {
-    const matchesState = !installerState || location.state === installerState;
+    const matchesState = Boolean(installerState) && location.state === installerState;
     const query = outletSearch.trim().toLowerCase();
     const matchesSearch =
       !query ||
-      [location.outlet_name, location.owner_name, location.address, location.brand_type, location.outlet_code]
+      [location.outlet_name, location.outlet_code, location.address, location.brand_type]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -1248,8 +1249,9 @@ export default function SubmitPage() {
                     className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
                     value={outletSearch}
                     onChange={(event) => setOutletSearch(event.target.value)}
-                    placeholder="Search name, owner, code"
+                    placeholder="Search name, code, address"
                     autoComplete="off"
+                    disabled={!installerState}
                   />
                 </Field>
                 <Field label="Approved outlet">
@@ -1257,24 +1259,28 @@ export default function SubmitPage() {
                     className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 disabled:bg-slate-100 disabled:text-slate-500"
                     value={selectedLocationId}
                     onChange={(event) => setSelectedLocationId(event.target.value)}
-                    disabled={!installerState || deploymentLocations.length === 0}
+                    disabled={!installerState || stateFilteredOutlets.length === 0}
                   >
                     <option value="">
                       {!installerState
-                        ? "Select state first"
-                        : deploymentLocations.length === 0
-                          ? "No approved outlets imported"
+                        ? "Select a State first"
+                        : stateOutletOptions.length === 0
+                          ? "No approved outlets for selected State"
+                          : stateFilteredOutlets.length === 0
+                            ? "No matching approved outlet found"
                           : "No outlet selected"}
                     </option>
                     {stateFilteredOutlets.map((location) => (
                       <option key={location.id} value={location.id}>
-                        {location.outlet_name}
-                        {location.outlet_code ? ` (${location.outlet_code})` : ""}
+                        {[location.outlet_code, location.outlet_name, location.address].filter(Boolean).join(" - ")}
                       </option>
                     ))}
                   </select>
                 </Field>
               </div>
+              {installerState && stateOutletOptions.length > 0 && stateFilteredOutlets.length === 0 ? (
+                <p className="text-xs font-semibold text-slate-600">No matching approved outlet found.</p>
+              ) : null}
               {locationsError ? <p className="text-xs font-medium text-rose-700">{locationsError}</p> : null}
               {selectedOutlet ? (
                 <div className="grid gap-2 rounded-lg border border-orange-100 bg-white p-3 text-xs text-slate-600 sm:grid-cols-2">
