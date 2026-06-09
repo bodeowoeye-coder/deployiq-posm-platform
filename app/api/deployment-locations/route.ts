@@ -49,6 +49,10 @@ function outletUidPrefix(state: string) {
   return `DQ-GOD-${stateCodeFor(state)}`;
 }
 
+function numericOutletUidPrefix(state: string) {
+  return `GOD-${stateCodeFor(state)}`;
+}
+
 function extractOutletSerial(outletCode: string | null, prefix: string) {
   if (!outletCode?.startsWith(`${prefix}-`)) return 0;
   const serial = Number(outletCode.slice(prefix.length + 1));
@@ -59,9 +63,19 @@ function formatOutletUid(state: string, serial: number) {
   return `${outletUidPrefix(state)}-${String(serial).padStart(4, "0")}`;
 }
 
+function normalizeProvidedOutletCode(state: string, outletCode: string) {
+  const normalized = outletCode.trim();
+  if (!normalized) return null;
+  if (/^\d+$/.test(normalized)) {
+    return `${numericOutletUidPrefix(state)}-${String(Number(normalized)).padStart(4, "0")}`;
+  }
+  return normalized;
+}
+
 function normalizeRow(row: ImportLocationRow): { data: LocationPayload } | { error: string } {
   const state = clean(row.state);
   const outletName = clean(row.outlet_name ?? row.outletName);
+  const outletCode = clean(row.outlet_code ?? row.outletCode);
 
   if (!state || !(NIGERIA_STATES as readonly string[]).includes(state)) {
     return { error: `Invalid or missing state for outlet "${outletName || "Unnamed outlet"}".` };
@@ -78,7 +92,7 @@ function normalizeRow(row: ImportLocationRow): { data: LocationPayload } | { err
       owner_name: clean(row.owner_name ?? row.ownerName) || null,
       address: clean(row.address) || null,
       brand_type: clean(row.brand_type ?? row.brandType) || null,
-      outlet_code: clean(row.outlet_code ?? row.outletCode) || null,
+      outlet_code: normalizeProvidedOutletCode(state, outletCode),
       updated_at: new Date().toISOString()
     }
   };
