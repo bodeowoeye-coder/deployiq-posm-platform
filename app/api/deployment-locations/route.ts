@@ -28,8 +28,35 @@ type LocationPayload = {
   updated_at: string;
 };
 
+const STATE_CODE_MAP: Record<string, string> = {
+  Lagos: "LAG",
+  Ogun: "OGU",
+  Enugu: "ENU",
+  Abuja: "FCT",
+  FCT: "FCT",
+  "Federal Capital Territory": "FCT"
+};
+
 function clean(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function stateCodeFor(state: string) {
+  return STATE_CODE_MAP[state] ?? state.slice(0, 3).toUpperCase();
+}
+
+function outletUidPrefix(state: string) {
+  return `DQ-GOD-${stateCodeFor(state)}`;
+}
+
+function extractOutletSerial(outletCode: string | null, prefix: string) {
+  if (!outletCode?.startsWith(`${prefix}-`)) return 0;
+  const serial = Number(outletCode.slice(prefix.length + 1));
+  return Number.isFinite(serial) ? serial : 0;
+}
+
+function formatOutletUid(state: string, serial: number) {
+  return `${outletUidPrefix(state)}-${String(serial).padStart(4, "0")}`;
 }
 
 function normalizeRow(row: ImportLocationRow): { data: LocationPayload } | { error: string } {
@@ -99,9 +126,39 @@ export async function POST(request: Request) {
     .map((item) => ("data" in item ? item.data : null))
     .filter((item): item is LocationPayload => Boolean(item));
 
-  const rowsWithCode = payload.filter((item): item is LocationPayload & { outlet_code: string } => Boolean(item.outlet_code));
-  const rowsWithoutCode = payload.filter((item) => !item.outlet_code);
   const supabase = createAdminSupabase();
+  const nextSerialByState = new Map<string, number>();
+  const payloadWithCodes: Array<LocationPayload & { outlet_code: string }> = [];
+
+  for (const row of payload) {
+    if (row.outlet_code) {
+      payloadWithCodes.push({ ...row, outlet_code: row.outlet_code });
+      continue;
+    }
+
+    if (!nextSerialByState.has(row.state)) {
+      const prefix = outletUidPrefix(row.state);
+      const { data: existingCodes, error: serialError } = await supabase
+        .from("deployment_locations")
+        .select("outlet_code")
+        .eq("state", row.state)
+        .like("outlet_code", `${prefix}-%`);
+
+      if (serialError) return NextResponse.json({ error: serialError.message }, { status: 500 });
+
+      const currentMax = (existingCodes ?? []).reduce(
+        (max, item) => Math.max(max, extractOutletSerial(item.outlet_code, prefix)),
+        0
+      );
+      nextSerialByState.set(row.state, currentMax + 1);
+    }
+
+    const nextSerial = nextSerialByState.get(row.state) ?? 1;
+    payloadWithCodes.push({ ...row, outlet_code: formatOutletUid(row.state, nextSerial) });
+    nextSerialByState.set(row.state, nextSerial + 1);
+  }
+
+  const rowsWithCode = payloadWithCodes;
   let imported = 0;
 
   if (rowsWithCode.length > 0) {
@@ -121,16 +178,6 @@ export async function POST(request: Request) {
       if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 });
       imported += 1;
     }
-  }
-
-  if (rowsWithoutCode.length > 0) {
-    const { data, error } = await supabase
-      .from("deployment_locations")
-      .insert(rowsWithoutCode)
-      .select("id");
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    imported += data?.length ?? rowsWithoutCode.length;
   }
 
   return NextResponse.json({ imported });
