@@ -133,6 +133,7 @@ export default function SubmitPage() {
   const previewObjectUrlRef = useRef<string | null>(null);
   const { showToast } = useToast();
   const [showSyncedHistory, setShowSyncedHistory] = useState(false);
+  const [pendingUploadsOpen, setPendingUploadsOpen] = useState(false);
   const queuedCount = queuedItems.filter((item) => item.status !== "Synced").length;
   const syncedCount = queuedItems.filter((item) => item.status === "Synced").length;
   const visibleQueuedItems = queuedItems.filter((item) => {
@@ -166,6 +167,10 @@ export default function SubmitPage() {
     selectedOutlet && selectedOutlet.state === installerState && !stateFilteredOutlets.some((location) => location.id === selectedOutlet.id)
       ? [selectedOutlet, ...stateFilteredOutlets]
       : stateFilteredOutlets;
+  const outletSelected = Boolean(selectedOutlet);
+  const gpsCaptured = position.status === "captured";
+  const photoCaptured = Boolean(image);
+  const stepNumber = currentStep === "outlet" ? 1 : 2;
 
   useEffect(() => {
     console.info("[submit-timing]", {
@@ -1117,101 +1122,116 @@ export default function SubmitPage() {
         </div>
       </header>
 
-      <section className="mx-auto min-w-0 w-[min(760px,calc(100%-28px))] py-6">
-        <div className="mb-5">
+      <section className="mx-auto min-w-0 w-[min(760px,calc(100%-24px))] py-4 sm:py-6">
+        <div className="mb-3">
           <h1 className="whitespace-normal break-words text-2xl font-bold leading-snug tracking-normal sm:text-3xl">Upload Photo</h1>
-          <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">Take a clear picture. Your phone adds the location and time automatically.</p>
+          <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-slate-600">Take a clear picture. Your phone adds the location and time automatically.</p>
           {queuedCount > 0 ? <p className="mt-2 text-xs font-medium text-orange-700">{queuedCount} pending upload{queuedCount === 1 ? "" : "s"} saved on this device.</p> : null}
         </div>
 
         {visibleQueuedItems.length > 0 || syncedCount > 0 ? (
-          <section className="mb-5 overflow-hidden rounded-lg border border-orange-200 bg-orange-50/70 p-4 shadow-sm">
-            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <section className="mb-3 overflow-hidden rounded-lg border border-orange-200 bg-orange-50/70 p-3 shadow-sm">
+            <div className="flex min-w-0 items-center justify-between gap-3">
               <div className="min-w-0">
-                <h2 className="whitespace-normal break-words text-base font-bold leading-snug text-slate-950">Pending uploads</h2>
-                <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-600">Pending, syncing, and failed uploads stay here until they sync successfully.</p>
+                <h2 className="whitespace-normal break-words text-sm font-bold leading-snug text-slate-950">Pending uploads</h2>
+                <p className="mt-0.5 whitespace-normal break-words text-xs leading-snug text-slate-600">
+                  {queuedCount > 0 ? `${queuedCount} waiting to sync` : "No pending uploads"}
+                </p>
               </div>
-              <div className="flex min-w-0 flex-wrap gap-2">
-                {syncedCount > 0 ? (
+              <button
+                className="shrink-0 rounded-lg border border-orange-200 bg-white px-3 py-2 text-xs font-bold text-slate-800"
+                type="button"
+                onClick={() => setPendingUploadsOpen((current) => !current)}
+                aria-expanded={pendingUploadsOpen}
+              >
+                {pendingUploadsOpen ? "Hide" : "View"}
+              </button>
+            </div>
+            {pendingUploadsOpen ? (
+              <>
+                <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+                  {syncedCount > 0 ? (
+                    <button
+                      className="inline-flex min-h-10 items-center justify-center rounded-lg border border-orange-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-orange-50"
+                      type="button"
+                      onClick={() => setShowSyncedHistory((current) => !current)}
+                    >
+                      {showSyncedHistory ? "Hide synced history" : "Show synced history"}
+                    </button>
+                  ) : null}
                   <button
-                    className="inline-flex min-h-10 items-center justify-center rounded-lg border border-orange-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-orange-50"
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
                     type="button"
-                    onClick={() => setShowSyncedHistory((current) => !current)}
+                    disabled={queueSyncMode !== "idle" || !queuedItems.some((item) => item.status === "Pending sync" || item.status === "Failed")}
+                    onClick={() => syncQueuedUploads(true)}
                   >
-                    {showSyncedHistory ? "Hide synced history" : "Show synced history"}
+                    {queueSyncMode === "checking" ? "Checking connection" : queueSyncMode === "syncing" ? "Syncing" : "Retry sync"}
                   </button>
-                ) : null}
-	                <button
-	                  className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
-	                  type="button"
-	                  disabled={queueSyncMode !== "idle" || !queuedItems.some((item) => item.status === "Pending sync" || item.status === "Failed")}
-	                  onClick={() => syncQueuedUploads(true)}
-	                >
-	                  {queueSyncMode === "checking" ? "Checking connection" : queueSyncMode === "syncing" ? "Syncing" : "Retry sync"}
-	                </button>
-              </div>
-            </div>
-            <div className="mt-3 grid gap-2">
-              {visibleQueuedItems.length === 0 ? (
-                <div className="rounded-lg border border-orange-100 bg-white p-3 text-sm font-medium text-slate-600">
-                  No pending uploads. Synced uploads are hidden by default.
                 </div>
-              ) : null}
-              {visibleQueuedItems.map((item) => (
-                <article key={item.id} className="grid min-w-0 gap-3 rounded-lg border border-orange-100 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <span className={`rounded-full px-2 py-1 text-xs font-bold ${queueStatusClass(item.status)}`}>{item.status}</span>
-                      <span className="whitespace-normal break-words text-sm font-semibold leading-snug">{item.fields.projectName || "Untitled project"}</span>
+                <div className="mt-3 grid gap-2">
+                  {visibleQueuedItems.length === 0 ? (
+                    <div className="rounded-lg border border-orange-100 bg-white p-3 text-sm font-medium text-slate-600">
+                      No pending uploads. Synced uploads are hidden by default.
                     </div>
-                    <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
-                      {item.fields.brandName || "Unassigned brand"} | {item.fields.installerState || "Unknown state"} | {formatQueueDate(item.createdAt)}
-                    </p>
-                    <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
-                      GPS: {item.fields.gpsStatus === "captured" ? `${item.fields.latitude ?? "n/a"}, ${item.fields.longitude ?? "n/a"}` : "Location unavailable"} | Photo: {item.imageName}
-                    </p>
-                    {item.errorMessage ? <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-rose-700">{item.errorMessage}</p> : null}
-                  </div>
-	                  <button
-	                    className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50 disabled:cursor-wait disabled:opacity-60"
-	                    type="button"
-	                    disabled={checkingQueueId === item.id || item.status === "Syncing" || item.status === "Synced"}
-	                    onClick={() => syncQueuedItem(item)}
-	                  >
-	                    {checkingQueueId === item.id ? "Checking connection" : item.status === "Syncing" ? "Syncing..." : item.status === "Synced" ? "Synced" : "Retry"}
-	                  </button>
-                </article>
-              ))}
-            </div>
+                  ) : null}
+                  {visibleQueuedItems.map((item) => (
+                    <article key={item.id} className="grid min-w-0 gap-3 rounded-lg border border-orange-100 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className={`rounded-full px-2 py-1 text-xs font-bold ${queueStatusClass(item.status)}`}>{item.status}</span>
+                          <span className="whitespace-normal break-words text-sm font-semibold leading-snug">{item.fields.projectName || "Untitled project"}</span>
+                        </div>
+                        <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                          {item.fields.brandName || "Unassigned brand"} | {item.fields.installerState || "Unknown state"} | {formatQueueDate(item.createdAt)}
+                        </p>
+                        <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                          GPS: {item.fields.gpsStatus === "captured" ? `${item.fields.latitude ?? "n/a"}, ${item.fields.longitude ?? "n/a"}` : "Location unavailable"} | Photo: {item.imageName}
+                        </p>
+                        {item.errorMessage ? <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-rose-700">{item.errorMessage}</p> : null}
+                      </div>
+                      <button
+                        className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50 disabled:cursor-wait disabled:opacity-60"
+                        type="button"
+                        disabled={checkingQueueId === item.id || item.status === "Syncing" || item.status === "Synced"}
+                        onClick={() => syncQueuedItem(item)}
+                      >
+                        {checkingQueueId === item.id ? "Checking connection" : item.status === "Syncing" ? "Syncing..." : item.status === "Synced" ? "Synced" : "Retry"}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              </>
+            ) : null}
           </section>
         ) : null}
 
-        <form className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 pb-20 shadow-sm sm:p-6 sm:pb-6" onSubmit={handleSubmit}>
-          <div className="grid min-w-0 gap-4 md:gap-5">
-            <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2">
-              <div className={`rounded-lg border p-3 ${currentStep === "outlet" ? "border-orange-200 bg-orange-50 text-orange-950" : "border-slate-200 bg-white text-slate-600"}`}>
-                <p className="text-xs font-bold uppercase tracking-wide">Step 1</p>
-                <p className="mt-1 text-sm font-bold">Installer / Outlet Confirmation</p>
+        <form className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" onSubmit={handleSubmit}>
+          <div className="grid min-w-0 gap-3 p-3 pb-24 sm:p-5 sm:pb-5">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-wide text-orange-700">Step {stepNumber} of 2</p>
+                  <p className="mt-0.5 whitespace-normal break-words text-sm font-bold leading-snug text-slate-950">
+                    {currentStep === "outlet" ? "Installer / Outlet Confirmation" : "Capture Evidence & Submit"}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-1.5" aria-hidden>
+                  <span className={`h-2.5 w-8 rounded-full ${currentStep === "outlet" ? "bg-orange-500" : "bg-emerald-500"}`} />
+                  <span className={`h-2.5 w-8 rounded-full ${currentStep === "evidence" ? "bg-orange-500" : "bg-slate-300"}`} />
+                </div>
               </div>
-              <div className={`rounded-lg border p-3 ${currentStep === "evidence" ? "border-orange-200 bg-orange-50 text-orange-950" : "border-slate-200 bg-white text-slate-600"}`}>
-                <p className="text-xs font-bold uppercase tracking-wide">Step 2</p>
-                <p className="mt-1 text-sm font-bold">Capture Evidence & Submit</p>
+              <div className="mt-3 grid gap-2 text-xs font-semibold text-slate-600 sm:grid-cols-3">
+                <ProgressCheck checked={outletSelected} label="Outlet selected" />
+                <ProgressCheck checked={gpsCaptured} label="GPS captured" />
+                <ProgressCheck checked={photoCaptured} label="Photo captured" />
               </div>
             </div>
 
-            <section className={`${currentStep === "outlet" ? "grid" : "hidden"} min-w-0 gap-4 md:gap-5`}>
-              <Field label="Installer identity">
-                <input
-                  className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 shadow-sm"
-                  id="installerName"
-                  name="installerName"
-                  placeholder="Signed-in installer"
-                  autoComplete="name"
-                  value={installerName}
-                  readOnly
-                />
-                <p className="mt-1 text-xs leading-snug text-slate-500">This is linked to your signed-in DeployIQ account.</p>
-              </Field>
+            <section className={`${currentStep === "outlet" ? "grid" : "hidden"} min-w-0 gap-3`}>
+              <div className="flex min-w-0 items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+                <CheckCircle2 aria-hidden size={17} />
+                <span className="min-w-0 break-words">Installer: {installerName || "Signed-in installer"}</span>
+              </div>
 
               <Field label="Project name">
                 <input
@@ -1242,7 +1262,7 @@ export default function SubmitPage() {
                 <span className="whitespace-normal break-words text-xs leading-snug text-slate-500">{brandsError || "The office can assign this later if unsure."}</span>
               </Field>
 
-              <div className="grid min-w-0 gap-4 sm:grid-cols-2 md:gap-5">
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                 <div className="min-w-0">
                   <Field label="State">
                     <select
@@ -1403,17 +1423,9 @@ export default function SubmitPage() {
                 </Field>
               </div>
 
-              <button
-                className="inline-flex min-h-12 items-center justify-center rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
-                type="button"
-                disabled={!canContinueToEvidence}
-                onClick={() => setCurrentStep("evidence")}
-              >
-                Continue to evidence capture
-              </button>
             </section>
 
-            <section className={`${currentStep === "evidence" ? "grid" : "hidden"} min-w-0 gap-4 md:gap-5`}>
+            <section className={`${currentStep === "evidence" ? "grid" : "hidden"} min-w-0 gap-3`}>
             <Field label="Installed board picture">
               {previewStatus === "preparing" ? (
                 <div className="flex min-h-36 min-w-0 items-center justify-center rounded-lg border border-dashed border-orange-200 bg-orange-50/70 p-5 text-center text-orange-700" aria-live="polite">
@@ -1587,25 +1599,38 @@ export default function SubmitPage() {
 
             {result === "error" ? <div className="whitespace-normal break-words rounded-lg bg-rose-50 p-3 text-sm leading-snug text-rose-700">{error}</div> : null}
 
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,0.45fr)_minmax(0,1fr)]">
-              <button
-                className="inline-flex min-h-12 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 font-semibold text-slate-900 transition hover:border-orange-200 hover:bg-orange-50 disabled:opacity-60"
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => setCurrentStep("outlet")}
-              >
-                Back
-              </button>
-              <button
-                className="sticky bottom-5 z-10 inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-lg transition hover:bg-slate-800 disabled:opacity-60 sm:static sm:min-h-11 sm:shadow-none"
-                type="submit"
-                disabled={!canSubmit}
-              >
-                {isSubmitting ? <Loader2 className="animate-spin" aria-hidden size={18} /> : <Upload aria-hidden size={18} />}
-                {isSubmitting ? "Submitting..." : isGettingLocation ? "Getting location..." : "Submit report"}
-              </button>
-            </div>
             </section>
+          </div>
+          <div className="sticky bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:static sm:shadow-none">
+            {currentStep === "outlet" ? (
+              <button
+                className="inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+                type="button"
+                disabled={!canContinueToEvidence}
+                onClick={() => setCurrentStep("evidence")}
+              >
+                Continue
+              </button>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,0.4fr)_minmax(0,1fr)]">
+                <button
+                  className="inline-flex min-h-12 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 font-semibold text-slate-900 transition hover:border-orange-200 hover:bg-orange-50 disabled:opacity-60"
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => setCurrentStep("outlet")}
+                >
+                  Back
+                </button>
+                <button
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+                  type="submit"
+                  disabled={!canSubmit}
+                >
+                  {isSubmitting ? <Loader2 className="animate-spin" aria-hidden size={18} /> : <Upload aria-hidden size={18} />}
+                  {isSubmitting ? "Submitting..." : isGettingLocation ? "Getting location..." : "Submit Deployment"}
+                </button>
+              </div>
+            )}
           </div>
         </form>
       </section>
@@ -1750,6 +1775,18 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       {label}
       {children}
     </label>
+  );
+}
+
+function ProgressCheck({ checked, label }: { checked: boolean; label: string }) {
+  return (
+    <div className={`flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 ${checked ? "bg-emerald-50 text-emerald-800" : "bg-white text-slate-500"}`}>
+      <CheckCircle2 aria-hidden size={14} className={checked ? "text-emerald-600" : "text-slate-300"} />
+      <span className="min-w-0 whitespace-normal break-words leading-snug">
+        {checked ? "✓ " : ""}
+        {label}
+      </span>
+    </div>
   );
 }
 
