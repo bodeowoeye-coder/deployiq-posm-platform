@@ -1071,6 +1071,18 @@ export function AdminDashboard({
                     OCR confidence: {item.ocr_confidence || "n/a"} {item.ocr_note ? `| ${item.ocr_note}` : ""}
                   </p>
                   {item.ai_review_note ? <p className="mt-2 whitespace-normal break-words text-xs leading-snug text-rose-700">{item.ai_review_note}</p> : null}
+                  {item.outlet_match_status && item.outlet_match_status !== "not_checked" ? (
+                    <p
+                      className={`mt-2 whitespace-normal break-words rounded-lg px-3 py-2 text-xs font-semibold leading-snug ${
+                        item.outlet_match_status === "matched" ? "bg-emerald-50 text-emerald-800" : "bg-orange-50 text-orange-800"
+                      }`}
+                    >
+                      Outlet verification:{" "}
+                      {item.outlet_match_status === "matched"
+                        ? "Outlet match confirmed"
+                        : item.outlet_match_notes || "Selected outlet may not match uploaded photo."}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-1">
                   <select className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100" value={item.brand_name ?? ""} onChange={(event) => updateSubmission(item.id, { brandName: event.target.value })}>

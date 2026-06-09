@@ -40,7 +40,9 @@ function isOptionalSubmissionColumnError(error: { message?: string; code?: strin
     message.includes("installer_email") ||
     message.includes("brand_id") ||
     message.includes("resolved_neighbourhood") ||
-    message.includes("resolved_country")
+    message.includes("resolved_country") ||
+    message.includes("selected_outlet") ||
+    message.includes("outlet_match")
   );
 }
 
@@ -51,7 +53,82 @@ function stripOptionalSubmissionColumns(payload: Record<string, unknown>) {
   delete fallbackPayload.brand_id;
   delete fallbackPayload.resolved_neighbourhood;
   delete fallbackPayload.resolved_country;
+  delete fallbackPayload.selected_outlet_id;
+  delete fallbackPayload.selected_outlet_code;
+  delete fallbackPayload.selected_outlet_name;
+  delete fallbackPayload.selected_outlet_address;
+  delete fallbackPayload.selected_outlet_brand_type;
+  delete fallbackPayload.selected_outlet_state;
+  delete fallbackPayload.outlet_match_status;
+  delete fallbackPayload.outlet_match_notes;
   return fallbackPayload;
+}
+
+function normalizeMatchText(value: string | null | undefined) {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function meaningfulTokens(value: string | null | undefined) {
+  return normalizeMatchText(value)
+    .split(" ")
+    .filter((token) => token.length >= 3);
+}
+
+function hasPartialMatch(source: string, value: string | null | undefined) {
+  const normalizedValue = normalizeMatchText(value);
+  if (!source || !normalizedValue) return false;
+  if (source.includes(normalizedValue) || normalizedValue.includes(source)) return true;
+  const tokens = meaningfulTokens(value);
+  if (tokens.length === 0) return false;
+  const matched = tokens.filter((token) => source.includes(token)).length;
+  return matched >= Math.min(2, tokens.length);
+}
+
+function reviewOutletMatch({
+  visibleText,
+  outletName,
+  outletAddress,
+  outletCode
+}: {
+  visibleText: string | null;
+  outletName: string | null;
+  outletAddress: string | null;
+  outletCode: string | null;
+}): { status: "matched" | "warning" | "not_checked"; notes: string } {
+  if (!outletName && !outletAddress && !outletCode) {
+    return {
+      status: "not_checked",
+      notes: "No approved outlet record was selected."
+    };
+  }
+
+  const normalizedText = normalizeMatchText(visibleText);
+  if (!normalizedText) {
+    return {
+      status: "warning",
+      notes: "OCR did not detect enough readable text to confirm this outlet."
+    };
+  }
+
+  const nameMatched = hasPartialMatch(normalizedText, outletName);
+  const addressMatched = hasPartialMatch(normalizedText, outletAddress);
+  const codeMatched = hasPartialMatch(normalizedText, outletCode);
+
+  if (nameMatched || addressMatched || codeMatched) {
+    return {
+      status: "matched",
+      notes: "Outlet match confirmed from detected board text."
+    };
+  }
+
+  return {
+    status: "warning",
+    notes: "The uploaded board photo may not match the selected outlet. Please confirm the outlet name and address before submitting."
+  };
 }
 
 function metadataFullName(user: { user_metadata?: Record<string, unknown> }) {
@@ -114,7 +191,6 @@ export async function POST(request: Request) {
     const manualLandmark = cleanString(formData.get("manualLandmark"));
     const selectedLocationId = cleanString(formData.get("selectedLocationId"));
     const selectedOutletName = cleanString(formData.get("selectedOutletName"));
-    const selectedOutletOwnerName = cleanString(formData.get("selectedOutletOwnerName"));
     const selectedOutletAddress = cleanString(formData.get("selectedOutletAddress"));
     const selectedOutletBrandType = cleanString(formData.get("selectedOutletBrandType"));
     const selectedOutletCode = cleanString(formData.get("selectedOutletCode"));
@@ -138,12 +214,11 @@ export async function POST(request: Request) {
     const { data: selectedLocation } = selectedLocationId
       ? await supabase
           .from("deployment_locations")
-          .select("outlet_name, owner_name, address, brand_type, outlet_code")
+          .select("state, outlet_name, owner_name, address, brand_type, outlet_code")
           .eq("id", selectedLocationId)
           .maybeSingle()
       : { data: null };
     const outletName = selectedLocation?.outlet_name ?? selectedOutletName;
-    const outletOwnerName = selectedLocation?.owner_name ?? selectedOutletOwnerName;
     const outletAddress = selectedLocation?.address ?? selectedOutletAddress;
     const outletBrandType = selectedLocation?.brand_type ?? selectedOutletBrandType;
     const outletCode = selectedLocation?.outlet_code ?? selectedOutletCode;
@@ -262,6 +337,12 @@ export async function POST(request: Request) {
     const resolvedBrandName = matchingBrand?.brand_name ?? (brandName || null);
     const brandReview = reviewBrandMatch(resolvedBrandName, extraction, allBrands ?? []);
     const confidence = scoreBrandVerification(extraction.confidence, brandReview.brandMatchStatus);
+    const outletReview = reviewOutletMatch({
+      visibleText: extraction.visibleText || null,
+      outletName,
+      outletAddress,
+      outletCode
+    });
     console.info("[submit-server-timing]", {
       stage: "brand-validation",
       selectedBrand: resolvedBrandName,
@@ -285,6 +366,22 @@ export async function POST(request: Request) {
           confidence: confidence.level,
           mismatchReason: brandReview.mismatchReason,
           aiReviewNote: brandReview.aiReviewNote
+        },
+        { status: 409 }
+      );
+    }
+
+    if (selectedLocationId && outletReview.status === "warning" && !submitAnyway) {
+      await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+      console.info("[submit-server-timing]", { stage: "submit-total", result: "outlet-review-confirmation", durationMs: timingMs(totalStart) });
+      return NextResponse.json(
+        {
+          requiresOutletConfirmation: true,
+          outletMatchStatus: outletReview.status,
+          outletMatchNotes: outletReview.notes,
+          selectedOutletName: outletName,
+          selectedOutletAddress: outletAddress,
+          selectedOutletCode: outletCode
         },
         { status: 409 }
       );
@@ -327,11 +424,8 @@ export async function POST(request: Request) {
     const resolvedLocation = await reverseGeocode(latitude, longitude);
     console.info("[submit-server-timing]", { stage: "reverse-geocoding", hasCoordinates: Boolean(latitude && longitude), resolved: Boolean(resolvedLocation.resolvedAddress), durationMs: timingMs(reverseGeocodeStart) });
     const manualFallbackAddress = [
-      outletAddress,
       manualLocationDescription,
       manualLandmark ? `Landmark: ${manualLandmark}` : "",
-      outletOwnerName ? `Owner: ${outletOwnerName}` : "",
-      outletCode ? `Outlet code: ${outletCode}` : "",
       installerLga ? `LGA: ${installerLga}` : ""
     ]
       .filter(Boolean)
@@ -358,6 +452,14 @@ export async function POST(request: Request) {
         duplicate_status: duplicateReview.status,
         duplicate_reason: duplicateReview.reason,
         image_fingerprint: imageFingerprint,
+        selected_outlet_id: selectedLocationId || null,
+        selected_outlet_code: outletCode || null,
+        selected_outlet_name: outletName || null,
+        selected_outlet_address: outletAddress || null,
+        selected_outlet_brand_type: outletBrandType || null,
+        selected_outlet_state: selectedLocation?.state ?? installerState,
+        outlet_match_status: outletReview.status,
+        outlet_match_notes: outletReview.notes,
         salon_name: extraction.salonName || outletName || null,
         address: extraction.address || finalResolvedAddress,
         phone: extraction.phone || null,

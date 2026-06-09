@@ -56,6 +56,14 @@ type MismatchWarning = {
   aiReviewNote: string | null;
 };
 
+type OutletWarning = {
+  outletMatchStatus: "warning";
+  outletMatchNotes: string;
+  selectedOutletName: string | null;
+  selectedOutletAddress: string | null;
+  selectedOutletCode: string | null;
+};
+
 type AppSession = {
   role?: "admin" | "client" | "installer";
   userId?: string;
@@ -107,6 +115,7 @@ export default function SubmitPage() {
   const [result, setResult] = useState<"idle" | "success" | "error" | "offline">("idle");
   const [error, setError] = useState("");
   const [mismatchWarning, setMismatchWarning] = useState<MismatchWarning | null>(null);
+  const [outletWarning, setOutletWarning] = useState<OutletWarning | null>(null);
   const [role, setRole] = useState<"admin" | "client" | "installer" | null>(null);
   const [installerUserId, setInstallerUserId] = useState<string | null>(null);
   const [installerEmail, setInstallerEmail] = useState<string | null>(null);
@@ -992,6 +1001,20 @@ export default function SubmitPage() {
         return;
       }
 
+      if (response.status === 409 && body.requiresOutletConfirmation) {
+        setOutletWarning({
+          outletMatchStatus: "warning",
+          outletMatchNotes:
+            body.outletMatchNotes ||
+            "The uploaded board photo may not match the selected outlet. Please confirm the outlet name and address before submitting.",
+          selectedOutletName: body.selectedOutletName ?? null,
+          selectedOutletAddress: body.selectedOutletAddress ?? null,
+          selectedOutletCode: body.selectedOutletCode ?? null
+        });
+        console.info("[submit-timing]", { stage: "submit-total", result: "outlet-review-confirmation", durationMs: timingMs(totalSubmitStart) });
+        return;
+      }
+
       if (!response.ok) {
         if (response.status >= 500) {
           await saveOfflineUpload(compressed, submitAnyway, localSubmissionId);
@@ -1011,8 +1034,9 @@ export default function SubmitPage() {
       setSelectedLocationId("");
       setOutletSearch("");
       setMismatchWarning(null);
+      setOutletWarning(null);
       setResult("success");
-      showToast("Report submitted successfully.");
+      showToast(body.submission?.outlet_match_status === "matched" ? "Outlet match confirmed." : "Report submitted successfully.");
       console.info("[submit-timing]", { stage: "submit-total", result: "success", durationMs: timingMs(totalSubmitStart) });
     } catch (submitError) {
       setResult("error");
@@ -1589,6 +1613,60 @@ export default function SubmitPage() {
               </button>
               <button
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-red-700 px-4 font-semibold text-white disabled:opacity-60"
+                type="button"
+                onClick={() => submitReport(true)}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? <Loader2 className="animate-spin" aria-hidden size={18} /> : null}
+                Submit Anyway
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {outletWarning ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/55 p-4 backdrop-blur-sm sm:items-center">
+          <section
+            className="w-full max-w-lg overflow-hidden rounded-lg border border-orange-200 bg-white shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="outlet-warning-title"
+          >
+            <div className="border-b border-orange-100 bg-orange-50 p-4 sm:p-5">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-orange-100 p-2 text-orange-700">
+                  <AlertTriangle aria-hidden size={22} />
+                </div>
+                <div className="min-w-0">
+                  <h2 id="outlet-warning-title" className="whitespace-normal break-words text-lg font-bold leading-snug text-orange-950">
+                    Outlet verification warning
+                  </h2>
+                  <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-orange-900">
+                    The uploaded board photo may not match the selected outlet. Please confirm the outlet name and address before submitting.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 p-4 sm:p-5">
+              <BrandReviewRow label="Selected outlet" value={outletWarning.selectedOutletName || "Not provided"} />
+              <BrandReviewRow label="Outlet code" value={outletWarning.selectedOutletCode || "Not provided"} />
+              <BrandReviewRow label="Approved address" value={outletWarning.selectedOutletAddress || "Not provided"} />
+              <div className="whitespace-normal break-words rounded-lg bg-orange-50 p-3 text-sm font-semibold leading-snug text-orange-900">
+                {outletWarning.outletMatchNotes}
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 p-4 sm:flex-row sm:justify-end sm:p-5">
+              <button
+                className="min-h-11 rounded-lg border border-slate-200 bg-white px-4 font-semibold text-slate-900"
+                type="button"
+                onClick={() => setOutletWarning(null)}
+              >
+                Go Back
+              </button>
+              <button
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-orange-700 px-4 font-semibold text-white disabled:opacity-60"
                 type="button"
                 onClick={() => submitReport(true)}
                 disabled={isSubmitting}

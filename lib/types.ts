@@ -2,6 +2,7 @@ export type SubmissionStatus = "Pending" | "Flagged" | "Approved" | "Rejected";
 export type BrandMatchStatus = "Matched" | "Mismatch" | "Uncertain";
 export type AiConfidenceLevel = "High" | "Medium" | "Low";
 export type DuplicateStatus = "Unique" | "Possible Duplicate" | "Duplicate";
+export type OutletMatchStatus = "matched" | "warning" | "not_checked";
 export type ProjectStatus = "Planning" | "Active" | "On Hold" | "Completed";
 export type DeploymentStageCode = "production" | "warehouse" | "in_transit" | "installed" | "approved";
 
@@ -26,6 +27,14 @@ export type Submission = {
   duplicate_status: DuplicateStatus | null;
   duplicate_reason: string | null;
   image_fingerprint: string | null;
+  selected_outlet_id: string | null;
+  selected_outlet_code: string | null;
+  selected_outlet_name: string | null;
+  selected_outlet_address: string | null;
+  selected_outlet_brand_type: string | null;
+  selected_outlet_state: string | null;
+  outlet_match_status: OutletMatchStatus | null;
+  outlet_match_notes: string | null;
   salon_name: string | null;
   address: string | null;
   phone: string | null;
