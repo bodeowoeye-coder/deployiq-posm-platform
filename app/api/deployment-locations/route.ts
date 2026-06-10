@@ -38,6 +38,7 @@ const STATE_CODE_MAP: Record<string, string> = {
 };
 
 function clean(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return typeof value === "string" ? value.trim() : "";
 }
 
@@ -47,10 +48,6 @@ function stateCodeFor(state: string) {
 
 function outletUidPrefix(state: string) {
   return `DQ-GOD-${stateCodeFor(state)}`;
-}
-
-function numericOutletUidPrefix(state: string) {
-  return `GOD-${stateCodeFor(state)}`;
 }
 
 function extractOutletSerial(outletCode: string | null, prefix: string) {
@@ -63,13 +60,10 @@ function formatOutletUid(state: string, serial: number) {
   return `${outletUidPrefix(state)}-${String(serial).padStart(4, "0")}`;
 }
 
-function normalizeProvidedOutletCode(state: string, outletCode: string) {
+function normalizeProvidedOutletCode(outletCode: string) {
   const normalized = outletCode.trim();
   if (!normalized) return null;
-  if (/^\d+$/.test(normalized)) {
-    return `${numericOutletUidPrefix(state)}-${String(Number(normalized)).padStart(4, "0")}`;
-  }
-  return normalized;
+  return normalized.replace(/^(\d+)\.0+$/, "$1");
 }
 
 function normalizeRow(row: ImportLocationRow): { data: LocationPayload } | { error: string } {
@@ -92,7 +86,7 @@ function normalizeRow(row: ImportLocationRow): { data: LocationPayload } | { err
       owner_name: clean(row.owner_name ?? row.ownerName) || null,
       address: clean(row.address) || null,
       brand_type: clean(row.brand_type ?? row.brandType) || null,
-      outlet_code: normalizeProvidedOutletCode(state, outletCode),
+      outlet_code: normalizeProvidedOutletCode(outletCode),
       updated_at: new Date().toISOString()
     }
   };
