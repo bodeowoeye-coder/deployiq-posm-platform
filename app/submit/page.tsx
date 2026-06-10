@@ -11,7 +11,6 @@ import { compressImage } from "@/lib/imageCompression";
 import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
 import { reverseGeocode } from "@/lib/reverseGeocoding";
 import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
-import { StateCombobox } from "@/components/StateCombobox";
 import {
   buildQueuedSubmissionFormData,
   createLocalSubmissionId,
@@ -114,7 +113,7 @@ export default function SubmitPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<"idle" | "success" | "error" | "offline">("idle");
   const [error, setError] = useState("");
-  const [currentStep, setCurrentStep] = useState<"outlet" | "evidence">("outlet");
+  const [currentStep, setCurrentStep] = useState<"outlet" | "evidence" | "review">("outlet");
   const [mismatchWarning, setMismatchWarning] = useState<MismatchWarning | null>(null);
   const [outletWarning, setOutletWarning] = useState<OutletWarning | null>(null);
   const [role, setRole] = useState<"admin" | "client" | "installer" | null>(null);
@@ -170,7 +169,8 @@ export default function SubmitPage() {
   const outletSelected = Boolean(selectedOutlet);
   const gpsCaptured = position.status === "captured";
   const photoCaptured = Boolean(image);
-  const stepNumber = currentStep === "outlet" ? 1 : 2;
+  const stepNumber = currentStep === "outlet" ? 1 : currentStep === "evidence" ? 2 : 3;
+  const stepTitle = currentStep === "outlet" ? "Confirm Outlet" : currentStep === "evidence" ? "Capture Evidence" : "Review & Submit";
 
   useEffect(() => {
     console.info("[submit-timing]", {
@@ -371,6 +371,10 @@ export default function SubmitPage() {
   const canContinueToEvidence = useMemo(
     () => Boolean(role && installerUserId && installerName.trim() && projectName.trim() && installerState && installerRegion && !isSubmitting),
     [installerName, installerRegion, installerState, installerUserId, isSubmitting, projectName, role]
+  );
+  const canContinueToReview = useMemo(
+    () => Boolean(image && !isSubmitting && !isGettingLocation),
+    [image, isGettingLocation, isSubmitting]
   );
 
   async function resolveCapturedAddress(latitude: number, longitude: number) {
@@ -1074,6 +1078,10 @@ export default function SubmitPage() {
       if (canContinueToEvidence) setCurrentStep("evidence");
       return;
     }
+    if (currentStep === "evidence") {
+      if (canContinueToReview) setCurrentStep("review");
+      return;
+    }
     await submitReport(false);
   }
 
@@ -1210,15 +1218,19 @@ export default function SubmitPage() {
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase tracking-wide text-orange-700">Step {stepNumber} of 2</p>
-                  <p className="mt-0.5 whitespace-normal break-words text-sm font-bold leading-snug text-slate-950">
-                    {currentStep === "outlet" ? "Installer / Outlet Confirmation" : "Capture Evidence & Submit"}
-                  </p>
+                  <p className="text-xs font-bold uppercase tracking-wide text-orange-700">Step {stepNumber} of 3</p>
+                  <p className="mt-0.5 whitespace-normal break-words text-sm font-bold leading-snug text-slate-950">{stepTitle}</p>
                 </div>
-                <div className="flex shrink-0 gap-1.5" aria-hidden>
-                  <span className={`h-2.5 w-8 rounded-full ${currentStep === "outlet" ? "bg-orange-500" : "bg-emerald-500"}`} />
-                  <span className={`h-2.5 w-8 rounded-full ${currentStep === "evidence" ? "bg-orange-500" : "bg-slate-300"}`} />
+                <div className="flex shrink-0 gap-1" aria-hidden>
+                  <span className={`h-2.5 w-6 rounded-full ${currentStep === "outlet" ? "bg-orange-500" : "bg-emerald-500"}`} />
+                  <span className={`h-2.5 w-6 rounded-full ${currentStep === "evidence" ? "bg-orange-500" : currentStep === "review" ? "bg-emerald-500" : "bg-slate-300"}`} />
+                  <span className={`h-2.5 w-6 rounded-full ${currentStep === "review" ? "bg-orange-500" : "bg-slate-300"}`} />
                 </div>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <WizardProgressItem active={currentStep === "outlet"} completed={currentStep !== "outlet"} label="Outlet" number="①" />
+                <WizardProgressItem active={currentStep === "evidence"} completed={currentStep === "review"} label="Evidence" number="②" />
+                <WizardProgressItem active={currentStep === "review"} completed={false} label="Submit" number="③" />
               </div>
               <div className="mt-3 grid gap-2 text-xs font-semibold text-slate-600 sm:grid-cols-3">
                 <ProgressCheck checked={outletSelected} label="Outlet selected" />
@@ -1262,51 +1274,25 @@ export default function SubmitPage() {
                 <span className="whitespace-normal break-words text-xs leading-snug text-slate-500">{brandsError || "The office can assign this later if unsure."}</span>
               </Field>
 
-              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-                <div className="min-w-0">
-                  <Field label="State">
-                    <select
-                      className="min-h-11 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                      name="installerState"
-                      id="installerState"
-                      value={installerState}
-                      onChange={(e) => setInstallerState(e.target.value)}
-                      required
-                    >
-                      <option value="">Select state</option>
-                      {NIGERIA_STATES.map((state) => (
-                        <option key={state} value={state}>
-                          {state}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
-
-                <div className="min-w-0">
-                  <Field label="Region/zone">
-                    <input
-                      className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm shadow-sm"
-                      id="installerRegion"
-                      name="installerRegion"
-                      value={installerRegion}
-                      placeholder="Auto-filled from state"
-                      readOnly
-                      required
-                    />
-                  </Field>
-                </div>
-              </div>
-
-              <Field label="LGA">
-                <input
+              <Field label="State">
+                <select
                   className="min-h-11 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                  id="installerLga"
-                  name="installerLga"
-                  placeholder="Optional"
-                  value={installerLga}
-                  onChange={(event) => setInstallerLga(event.target.value)}
-                />
+                  name="installerState"
+                  id="installerState"
+                  value={installerState}
+                  onChange={(e) => setInstallerState(e.target.value)}
+                  required
+                >
+                  <option value="">Select state</option>
+                  {NIGERIA_STATES.map((state) => (
+                    <option key={state} value={state}>
+                      {state}
+                    </option>
+                  ))}
+                </select>
+                <span className="whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  {installerRegion ? `Region: ${installerRegion}` : "Region will be added automatically."}
+                </span>
               </Field>
 
               <div className="grid min-w-0 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -1386,43 +1372,8 @@ export default function SubmitPage() {
                   </Field>
                 </div>
                 {locationsError ? <p className="text-xs font-medium text-rose-700">{locationsError}</p> : null}
-                {selectedOutlet ? (
-                  <div className="grid gap-2 rounded-lg border border-orange-100 bg-white p-3 text-xs text-slate-600 sm:grid-cols-2">
-                    <OutletMeta label="Owner" value={selectedOutlet.owner_name || "Not provided"} />
-                    <OutletMeta label="Brand type" value={selectedOutlet.brand_type || "Not provided"} />
-                    <OutletMeta label="Outlet code" value={selectedOutlet.outlet_code || "Not provided"} />
-                    <OutletMeta label="Address" value={selectedOutlet.address || "Not provided"} />
-                  </div>
-                ) : null}
+                {selectedOutlet ? <SelectedOutletSummary outlet={selectedOutlet} /> : null}
               </div>
-
-              <div className="grid min-w-0 gap-3 rounded-lg border border-orange-100 bg-orange-50/70 p-3 sm:grid-cols-2">
-                <div className="min-w-0 sm:col-span-2">
-                  <p className="text-sm font-bold text-slate-950">Location / Address details</p>
-                  <p className="mt-1 text-xs leading-snug text-slate-600">
-                    Add the nearest address and landmark for field reporting. GPS will still be captured automatically when available.
-                  </p>
-                </div>
-                <Field label="Location / Address">
-                  <textarea
-                    className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    value={manualLocationDescription}
-                    onChange={(event) => setManualLocationDescription(event.target.value)}
-                    placeholder="E.g. beside First Bank, Allen Avenue"
-                    autoComplete="off"
-                  />
-                </Field>
-                <Field label="Landmark">
-                  <input
-                    className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    value={manualLandmark}
-                    onChange={(event) => setManualLandmark(event.target.value)}
-                    placeholder="Nearest landmark"
-                    autoComplete="off"
-                  />
-                </Field>
-              </div>
-
             </section>
 
             <section className={`${currentStep === "evidence" ? "grid" : "hidden"} min-w-0 gap-3`}>
@@ -1583,6 +1534,45 @@ export default function SubmitPage() {
               </div>
             </div>
 
+            <div className="grid min-w-0 gap-3 rounded-lg border border-orange-100 bg-orange-50/70 p-3 sm:grid-cols-2">
+              <div className="min-w-0 sm:col-span-2">
+                <p className="text-sm font-bold text-slate-950">Field location notes</p>
+                <p className="mt-1 text-xs leading-snug text-slate-600">
+                  Add the nearest address and landmark for field reporting. GPS will still be captured automatically when available.
+                </p>
+              </div>
+              <Field label="LGA">
+                <input
+                  className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                  id="installerLga"
+                  name="installerLga"
+                  placeholder="Optional"
+                  value={installerLga}
+                  onChange={(event) => setInstallerLga(event.target.value)}
+                />
+              </Field>
+              <Field label="Landmark">
+                <input
+                  className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                  value={manualLandmark}
+                  onChange={(event) => setManualLandmark(event.target.value)}
+                  placeholder="Nearest landmark"
+                  autoComplete="off"
+                />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Location / Address">
+                  <textarea
+                    className="min-h-20 rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    value={manualLocationDescription}
+                    onChange={(event) => setManualLocationDescription(event.target.value)}
+                    placeholder="E.g. beside First Bank, Allen Avenue"
+                    autoComplete="off"
+                  />
+                </Field>
+              </div>
+            </div>
+
             {result === "success" ? (
               <div className="flex min-w-0 items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm leading-snug text-emerald-700">
                 <CheckCircle2 aria-hidden size={18} />
@@ -1600,6 +1590,41 @@ export default function SubmitPage() {
             {result === "error" ? <div className="whitespace-normal break-words rounded-lg bg-rose-50 p-3 text-sm leading-snug text-rose-700">{error}</div> : null}
 
             </section>
+
+            <section className={`${currentStep === "review" ? "grid" : "hidden"} min-w-0 gap-3`}>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-sm font-bold text-slate-950">Review before submitting</p>
+                <p className="mt-1 text-xs leading-snug text-slate-600">
+                  Confirm the outlet and evidence summary. The AI and duplicate checks still run when you submit.
+                </p>
+              </div>
+              <div className="grid min-w-0 gap-2">
+                <ReviewRow label="Installer" value={installerName || "Signed-in installer"} />
+                <ReviewRow label="Project" value={projectName || "Not provided"} />
+                <ReviewRow label="Brand" value={brandName || selectedOutlet?.brand_type || "Not selected"} />
+                <ReviewRow
+                  label="Outlet"
+                  value={selectedOutlet ? [selectedOutlet.outlet_code, selectedOutlet.outlet_name].filter(Boolean).join(" - ") : "No approved outlet selected"}
+                />
+                <ReviewRow label="GPS status" tone={gpsCaptured ? "success" : "warning"} value={gpsCaptured ? "Captured" : "Unavailable"} />
+                <ReviewRow label="Photo status" tone={photoCaptured ? "success" : "warning"} value={photoCaptured ? "Captured" : "Photo required"} />
+                <ReviewRow label="OCR/photo match" value="Checked after submission" />
+                <ReviewRow label="Duplicate/outlet validation" value="Checked during submission" />
+              </div>
+              {result === "success" ? (
+                <div className="flex min-w-0 items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm leading-snug text-emerald-700">
+                  <CheckCircle2 aria-hidden size={18} />
+                  Evidence uploaded. Pending review.
+                </div>
+              ) : null}
+              {result === "offline" ? (
+                <div className="flex min-w-0 items-start gap-2 rounded-lg bg-orange-50 p-3 text-sm leading-snug text-orange-800">
+                  <CheckCircle2 aria-hidden size={18} />
+                  Saved offline. This upload will sync automatically when internet returns.
+                </div>
+              ) : null}
+              {result === "error" ? <div className="whitespace-normal break-words rounded-lg bg-rose-50 p-3 text-sm leading-snug text-rose-700">{error}</div> : null}
+            </section>
           </div>
           <div className="sticky bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:static sm:shadow-none">
             {currentStep === "outlet" ? (
@@ -1609,9 +1634,9 @@ export default function SubmitPage() {
                 disabled={!canContinueToEvidence}
                 onClick={() => setCurrentStep("evidence")}
               >
-                Continue
+                Continue to Evidence
               </button>
-            ) : (
+            ) : currentStep === "evidence" ? (
               <div className="grid gap-2 sm:grid-cols-[minmax(0,0.4fr)_minmax(0,1fr)]">
                 <button
                   className="inline-flex min-h-12 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 font-semibold text-slate-900 transition hover:border-orange-200 hover:bg-orange-50 disabled:opacity-60"
@@ -1623,11 +1648,30 @@ export default function SubmitPage() {
                 </button>
                 <button
                   className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+                  type="button"
+                  disabled={!canContinueToReview}
+                  onClick={() => setCurrentStep("review")}
+                >
+                  Continue to Review
+                </button>
+              </div>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,0.4fr)_minmax(0,1fr)]">
+                <button
+                  className="inline-flex min-h-12 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 font-semibold text-slate-900 transition hover:border-orange-200 hover:bg-orange-50 disabled:opacity-60"
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => setCurrentStep("evidence")}
+                >
+                  Back
+                </button>
+                <button
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
                   type="submit"
                   disabled={!canSubmit}
                 >
                   {isSubmitting ? <Loader2 className="animate-spin" aria-hidden size={18} /> : <Upload aria-hidden size={18} />}
-                  {isSubmitting ? "Submitting..." : isGettingLocation ? "Getting location..." : "Submit Deployment"}
+                  {isSubmitting ? "Submitting..." : "Submit Deployment"}
                 </button>
               </div>
             )}
@@ -1790,11 +1834,55 @@ function ProgressCheck({ checked, label }: { checked: boolean; label: string }) 
   );
 }
 
-function OutletMeta({ label, value }: { label: string; value: string }) {
+function WizardProgressItem({ active, completed, label, number }: { active: boolean; completed: boolean; label: string; number: string }) {
   return (
-    <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
-      <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
-      <strong className="mt-1 block whitespace-normal break-words text-xs leading-snug text-slate-950">{value}</strong>
+    <div
+      className={`min-w-0 rounded-lg px-2 py-2 text-center text-xs font-bold leading-snug ${
+        active ? "bg-orange-100 text-orange-800" : completed ? "bg-emerald-50 text-emerald-800" : "bg-white text-slate-500"
+      }`}
+    >
+      <span className="block text-sm">{completed ? "✓" : number}</span>
+      <span className="block truncate">{label}</span>
+    </div>
+  );
+}
+
+function SelectedOutletSummary({ outlet }: { outlet: DeploymentLocationOption }) {
+  return (
+    <details className="rounded-lg border border-orange-100 bg-white p-3 text-xs text-slate-600">
+      <summary className="cursor-pointer list-none">
+        <span className="block whitespace-normal break-words text-sm font-bold leading-snug text-slate-950">
+          {[outlet.outlet_code, outlet.outlet_name].filter(Boolean).join(" - ") || "Selected outlet"}
+        </span>
+        <span className="mt-1 block whitespace-normal break-words leading-snug text-slate-500">
+          {outlet.brand_type || "Brand type not provided"} | {outlet.address || "Address not provided"}
+        </span>
+        <span className="mt-2 inline-flex rounded-full bg-orange-50 px-2 py-1 text-[11px] font-bold text-orange-700">View details</span>
+      </summary>
+      <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3">
+        <p className="whitespace-normal break-words leading-snug">
+          <strong className="text-slate-950">Outlet code:</strong> {outlet.outlet_code || "Not provided"}
+        </p>
+        <p className="whitespace-normal break-words leading-snug">
+          <strong className="text-slate-950">Outlet name:</strong> {outlet.outlet_name || "Not provided"}
+        </p>
+        <p className="whitespace-normal break-words leading-snug">
+          <strong className="text-slate-950">Brand type:</strong> {outlet.brand_type || "Not provided"}
+        </p>
+        <p className="whitespace-normal break-words leading-snug">
+          <strong className="text-slate-950">Address:</strong> {outlet.address || "Not provided"}
+        </p>
+      </div>
+    </details>
+  );
+}
+
+function ReviewRow({ label, tone, value }: { label: string; tone?: "success" | "warning"; value: string }) {
+  const valueClass = tone === "success" ? "text-emerald-700" : tone === "warning" ? "text-orange-700" : "text-slate-950";
+  return (
+    <div className="flex min-w-0 items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+      <span className="min-w-0 shrink-0 whitespace-normal break-words leading-snug text-slate-500">{label}</span>
+      <strong className={`min-w-0 whitespace-normal break-words text-right leading-snug ${valueClass}`}>{value}</strong>
     </div>
   );
 }
