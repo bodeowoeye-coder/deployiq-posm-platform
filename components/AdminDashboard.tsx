@@ -445,12 +445,23 @@ export function AdminDashboard({
   async function downloadExport(href: string, label: string) {
     setExportError("");
     setExporting(label);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 60000);
     try {
-      const response = await fetch(href, { credentials: "include" });
+      const response = await fetch(href, { credentials: "include", signal: controller.signal });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.error || "Could not generate report.");
+        const contentType = response.headers.get("content-type") ?? "";
+        const body = contentType.includes("application/json")
+          ? await response.json().catch(() => null)
+          : await response.text().catch(() => "");
+        const apiError =
+          typeof body === "string"
+            ? body.trim()
+            : typeof body?.error === "string"
+              ? body.error
+              : "";
+        throw new Error(apiError || `Could not generate report. Server returned ${response.status}.`);
       }
 
       const blob = await response.blob();
@@ -466,10 +477,16 @@ export function AdminDashboard({
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
       showToast(`${label} generated.`);
     } catch (downloadError) {
-      const message = downloadError instanceof Error ? downloadError.message : "Could not generate report.";
+      const message =
+        downloadError instanceof DOMException && downloadError.name === "AbortError"
+          ? "Report generation timed out. Please try again."
+          : downloadError instanceof Error
+            ? downloadError.message
+            : "Could not generate report.";
       setExportError(message);
       showToast(message, "error");
     } finally {
+      window.clearTimeout(timeout);
       setExporting("");
     }
   }

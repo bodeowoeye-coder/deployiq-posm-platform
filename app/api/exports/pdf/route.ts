@@ -60,8 +60,27 @@ function wrappedLines(doc: jsPDF, text: string, width: number) {
 
 export async function GET(request: Request) {
   const context = await getCurrentUserContext();
-  if (!context || context.role.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  if (!context) {
+    console.error("[admin-pdf-export] unauthorized", {
+      reason: "missing_session_or_role_context"
+    });
+    return NextResponse.json(
+      { error: "Admin PDF export requires an active admin session. Please sign in again." },
+      { status: 401 }
+    );
+  }
+
+  if (context.role.role !== "admin") {
+    console.error("[admin-pdf-export] unauthorized", {
+      reason: "wrong_role",
+      userId: context.user.id,
+      email: context.user.email ?? null,
+      role: context.role.role
+    });
+    return NextResponse.json(
+      { error: `Admin PDF export requires admin access. Current role: ${context.role.role}.` },
+      { status: 403 }
+    );
   }
 
   const { searchParams } = new URL(request.url);
