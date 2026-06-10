@@ -196,3 +196,21 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ imported });
 }
+
+export async function DELETE() {
+  const context = await getCurrentUserContext();
+  if (!context || context.role.role !== "admin") {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const { count, error } = await createAdminSupabase()
+    .from("deployment_locations")
+    .delete({ count: "exact" })
+    .not("id", "is", null);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ removed: count ?? 0 });
+}

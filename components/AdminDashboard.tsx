@@ -649,6 +649,27 @@ export function AdminDashboard({
     return true;
   }
 
+  async function clearOutletDirectory() {
+    const confirmed = window.confirm(
+      "This will permanently remove all imported outlet directory records. It will not delete submissions or reports. Continue?"
+    );
+    if (!confirmed) return false;
+
+    const response = await fetch("/api/deployment-locations", {
+      method: "DELETE",
+      credentials: "include"
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showToast(body.error || "Could not clear outlet directory.", "error");
+      return false;
+    }
+    const removed = Number(body.removed ?? 0);
+    showToast(`${removed} outlet directory record${removed === 1 ? "" : "s"} removed.`);
+    await refreshOutletRecords();
+    return true;
+  }
+
   useEffect(() => {
     if ((activeView === "profile" || activeView === "user-management" || activeView === "clients") && userRecords.length === 0) {
       void refreshUsers();
@@ -1198,7 +1219,7 @@ export function AdminDashboard({
             />
           </div>
         ) : null}
-        {activeView === "outlet-directory" ? <OutletDirectoryPanel outlets={outletRecords} isLoading={outletsLoading} onImport={importOutletRows} /> : null}
+        {activeView === "outlet-directory" ? <OutletDirectoryPanel outlets={outletRecords} isLoading={outletsLoading} onImport={importOutletRows} onClear={clearOutletDirectory} /> : null}
         {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
         {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onSave={updateClientProfile} /> : null}
         {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
@@ -1231,13 +1252,16 @@ function SummaryCard({ label, value, suffix = "" }: { label: string; value: numb
 function OutletDirectoryPanel({
   outlets,
   isLoading,
-  onImport
+  onImport,
+  onClear
 }: {
   outlets: DeploymentLocation[];
   isLoading: boolean;
   onImport: (rows: OutletImportRow[]) => Promise<boolean>;
+  onClear: () => Promise<boolean>;
 }) {
   const [importing, setImporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [fileName, setFileName] = useState("");
   const [parseError, setParseError] = useState("");
 
@@ -1263,13 +1287,34 @@ function OutletDirectoryPanel({
     }
   }
 
+  async function handleClearDirectory() {
+    setClearing(true);
+    try {
+      await onClear();
+    } finally {
+      setClearing(false);
+    }
+  }
+
   return (
     <div className="grid min-w-0 gap-4">
       <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="text-base font-bold leading-snug">Import approved outlets</h2>
-        <p className="mt-2 text-sm leading-snug text-slate-600">
-          Upload a CSV with these columns: state, outlet_name, owner_name, address, brand_type, outlet_code.
-        </p>
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold leading-snug">Import approved outlets</h2>
+            <p className="mt-2 text-sm leading-snug text-slate-600">
+              Upload a CSV with these columns: state, outlet_name, owner_name, address, brand_type, outlet_code.
+            </p>
+          </div>
+          <button
+            className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-wait disabled:opacity-60"
+            type="button"
+            disabled={clearing || outlets.length === 0}
+            onClick={() => void handleClearDirectory()}
+          >
+            {clearing ? "Clearing..." : "Clear Outlet Directory"}
+          </button>
+        </div>
         <div className="mt-4 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
           <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50">
             Choose CSV
