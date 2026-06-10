@@ -7,12 +7,16 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { createBrowserSupabase } from "@/lib/supabaseClient";
 
+type PublicSupabaseConfig = { url: string; anonKey: string };
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState(false);
   const [error, setError] = useState("");
   const [returnTo, setReturnTo] = useState<string | null>(null);
+  const [publicConfig, setPublicConfig] = useState<PublicSupabaseConfig | null>(null);
   const { showToast } = useToast();
   const router = useRouter();
 
@@ -33,6 +37,8 @@ export default function LoginPage() {
     };
 
     console.info("[login] diagnostic", payload);
+
+    if (process.env.NODE_ENV !== "development") return;
 
     fetch("/api/auth/login-diagnostics", {
       method: "POST",
@@ -62,6 +68,31 @@ export default function LoginPage() {
     const nextReturnTo = searchParams.get("returnTo");
     setReturnTo(nextReturnTo);
     window.history.replaceState(null, "", nextReturnTo ? `/login?returnTo=${encodeURIComponent(nextReturnTo)}` : "/login");
+
+    const publicConfigStart = performance.now();
+    fetch("/api/auth/public-config", {
+      cache: "no-store",
+      credentials: "include"
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not load login configuration.");
+        return (await response.json()) as PublicSupabaseConfig;
+      })
+      .then((config) => {
+        setPublicConfig(config);
+        console.info("[login-timing]", {
+          stage: "public-config-prefetch",
+          ok: Boolean(config.url && config.anonKey),
+          durationMs: timingMs(publicConfigStart)
+        });
+      })
+      .catch((configError) => {
+        console.info("[login-timing]", {
+          stage: "public-config-prefetch-error",
+          message: configError instanceof Error ? configError.message : "Unknown error",
+          durationMs: timingMs(publicConfigStart)
+        });
+      });
 
     if (loggedOut) {
       console.info("[login-timing]", { stage: "logged-out-login-page", durationMs: timingMs(mountStart) });
@@ -105,21 +136,24 @@ export default function LoginPage() {
     setError("");
     console.info("[login] submit", { emailPresent: Boolean(email.trim()), passwordPresent: Boolean(password), online: typeof navigator !== "undefined" ? navigator.onLine : null });
     const totalStart = performance.now();
+    let didStartRedirect = false;
 
     try {
       const publicConfigStart = performance.now();
       logLoginDiagnostic("public-config-fetch-start");
-      const configResponse = await fetch("/api/auth/public-config", {
-        cache: "no-store",
-        credentials: "include"
-      });
-      logLoginDiagnostic("public-config-fetch-complete", { status: configResponse.status, ok: configResponse.ok, durationMs: timingMs(publicConfigStart) });
-
-      if (!configResponse.ok) {
-        throw new Error("Could not load login configuration.");
+      const config =
+        publicConfig ??
+        (await fetch("/api/auth/public-config", {
+          cache: "no-store",
+          credentials: "include"
+        }).then(async (configResponse) => {
+          logLoginDiagnostic("public-config-fetch-complete", { status: configResponse.status, ok: configResponse.ok, durationMs: timingMs(publicConfigStart) });
+          if (!configResponse.ok) throw new Error("Could not load login configuration.");
+          return (await configResponse.json()) as PublicSupabaseConfig;
+        }));
+      if (publicConfig) {
+        logLoginDiagnostic("public-config-cache-hit", { durationMs: timingMs(publicConfigStart) });
       }
-
-      const config = (await configResponse.json()) as { url: string; anonKey: string };
       logLoginDiagnostic("public-config-json-parsed", {
         publicConfigLoaded: Boolean(config.url && config.anonKey),
         supabaseUrlHost: config.url ? new URL(config.url).host : null,
@@ -153,51 +187,25 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accessToken: data.session.access_token,
-          refreshToken: data.session.refresh_token
+          refreshToken: data.session.refresh_token,
+          returnTo
         })
       });
       logLoginDiagnostic("app-session-post-complete", { status: response.status, ok: response.ok, durationMs: timingMs(sessionCreateStart) });
 
+      const sessionBody = (await response.json().catch(() => null)) as { authenticated?: boolean; redirectTo?: string; error?: string } | null;
       if (!response.ok) {
-        throw new Error("Could not create app session.");
+        throw new Error(sessionBody?.error || "Could not create app session.");
       }
 
-      const roleLookupStart = performance.now();
-      logLoginDiagnostic("app-session-verify-start");
-      const verificationResponse = await fetch(`/api/auth/session${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`, {
-        cache: "no-store",
-        credentials: "include"
-      });
-
-      const verifiedSession = (await verificationResponse.json()) as { authenticated: boolean; redirectTo?: string; reason?: string };
-      logLoginDiagnostic("app-session-verify-complete", {
-        durationMs: timingMs(roleLookupStart),
-        status: verificationResponse.status,
-        ok: verificationResponse.ok,
-        authenticated: verifiedSession.authenticated,
-        redirectTo: verifiedSession.redirectTo ?? null,
-        reason: verifiedSession.reason ?? null
-      });
-      if (!verificationResponse.ok) {
-        throw new Error(
-          verifiedSession.reason === "access_cookie_missing"
-            ? "App session cookie was not saved. Please try again."
-            : verifiedSession.reason === "role_or_user_context_unavailable"
-            ? "User exists but no app role/profile found."
-            : "App session was not accepted. Please try again."
-        );
+      if (!sessionBody?.authenticated) {
+        throw new Error(sessionBody?.error || "App session was not accepted. Please try again.");
       }
 
-      if (!verifiedSession.authenticated) {
-        throw new Error(
-          verifiedSession.reason === "role_or_user_context_unavailable"
-            ? "User exists but no app role/profile found."
-            : "App session was not accepted. Please try again."
-        );
-      }
-
-      const redirectTo = verifiedSession.redirectTo || "/portal";
+      const redirectTo = sessionBody.redirectTo || "/portal";
       showToast("Signed in successfully.");
+      didStartRedirect = true;
+      setIsRedirecting(true);
       const redirectStart = performance.now();
       console.info("[login-timing]", {
         stage: "redirect-start",
@@ -205,7 +213,6 @@ export default function LoginPage() {
         redirectPreparationMs: timingMs(redirectStart),
         totalLoginMs: timingMs(totalStart)
       });
-      window.history.replaceState(null, "", redirectTo);
       router.replace(redirectTo);
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : "Could not sign in.";
@@ -217,7 +224,7 @@ export default function LoginPage() {
       setError(message);
       showToast(message, "error");
     } finally {
-      setIsSubmitting(false);
+      if (!didStartRedirect) setIsSubmitting(false);
     }
   }
 
@@ -266,11 +273,11 @@ export default function LoginPage() {
               {error ? <div className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}</div> : null}
               <button
                 className="min-h-11 rounded-lg bg-slate-950 px-4 font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isRedirecting}
                 onClick={() => logLoginDiagnostic("sign-in-button-click")}
                 type="submit"
               >
-                {isSubmitting ? "Signing in..." : "Sign in"}
+                {isRedirecting ? "Opening workspace..." : isSubmitting ? "Signing in..." : "Sign in"}
               </button>
             </form>
           </div>
@@ -287,6 +294,15 @@ export default function LoginPage() {
           />
         </div>
       </div>
+      {isRedirecting ? (
+        <div className="fixed inset-0 z-50 grid min-h-screen place-items-center bg-white/90 px-6 text-center backdrop-blur-sm">
+          <div className="w-full max-w-xs rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+            <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-orange-500" />
+            <p className="text-sm font-bold text-slate-950">Opening workspace...</p>
+            <p className="mt-1 text-xs leading-snug text-slate-500">Please hold on while DeployIQ loads your dashboard.</p>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

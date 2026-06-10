@@ -47,6 +47,7 @@ export async function POST(request: Request) {
     console.info("[login-server-timing]", { stage: "session-body-parse", durationMs: timingMs(bodyStart) });
     const accessToken = typeof body.accessToken === "string" ? body.accessToken : "";
     const refreshToken = typeof body.refreshToken === "string" ? body.refreshToken : "";
+    const requestedReturnTo = typeof body.returnTo === "string" ? body.returnTo : null;
 
     if (!accessToken || !refreshToken) {
       console.error("[auth-session] missing tokens", {
@@ -68,7 +69,47 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid session tokens." }, { status: 401 });
     }
 
-    const response = NextResponse.json({ ok: true });
+    const roleLookupStart = nowMs();
+    const { data: role, error: roleError } = await createAdminSupabase()
+      .schema("public")
+      .from("user_roles")
+      .select("user_id, role, client_id")
+      .eq("user_id", data.user.id)
+      .maybeSingle();
+    console.info("[login-server-timing]", {
+      stage: "session-role-lookup",
+      role: role?.role ?? null,
+      hasRole: Boolean(role),
+      durationMs: timingMs(roleLookupStart)
+    });
+
+    if (roleError || !role) {
+      console.error("[auth-session] role lookup failed during session create", {
+        userId: data.user.id,
+        email: data.user.email ?? null,
+        message: roleError?.message ?? "No user role found"
+      });
+      return NextResponse.json({ error: "User exists but no app role/profile found." }, { status: 403 });
+    }
+
+    const resolvedRole = role.role === "admin" || role.role === "client" || role.role === "installer" ? role.role : null;
+    if (!resolvedRole) {
+      console.error("[auth-session] invalid role during session create", {
+        userId: data.user.id,
+        email: data.user.email ?? null,
+        role: role.role
+      });
+      return NextResponse.json({ error: "Invalid app role configured for this user." }, { status: 403 });
+    }
+
+    const redirectTo = isAllowedReturnTo(resolvedRole, requestedReturnTo) ? requestedReturnTo : defaultRouteForRole(resolvedRole);
+
+    const response = NextResponse.json({
+      ok: true,
+      authenticated: true,
+      role: resolvedRole,
+      redirectTo
+    });
     response.headers.set("Cache-Control", "private, no-store");
     setAuthCookie(response, request, "deployiq-access-token", accessToken, 60 * 60 * 24 * 7);
     setAuthCookie(response, request, "deployiq-refresh-token", refreshToken, 60 * 60 * 24 * 7);
