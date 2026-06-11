@@ -141,18 +141,21 @@ export default function LoginPage() {
     try {
       const publicConfigStart = performance.now();
       logLoginDiagnostic("public-config-fetch-start");
-      const config =
-        publicConfig ??
-        (await fetch("/api/auth/public-config", {
+      let config = publicConfig;
+      if (!config) {
+        config = await fetch("/api/auth/public-config", {
           cache: "no-store",
           credentials: "include"
         }).then(async (configResponse) => {
           logLoginDiagnostic("public-config-fetch-complete", { status: configResponse.status, ok: configResponse.ok, durationMs: timingMs(publicConfigStart) });
           if (!configResponse.ok) throw new Error("Could not load login configuration.");
           return (await configResponse.json()) as PublicSupabaseConfig;
-        }));
-      if (publicConfig) {
+        });
+      } else {
         logLoginDiagnostic("public-config-cache-hit", { durationMs: timingMs(publicConfigStart) });
+      }
+      if (!config?.url || !config.anonKey) {
+        throw new Error("Could not load login configuration.");
       }
       logLoginDiagnostic("public-config-json-parsed", {
         publicConfigLoaded: Boolean(config.url && config.anonKey),

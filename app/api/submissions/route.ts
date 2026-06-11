@@ -12,11 +12,6 @@ import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
 import { reverseGeocode } from "@/lib/reverseGeocoding";
 import type { Submission } from "@/lib/types";
 
-const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "";
-if (!STORAGE_BUCKET) {
-  throw new Error("Missing SUPABASE_STORAGE_BUCKET environment variable.");
-}
-
 export const runtime = "nodejs";
 
 const ACTIVE_OUTLET_DUPLICATE_STATUSES = ["Submitted", "submitted", "Pending", "pending", "Approved", "approved"];
@@ -28,6 +23,14 @@ function nowMs() {
 
 function timingMs(start: number) {
   return Math.round((nowMs() - start) * 10) / 10;
+}
+
+function getStorageBucket() {
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET?.trim();
+  if (!bucket) {
+    throw new Error("Missing SUPABASE_STORAGE_BUCKET environment variable.");
+  }
+  return bucket;
 }
 
 function cleanString(value: FormDataEntryValue | null) {
@@ -210,6 +213,7 @@ export async function POST(request: Request) {
     if (!context || !["admin", "installer"].includes(context.role.role)) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
+    const storageBucket = getStorageBucket();
 
     const formDataStart = nowMs();
     const formData = await request.formData();
@@ -388,7 +392,7 @@ export async function POST(request: Request) {
     const path = `installations/${fileName}`;
 
     const storageStart = nowMs();
-    const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET).upload(path, image, {
+    const { error: uploadError } = await supabase.storage.from(storageBucket).upload(path, image, {
       contentType: image.type || "image/jpeg",
       upsert: false
     });
@@ -401,7 +405,7 @@ export async function POST(request: Request) {
 
     const {
       data: { publicUrl }
-    } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+    } = supabase.storage.from(storageBucket).getPublicUrl(path);
 
     const ocrStart = nowMs();
     const extraction = await extractBoardTextFromImage(publicUrl);
@@ -429,7 +433,7 @@ export async function POST(request: Request) {
       (brandReview.brandMatchStatus === "Mismatch" || brandReview.brandMatchStatus === "Uncertain") && !submitAnyway;
 
     if (requiresBrandReviewConfirmation) {
-      await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+      await supabase.storage.from(storageBucket).remove([path]);
       console.info("[submit-server-timing]", { stage: "submit-total", result: "brand-review-confirmation", durationMs: timingMs(totalStart) });
       return NextResponse.json(
         {
@@ -445,7 +449,7 @@ export async function POST(request: Request) {
     }
 
     if (selectedLocationId && outletReview.status === "warning" && !submitAnyway) {
-      await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+      await supabase.storage.from(storageBucket).remove([path]);
       console.info("[submit-server-timing]", { stage: "submit-total", result: "outlet-review-confirmation", durationMs: timingMs(totalStart) });
       return NextResponse.json(
         {
@@ -597,17 +601,17 @@ export async function POST(request: Request) {
           .eq("local_submission_id", localSubmissionId)
           .maybeSingle();
         if (existingSubmission) {
-          await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+          await supabase.storage.from(storageBucket).remove([path]);
           console.info("[submit-server-timing]", { stage: "submit-total", result: "already-synced", durationMs: timingMs(totalStart) });
           return NextResponse.json({ submission: existingSubmission, alreadySynced: true });
         }
       }
       if (error.code === "23505" && error.message.toLowerCase().includes("outlet")) {
-        await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+        await supabase.storage.from(storageBucket).remove([path]);
         console.info("[submit-server-timing]", { stage: "submit-total", result: "outlet-duplicate", durationMs: timingMs(totalStart) });
         return NextResponse.json({ error: OUTLET_DUPLICATE_MESSAGE }, { status: 409 });
       }
-      await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+      await supabase.storage.from(storageBucket).remove([path]);
       console.info("[submit-server-timing]", { stage: "submit-total", result: "database-error", durationMs: timingMs(totalStart), message: error.message });
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
