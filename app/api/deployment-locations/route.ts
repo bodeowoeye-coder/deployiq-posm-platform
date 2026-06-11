@@ -92,17 +92,24 @@ function normalizeRow(row: ImportLocationRow): { data: LocationPayload } | { err
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const context = await getCurrentUserContext();
   if (!context || !["admin", "installer"].includes(context.role.role)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  const { data, error } = await createAdminSupabase()
+  const state = new URL(request.url).searchParams.get("state")?.trim() ?? "";
+  let query = createAdminSupabase()
     .from("deployment_locations")
     .select("*")
     .order("state", { ascending: true })
     .order("outlet_name", { ascending: true });
+
+  if (state && (NIGERIA_STATES as readonly string[]).includes(state)) {
+    query = query.eq("state", state);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

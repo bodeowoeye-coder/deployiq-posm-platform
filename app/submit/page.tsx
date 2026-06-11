@@ -173,6 +173,22 @@ export default function SubmitPage() {
   const stepTitle = currentStep === "outlet" ? "Confirm Outlet" : currentStep === "evidence" ? "Capture Evidence" : "Review & Submit";
 
   useEffect(() => {
+    const redirectTiming = window.sessionStorage.getItem("deployiq-login-redirect-timing");
+    if (redirectTiming) {
+      try {
+        const parsed = JSON.parse(redirectTiming) as { redirectTo?: string; startedAt?: number; totalLoginMs?: number; sessionPostMs?: number };
+        console.info("[submit-timing]", {
+          stage: "destination-mounted-after-login",
+          redirectTo: parsed.redirectTo ?? null,
+          routeRenderMs: typeof parsed.startedAt === "number" ? Math.round((performance.now() - parsed.startedAt) * 10) / 10 : null,
+          totalLoginMs: parsed.totalLoginMs ?? null,
+          sessionPostMs: parsed.sessionPostMs ?? null
+        });
+      } catch {
+        console.info("[submit-timing]", { stage: "destination-mounted-after-login", parseError: true });
+      }
+      window.sessionStorage.removeItem("deployiq-login-redirect-timing");
+    }
     console.info("[submit-timing]", {
       stage: "submit-page-mounted",
       viewport: typeof window !== "undefined" ? `${window.innerWidth}x${window.innerHeight}` : null,
@@ -251,18 +267,36 @@ export default function SubmitPage() {
 
   useEffect(() => {
     async function loadDeploymentLocations() {
+      if (!installerState) {
+        setDeploymentLocations([]);
+        setLocationsError("");
+        return;
+      }
+      const outletsStart = performance.now();
       try {
-        const response = await fetch("/api/deployment-locations", { credentials: "include" });
+        const response = await fetch(`/api/deployment-locations?state=${encodeURIComponent(installerState)}`, { credentials: "include" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Could not load approved outlets.");
         setDeploymentLocations(body.locations ?? []);
+        console.info("[submit-timing]", {
+          stage: "approved-outlets-fetch",
+          state: installerState,
+          count: body.locations?.length ?? 0,
+          durationMs: timingMs(outletsStart)
+        });
       } catch (loadError) {
         setLocationsError(loadError instanceof Error ? loadError.message : "Could not load approved outlets.");
+        console.info("[submit-timing]", {
+          stage: "approved-outlets-fetch-error",
+          state: installerState,
+          message: loadError instanceof Error ? loadError.message : "Unknown error",
+          durationMs: timingMs(outletsStart)
+        });
       }
     }
 
     loadDeploymentLocations();
-  }, []);
+  }, [installerState]);
 
   useEffect(() => {
     if (!selectedOutlet) return;
