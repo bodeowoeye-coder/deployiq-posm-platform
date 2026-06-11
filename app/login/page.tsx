@@ -68,9 +68,6 @@ export default function LoginPage() {
     const nextReturnTo = searchParams.get("returnTo");
     setReturnTo(nextReturnTo);
     window.history.replaceState(null, "", nextReturnTo ? `/login?returnTo=${encodeURIComponent(nextReturnTo)}` : "/login");
-    router.prefetch("/admin");
-    router.prefetch("/submit");
-    router.prefetch("/client");
 
     const publicConfigStart = performance.now();
     fetch("/api/auth/public-config", {
@@ -219,18 +216,6 @@ export default function LoginPage() {
         redirectPreparationMs: timingMs(redirectStart),
         totalLoginMs: timingMs(totalStart)
       });
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(
-          "deployiq-login-redirect-timing",
-          JSON.stringify({
-            redirectTo,
-            startedAt: performance.now(),
-            totalLoginMs: timingMs(totalStart),
-            sessionPostMs: timingMs(sessionCreateStart)
-          })
-        );
-      }
-      router.prefetch(redirectTo);
       router.replace(redirectTo);
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : "Could not sign in.";
@@ -313,10 +298,7 @@ export default function LoginPage() {
         </div>
       </div>
       {isRedirecting ? (
-        <div
-          className="fixed inset-0 z-50 grid h-[100dvh] min-h-[100svh] place-items-center overflow-hidden bg-white px-6 text-center"
-          aria-live="polite"
-        >
+        <div className="fixed inset-0 z-50 grid min-h-screen place-items-center bg-white/90 px-6 text-center backdrop-blur-sm">
           <div className="w-full max-w-xs rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
             <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-orange-500" />
             <p className="text-sm font-bold text-slate-950">Opening workspace...</p>

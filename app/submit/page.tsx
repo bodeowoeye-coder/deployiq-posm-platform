@@ -63,6 +63,13 @@ type OutletWarning = {
   selectedOutletCode: string | null;
 };
 
+type UploadSuccessDetails = {
+  outlet: string;
+  brand: string;
+  installer: string;
+  submittedOn: string;
+};
+
 type AppSession = {
   role?: "admin" | "client" | "installer";
   userId?: string;
@@ -112,6 +119,7 @@ export default function SubmitPage() {
   const [isGettingLocation, setIsGettingLocation] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<"idle" | "success" | "error" | "offline">("idle");
+  const [successDetails, setSuccessDetails] = useState<UploadSuccessDetails | null>(null);
   const [error, setError] = useState("");
   const [currentStep, setCurrentStep] = useState<"outlet" | "evidence" | "review">("outlet");
   const [mismatchWarning, setMismatchWarning] = useState<MismatchWarning | null>(null);
@@ -173,22 +181,6 @@ export default function SubmitPage() {
   const stepTitle = currentStep === "outlet" ? "Confirm Outlet" : currentStep === "evidence" ? "Capture Evidence" : "Review & Submit";
 
   useEffect(() => {
-    const redirectTiming = window.sessionStorage.getItem("deployiq-login-redirect-timing");
-    if (redirectTiming) {
-      try {
-        const parsed = JSON.parse(redirectTiming) as { redirectTo?: string; startedAt?: number; totalLoginMs?: number; sessionPostMs?: number };
-        console.info("[submit-timing]", {
-          stage: "destination-mounted-after-login",
-          redirectTo: parsed.redirectTo ?? null,
-          routeRenderMs: typeof parsed.startedAt === "number" ? Math.round((performance.now() - parsed.startedAt) * 10) / 10 : null,
-          totalLoginMs: parsed.totalLoginMs ?? null,
-          sessionPostMs: parsed.sessionPostMs ?? null
-        });
-      } catch {
-        console.info("[submit-timing]", { stage: "destination-mounted-after-login", parseError: true });
-      }
-      window.sessionStorage.removeItem("deployiq-login-redirect-timing");
-    }
     console.info("[submit-timing]", {
       stage: "submit-page-mounted",
       viewport: typeof window !== "undefined" ? `${window.innerWidth}x${window.innerHeight}` : null,
@@ -1072,6 +1064,15 @@ export default function SubmitPage() {
         throw new Error(body.error || "Submission failed.");
       }
 
+      const submittedAt = body.submission?.submitted_at || body.submission?.created_at || new Date().toISOString();
+      setSuccessDetails({
+        outlet: selectedOutlet
+          ? [selectedOutlet.outlet_code, selectedOutlet.outlet_name].filter(Boolean).join(" - ")
+          : manualLandmark.trim() || "Manual outlet",
+        brand: brandName || selectedOutlet?.brand_type || "Unassigned",
+        installer: installerName || installerEmail || "Signed-in installer",
+        submittedOn: formatSubmissionDate(submittedAt)
+      });
       setImage(null);
       console.info("[android-preview]", { stage: "preview-cleared-after-success" });
       resetPreviewObjectUrl();
@@ -1135,6 +1136,48 @@ export default function SubmitPage() {
       prepareImagePreview(file);
       setShowWebcam(false);
     }, "image/jpeg", 0.9);
+  }
+
+  if (successDetails) {
+    return (
+      <main className="min-h-screen bg-slate-50 px-5 py-8 text-slate-950">
+        <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col justify-center">
+          <section className="rounded-3xl border border-emerald-100 bg-white p-6 text-center shadow-xl shadow-emerald-100/60 sm:p-8">
+            <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100 text-emerald-700">
+              <CheckCircle2 className="h-12 w-12" aria-hidden="true" />
+            </div>
+            <h1 className="mt-5 text-3xl font-black tracking-tight text-slate-950">Upload Successful!</h1>
+            <p className="mt-2 text-base font-semibold leading-snug text-slate-600">Your evidence has been submitted successfully.</p>
+            <dl className="mt-6 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left">
+              <SuccessDetailRow label="Outlet" value={successDetails.outlet} />
+              <SuccessDetailRow label="Brand" value={successDetails.brand} />
+              <SuccessDetailRow label="Installer" value={successDetails.installer} />
+              <SuccessDetailRow label="Submitted on" value={successDetails.submittedOn} />
+              <SuccessDetailRow label="Status" value="Submitted" />
+            </dl>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <Link
+                href="/installer/history"
+                className="rounded-2xl bg-slate-950 px-4 py-3 text-center text-sm font-black text-white shadow-lg shadow-slate-200 transition hover:-translate-y-0.5 hover:bg-slate-800"
+              >
+                Go to My Uploads
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  setResult("idle");
+                  setSuccessDetails(null);
+                  setCurrentStep("outlet");
+                }}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-950 shadow-sm transition hover:-translate-y-0.5 hover:border-orange-200 hover:bg-orange-50"
+              >
+                Submit Another Outlet
+              </button>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -1928,6 +1971,26 @@ function BrandReviewRow({ label, value }: { label: string; value: string }) {
       <strong className="min-w-0 whitespace-normal break-words text-sm capitalize leading-snug text-slate-950">{value}</strong>
     </div>
   );
+}
+
+function SuccessDetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid min-w-0 gap-1 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0 sm:grid-cols-[130px_1fr] sm:items-start">
+      <dt className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className="min-w-0 whitespace-normal break-words text-sm font-bold leading-snug text-slate-950">{value}</dd>
+    </div>
+  );
+}
+
+function formatSubmissionDate(value: string) {
+  return new Date(value).toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Africa/Lagos"
+  });
 }
 
 function queueStatusClass(status: QueuedSubmissionRecord["status"]) {

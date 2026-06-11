@@ -287,22 +287,6 @@ export function AdminDashboard({
   useEffect(() => {
     setLastUpdated(formatDateTime(new Date()));
     if (typeof window !== "undefined") {
-      const redirectTiming = window.sessionStorage.getItem("deployiq-login-redirect-timing");
-      if (redirectTiming) {
-        try {
-          const parsed = JSON.parse(redirectTiming) as { redirectTo?: string; startedAt?: number; totalLoginMs?: number; sessionPostMs?: number };
-          console.info("[admin-client-timing]", {
-            stage: "destination-mounted-after-login",
-            redirectTo: parsed.redirectTo ?? null,
-            routeRenderMs: typeof parsed.startedAt === "number" ? Math.round((performance.now() - parsed.startedAt) * 10) / 10 : null,
-            totalLoginMs: parsed.totalLoginMs ?? null,
-            sessionPostMs: parsed.sessionPostMs ?? null
-          });
-        } catch {
-          console.info("[admin-client-timing]", { stage: "destination-mounted-after-login", parseError: true });
-        }
-        window.sessionStorage.removeItem("deployiq-login-redirect-timing");
-      }
       console.info("[admin-client-timing]", {
         stage: "dashboard-mounted",
         initialView,
