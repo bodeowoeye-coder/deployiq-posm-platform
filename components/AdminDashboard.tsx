@@ -2365,7 +2365,13 @@ function UserManagementPanel({
   const [project, setProject] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [formMessage, setFormMessage] = useState("");
+  const [createClientId, setCreateClientId] = useState("");
+  const [selectedCreateProjectIds, setSelectedCreateProjectIds] = useState<string[]>([]);
   const selectedUser = users.find((user) => user.user_id === selectedUserId) ?? null;
+  const createProjectOptions = useMemo(
+    () => projects.filter((item) => item.client_id === createClientId),
+    [createClientId, projects]
+  );
   const filteredUsers = users.filter((user) => {
     const searchable = [user.full_name, user.email, user.phone].filter(Boolean).join(" ").toLowerCase();
     return (
@@ -2406,7 +2412,11 @@ function UserManagementPanel({
               return;
             }
             const created = await onCreate(formData);
-            if (created) form.reset();
+            if (created) {
+              form.reset();
+              setCreateClientId("");
+              setSelectedCreateProjectIds([]);
+            }
           }}
         >
           <input required name="fullName" placeholder="Full name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
@@ -2418,7 +2428,15 @@ function UserManagementPanel({
             <option value="client">Client</option>
             <option value="installer">Installer</option>
           </select>
-          <select name="clientId" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+          <select
+            name="clientId"
+            value={createClientId}
+            onChange={(event) => {
+              setCreateClientId(event.target.value);
+              setSelectedCreateProjectIds([]);
+            }}
+            className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm"
+          >
             <option value="">Assigned Client Company</option>
             {clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
@@ -2426,8 +2444,17 @@ function UserManagementPanel({
             <option value="">Assigned agency</option>
             {agencies.map((item) => <option key={item.id} value={item.id}>{item.agency_name}</option>)}
           </select>
-          <select name="assignedProjectIds" multiple className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm">
-            {projects.map((item) => <option key={item.id} value={item.id}>{item.project_name}</option>)}
+          <select
+            name="assignedProjectIds"
+            multiple
+            value={selectedCreateProjectIds}
+            disabled={!createClientId || createProjectOptions.length === 0}
+            onChange={(event) => setSelectedCreateProjectIds(Array.from(event.target.selectedOptions).map((option) => option.value))}
+            className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+          >
+            {!createClientId ? <option value="" disabled>Select Client Company first</option> : null}
+            {createClientId && createProjectOptions.length === 0 ? <option value="" disabled>No projects available</option> : null}
+            {createProjectOptions.map((item) => <option key={item.id} value={item.id}>{item.project_name}</option>)}
           </select>
           <MultiSelectOptions name="assignedRegions" label="Assigned regions" options={[...NIGERIA_REGIONS]} selected={[]} />
           <MultiSelectOptions name="assignedStates" label="Assigned states" options={[...NIGERIA_STATES]} selected={[]} />
@@ -2749,8 +2776,9 @@ function ClientManagementPanel({
           className="mt-4 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3"
           onSubmit={async (event: FormEvent<HTMLFormElement>) => {
             event.preventDefault();
-            const created = await onCreate(new FormData(event.currentTarget));
-            if (created) event.currentTarget.reset();
+            const form = event.currentTarget;
+            const created = await onCreate(new FormData(form));
+            if (created) form.reset();
           }}
         >
           <FilterField label="Company name">
