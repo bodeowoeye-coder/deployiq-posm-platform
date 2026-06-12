@@ -90,6 +90,8 @@ export async function GET(request: Request) {
   const lga = searchParams.get("lga")?.trim();
   const installer = searchParams.get("installer")?.trim();
   const project = searchParams.get("project")?.trim();
+  const clientId = searchParams.get("clientId")?.trim();
+  const projectId = searchParams.get("projectId")?.trim();
   const campaign = searchParams.get("campaign")?.trim();
   const brand = searchParams.get("brand")?.trim();
   const status = searchParams.get("status")?.trim();
@@ -99,10 +101,14 @@ export async function GET(request: Request) {
   const supabase = createAdminSupabase();
   let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
   if (campaign) {
-    const { data: matchingProjects } = await supabase.from("projects").select("id").eq("campaign_name", campaign);
+    let projectQuery = supabase.from("projects").select("id").eq("campaign_name", campaign);
+    if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
+    const { data: matchingProjects } = await projectQuery;
     query = matchingProjects?.length ? query.in("project_id", matchingProjects.map((item) => item.id)) : query.eq("project_id", "00000000-0000-0000-0000-000000000000");
   }
 
+  if (clientId) query = query.eq("client_id", clientId);
+  if (projectId) query = query.eq("project_id", projectId);
   if (state) query = query.eq("installer_state", state);
   if (region) query = query.eq("installer_region", region);
   if (lga) query = query.ilike("installer_lga", `%${lga}%`);

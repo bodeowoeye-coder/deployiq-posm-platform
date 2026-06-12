@@ -110,11 +110,13 @@ function formatDate(value: Date | string | null | undefined) {
   return date.toLocaleDateString("en-GB", dateOnlyFormatOptions);
 }
 
-function buildExportQuery(filters: Filters) {
+function buildExportQuery(filters: Filters, scope: { clientId?: string; projectId?: string } = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (value.trim()) params.set(key, value.trim());
   });
+  if (scope.clientId?.trim()) params.set("clientId", scope.clientId.trim());
+  if (scope.projectId?.trim()) params.set("projectId", scope.projectId.trim());
   const query = params.toString();
   return query ? `?${query}` : "";
 }
@@ -262,6 +264,8 @@ export function AdminDashboard({
   const [activeView, setActiveView] = useState<DashboardView>(initialView);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [dashboardPanelsReady, setDashboardPanelsReady] = useState(initialView !== "dashboard");
+  const [scopeClientId, setScopeClientId] = useState("");
+  const [scopeProjectId, setScopeProjectId] = useState("");
   const contentTopRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
   const currentUser =
@@ -332,11 +336,51 @@ export function AdminDashboard({
     return () => window.removeEventListener("popstate", syncViewFromPath);
   }, []);
 
+  const scopeProjectOptions = useMemo(
+    () => projectRecords.filter((project) => !scopeClientId || project.client_id === scopeClientId),
+    [projectRecords, scopeClientId]
+  );
+  const scopedRecords = useMemo(
+    () =>
+      records.filter(
+        (item) =>
+          (!scopeClientId || item.client_id === scopeClientId) &&
+          (!scopeProjectId || item.project_id === scopeProjectId)
+      ),
+    [records, scopeClientId, scopeProjectId]
+  );
+  const scopedProjectRecords = useMemo(
+    () =>
+      projectRecords.filter(
+        (project) =>
+          (!scopeClientId || project.client_id === scopeClientId) &&
+          (!scopeProjectId || project.id === scopeProjectId)
+      ),
+    [projectRecords, scopeClientId, scopeProjectId]
+  );
+  const scopedProjectIds = useMemo(() => new Set(scopedProjectRecords.map((project) => project.id)), [scopedProjectRecords]);
+  const scopedTargetRecords = useMemo(
+    () => targetRecords.filter((target) => !scopeProjectId && !scopeClientId ? true : scopedProjectIds.has(target.project_id)),
+    [targetRecords, scopedProjectIds, scopeClientId, scopeProjectId]
+  );
+  const scopedDeploymentProgress = useMemo(
+    () => deploymentProgress.filter((progress) => !scopeProjectId && !scopeClientId ? true : scopedProjectIds.has(progress.project_id)),
+    [deploymentProgress, scopedProjectIds, scopeClientId, scopeProjectId]
+  );
+  const scopeClientName = scopeClientId ? clientRecords.find((client) => client.id === scopeClientId)?.name ?? "Selected Client Company" : "All Clients";
+  const scopeProjectName = scopeProjectId ? displayProjectName(scopeProjectOptions.find((project) => project.id === scopeProjectId)?.project_name) : "All Projects";
+
+  useEffect(() => {
+    if (scopeProjectId && !scopeProjectOptions.some((project) => project.id === scopeProjectId)) {
+      setScopeProjectId("");
+    }
+  }, [scopeProjectId, scopeProjectOptions]);
+
   const filtered = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     const installer = filters.installer.trim().toLowerCase();
 
-    return records.filter((item) => {
+    return scopedRecords.filter((item) => {
       const date = item.installation_date ?? item.submitted_at.slice(0, 10);
       const searchable = [
         item.installer_name,
@@ -366,12 +410,12 @@ export function AdminDashboard({
         (!installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
         (!filters.project || displayProjectName(item.project_name) === filters.project) &&
         (!filters.campaign ||
-          projectRecords.find((project) => project.id === item.project_id || project.project_name === item.project_name)?.campaign_name === filters.campaign) &&
+          scopedProjectRecords.find((project) => project.id === item.project_id || project.project_name === item.project_name)?.campaign_name === filters.campaign) &&
         (!filters.brand || item.brand_name === filters.brand) &&
         (!filters.status || item.status === filters.status)
       );
     });
-  }, [filters, records]);
+  }, [filters, scopedRecords, scopedProjectRecords]);
 
   const dailyCounts = getDailyCounts(filtered);
   const regionCounts = getRegionCounts(filtered);
@@ -383,15 +427,16 @@ export function AdminDashboard({
   const approvedCount = filtered.filter((item) => item.status === "Approved").length;
   const pendingCount = filtered.filter((item) => item.status === "Pending").length;
   const rejectedCount = filtered.filter((item) => item.status === "Rejected").length;
-  const exportQuery = buildExportQuery(filters);
+  const scopeExportQuery = buildExportQuery(blankFilters, { clientId: scopeClientId, projectId: scopeProjectId });
+  const exportQuery = buildExportQuery(filters, { clientId: scopeClientId, projectId: scopeProjectId });
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
   const installerAccuracy = getInstallerAccuracyRanking(filtered, installerIdentitySource);
   const regionPerformance = getRegionPerformanceRanking(filtered);
   const brandCompliance = getBrandComplianceScores(filtered);
-  const projectOptions = Array.from(new Set(records.map((item) => displayProjectName(item.project_name)))).sort();
-  const campaignOptions = Array.from(new Set(projectRecords.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
-  const projectOperations = getProjectOperations(projectRecords, targetRecords, filtered, deploymentProgress);
+  const projectOptions = Array.from(new Set(scopedRecords.map((item) => displayProjectName(item.project_name)))).sort();
+  const campaignOptions = Array.from(new Set(scopedProjectRecords.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
+  const projectOperations = getProjectOperations(scopedProjectRecords, scopedTargetRecords, filtered, scopedDeploymentProgress);
   const portfolio = getPortfolioOperations(projectOperations);
   const stageTotals = getStageTotals(projectOperations);
   const operationalAlerts = getOperationalAlerts(projectOperations);
@@ -933,6 +978,45 @@ export function AdminDashboard({
       <div className="mx-auto flex min-w-0 w-[min(1380px,calc(100%-28px))] flex-col gap-4 py-4 lg:flex-row lg:items-start lg:py-6">
         <DashboardSidebar audience="admin" activeView={activeView} onSelectView={setActiveView} />
       <section className="min-w-0 flex-1" key={activeView}>
+        <div className="mb-4 grid min-w-0 gap-3 rounded-xl border border-orange-100 bg-orange-50/50 p-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_minmax(220px,280px)_minmax(220px,280px)] lg:items-end">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-700">Admin workspace scope</p>
+            <p className="mt-1 whitespace-normal break-words text-sm font-semibold leading-snug text-slate-950">
+              Viewing: {scopeClientName} / {scopeProjectName}
+            </p>
+          </div>
+          <FilterField label="Client Company">
+            <select
+              value={scopeClientId}
+              onChange={(event) => {
+                setScopeClientId(event.target.value);
+                setScopeProjectId("");
+              }}
+              className="min-h-10 w-full rounded-lg border border-orange-200 bg-white px-3 text-sm shadow-sm"
+            >
+              <option value="">All Client Companies</option>
+              {clientRecords.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}{client.status === "Inactive" ? " (Archived)" : ""}
+                </option>
+              ))}
+            </select>
+          </FilterField>
+          <FilterField label="Project">
+            <select
+              value={scopeProjectId}
+              onChange={(event) => setScopeProjectId(event.target.value)}
+              className="min-h-10 w-full rounded-lg border border-orange-200 bg-white px-3 text-sm shadow-sm"
+            >
+              <option value="">All Projects</option>
+              {scopeProjectOptions.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {displayProjectName(project.project_name)}
+                </option>
+              ))}
+            </select>
+          </FilterField>
+        </div>
         <div ref={contentTopRef} className="mb-5 min-w-0 scroll-mt-24 rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5">
           <h1 className="whitespace-normal break-words text-2xl font-bold leading-snug tracking-normal sm:text-3xl">{adminViewTitle(activeView)}</h1>
           <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">{adminViewDescription(activeView)}</p>
@@ -1052,9 +1136,9 @@ export function AdminDashboard({
             <button className="inline-flex min-h-10 min-w-[180px] flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50 sm:flex-none" onClick={() => setFilters(blankFilters)}>
               Clear filters
             </button>
-            <ExportButton onClick={() => downloadExport("/api/exports/excel", "Full Excel report")} icon="excel" label="Full Excel report" loading={exporting === "Full Excel report"} />
+            <ExportButton onClick={() => downloadExport(`/api/exports/excel${scopeExportQuery}`, "Full Excel report")} icon="excel" label="Full Excel report" loading={exporting === "Full Excel report"} />
             <ExportButton onClick={() => downloadExport(`/api/exports/excel${exportQuery}`, "Filtered Excel report")} icon="excel" label="Filtered Excel report" loading={exporting === "Filtered Excel report"} />
-            <ExportButton onClick={() => downloadExport("/api/exports/pdf", "Full PDF report")} icon="pdf" label="Full PDF report" loading={exporting === "Full PDF report"} />
+            <ExportButton onClick={() => downloadExport(`/api/exports/pdf${scopeExportQuery}`, "Full PDF report")} icon="pdf" label="Full PDF report" loading={exporting === "Full PDF report"} />
             <ExportButton onClick={() => downloadExport(`/api/exports/pdf${exportQuery}`, "Filtered PDF report")} icon="pdf" label="Filtered PDF report" loading={exporting === "Filtered PDF report"} />
           </div>
           {exportError ? <p className="mt-3 whitespace-normal break-words text-sm leading-snug text-rose-700">{exportError}</p> : null}
