@@ -804,15 +804,47 @@ export function AdminDashboard({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         clientId: formData.get("clientId"),
+        name: formData.get("name"),
         contactPerson: formData.get("contactPerson"),
         email: formData.get("email"),
-        phone: formData.get("phone")
+        phone: formData.get("phone"),
+        industryCategory: formData.get("industryCategory"),
+        status: formData.get("status")
       })
     });
     const body = await response.json();
     if (!response.ok) return showToast(body.error || "Could not save client profile.", "error");
+    if (body.client) {
+      setClientRecords((current) => current.map((item) => (item.id === body.client.id ? { ...item, ...body.client } : item)));
+    }
     setClientProfileRecords((current) => [body.profile, ...current.filter((item) => item.client_id !== body.profile.client_id)]);
     showToast("Client profile saved.");
+  }
+
+  async function createClient(formData: FormData) {
+    const response = await fetch("/api/clients", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: formData.get("name"),
+        contactPerson: formData.get("contactPerson"),
+        email: formData.get("email"),
+        phone: formData.get("phone"),
+        industryCategory: formData.get("industryCategory"),
+        status: formData.get("status")
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      showToast(body.error || "Could not create client company.", "error");
+      return false;
+    }
+    setClientRecords((current) => [...current.filter((item) => item.id !== body.client.id), body.client].sort((a, b) => a.name.localeCompare(b.name)));
+    if (body.profile) {
+      setClientProfileRecords((current) => [body.profile, ...current.filter((item) => item.client_id !== body.profile.client_id)]);
+    }
+    showToast("Client company created.");
+    return true;
   }
 
   return (
@@ -1238,7 +1270,7 @@ export function AdminDashboard({
         ) : null}
         {activeView === "outlet-directory" ? <OutletDirectoryPanel outlets={outletRecords} isLoading={outletsLoading} onImport={importOutletRows} onClear={clearOutletDirectory} /> : null}
         {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
-        {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onSave={updateClientProfile} /> : null}
+        {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onCreate={createClient} onSave={updateClientProfile} /> : null}
         {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
         {activeView === "installers" ? (
           <InstallerManagementPanel installers={installerRecords} submissions={records} projects={projectRecords} agencies={agencyRecords} users={userRecords} />
@@ -1851,7 +1883,7 @@ function ProjectManager({
       <input name="projectName" required placeholder="Project name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
       <input name="campaignName" placeholder="Campaign name" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
       <select name="clientId" required className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
-        <option value="">Select client</option>
+        <option value="">Select Client Company</option>
         {clients.map((client) => (
           <option key={client.id} value={client.id}>{client.name}</option>
         ))}
@@ -1978,7 +2010,7 @@ function ProjectCrudPanel({
                 </div>
                 <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-5">
                   <SummaryPill label="Project Name" value={project.project_name} />
-                  <SummaryPill label="Client" value={clientName} />
+                  <SummaryPill label="Client Company" value={clientName} />
                   <SummaryPill label="Brand" value={brandName} />
                   <SummaryPill label="Status" value={project.archived_at ? "Archived" : project.status} />
                   <SummaryPill label="Target Quantity" value={project.target_quantity.toLocaleString()} />
@@ -1987,7 +2019,7 @@ function ProjectCrudPanel({
               <FilterField label="Project Name">
                 <input disabled readOnly value={project.project_name ?? ""} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600 disabled:opacity-100" />
               </FilterField>
-              <FilterField label="Client">
+              <FilterField label="Client Company">
                 <input disabled readOnly value={clientName} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600 disabled:opacity-100" />
               </FilterField>
               <FilterField label="Brand">
@@ -2387,7 +2419,7 @@ function UserManagementPanel({
             <option value="installer">Installer</option>
           </select>
           <select name="clientId" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
-            <option value="">Assigned client</option>
+            <option value="">Assigned Client Company</option>
             {clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
           <select name="agencyId" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
@@ -2435,7 +2467,7 @@ function UserManagementPanel({
             {agencies.map((item) => <option key={item.id} value={item.id}>{item.agency_name}</option>)}
           </select>
           <select value={client} onChange={(event) => setClient(event.target.value)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
-            <option value="">All clients</option>
+            <option value="">All Client Companies</option>
             {clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
           <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
@@ -2543,7 +2575,7 @@ function UserProfilePanel({
         </div>
         <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm">
           <p>Role: <strong>{user.role}</strong></p>
-          <p className="mt-1">Client: <strong>{clients.find((item) => item.id === user.client_id)?.name || "—"}</strong></p>
+          <p className="mt-1">Client Company: <strong>{clients.find((item) => item.id === user.client_id)?.name || "—"}</strong></p>
           <p className="mt-1">Agency: <strong>{agencies.find((item) => item.id === user.agency_id)?.agency_name || "—"}</strong></p>
           <p className="mt-1">Projects: <strong>{projects.filter((item) => user.assigned_project_ids.includes(item.id)).map((item) => item.project_name).join(", ") || "—"}</strong></p>
           <p className="mt-1">Territories: <strong>{[...user.assigned_regions, ...user.assigned_states].join(", ") || "—"}</strong></p>
@@ -2693,6 +2725,7 @@ function ClientManagementPanel({
   users,
   submissions,
   projects,
+  onCreate,
   onSave
 }: {
   clients: Client[];
@@ -2700,16 +2733,64 @@ function ClientManagementPanel({
   users: ManagedUser[];
   submissions: Submission[];
   projects: Project[];
+  onCreate: (formData: FormData) => Promise<boolean>;
   onSave: (formData: FormData) => Promise<void>;
 }) {
   return (
-    <div className="grid min-w-0 gap-3">
+    <div className="grid min-w-0 gap-4">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 className="text-base font-bold leading-snug">Create Client Company</h2>
+          <p className="text-sm leading-snug text-slate-600">
+            Add the company account first, then create projects and client users under that company.
+          </p>
+        </div>
+        <form
+          className="mt-4 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3"
+          onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+            event.preventDefault();
+            const created = await onCreate(new FormData(event.currentTarget));
+            if (created) event.currentTarget.reset();
+          }}
+        >
+          <FilterField label="Company name">
+            <input required name="name" placeholder="Godrej Nigeria Ltd" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          </FilterField>
+          <FilterField label="Contact person">
+            <input name="contactPerson" placeholder="Primary contact" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          </FilterField>
+          <FilterField label="Email">
+            <input name="email" type="email" placeholder="client@example.com" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          </FilterField>
+          <FilterField label="Phone">
+            <input name="phone" placeholder="Phone number" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          </FilterField>
+          <FilterField label="Industry/category">
+            <input name="industryCategory" placeholder="FMCG, beauty, retail..." className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          </FilterField>
+          <FilterField label="Status">
+            <select name="status" defaultValue="Active" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+              <option>Active</option>
+              <option>Inactive</option>
+            </select>
+          </FilterField>
+          <button className="inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 md:col-span-2 xl:col-span-3">
+            Create Client Company
+          </button>
+        </form>
+      </div>
+
+      <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="text-base font-bold leading-snug">Client Companies</h2>
+        <p className="mt-1 text-sm leading-snug text-slate-600">Manage company profiles used by projects, client users, dashboards, and reports.</p>
+      </div>
       {clients.map((client) => {
         const profile = clientProfiles.find((item) => item.client_id === client.id);
         const clientSubmissions = submissions.filter((item) => item.client_id === client.id);
         const approved = clientSubmissions.filter((item) => item.status === "Approved").length;
         const clientProjects = projects.filter((item) => item.client_id === client.id);
         const coverage = Array.from(new Set(clientSubmissions.map((item) => item.installer_region).filter(Boolean))).length;
+        const assignedUsers = users.filter((item) => item.client_id === client.id).length;
         return (
           <form key={client.id} className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-2" onSubmit={async (event) => {
             event.preventDefault();
@@ -2717,22 +2798,47 @@ function ClientManagementPanel({
           }}>
             <input type="hidden" name="clientId" value={client.id} />
             <div className="md:col-span-2">
-              <h2 className="text-base font-bold">{client.name}</h2>
-              <p className="mt-1 text-xs text-slate-500">{users.filter((item) => item.client_id === client.id).length} assigned users | {clientProjects.length} projects</p>
+              <h3 className="text-base font-bold">{client.name}</h3>
+              <p className="mt-1 text-xs text-slate-500">{assignedUsers} assigned users | {clientProjects.length} projects</p>
             </div>
-            <input name="contactPerson" defaultValue={profile?.contact_person ?? ""} placeholder="Contact person" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <input name="email" defaultValue={profile?.email ?? ""} placeholder="Email" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <input name="phone" defaultValue={profile?.phone ?? ""} placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            <div className="grid grid-cols-4 gap-2">
+            <FilterField label="Company name">
+              <input required name="name" defaultValue={client.name} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            </FilterField>
+            <FilterField label="Contact person">
+              <input name="contactPerson" defaultValue={profile?.contact_person ?? ""} placeholder="Contact person" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            </FilterField>
+            <FilterField label="Email">
+              <input name="email" type="email" defaultValue={profile?.email ?? ""} placeholder="Email" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            </FilterField>
+            <FilterField label="Phone">
+              <input name="phone" defaultValue={profile?.phone ?? ""} placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            </FilterField>
+            <FilterField label="Industry/category">
+              <input name="industryCategory" defaultValue={profile?.industry_category ?? ""} placeholder="Industry/category" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+            </FilterField>
+            <FilterField label="Status">
+              <select name="status" defaultValue={client.status ?? "Active"} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+                <option>Active</option>
+                <option>Inactive</option>
+              </select>
+            </FilterField>
+            <div className="grid grid-cols-2 gap-2 md:col-span-2 xl:grid-cols-6">
+              <MiniMetric label="Projects" value={clientProjects.length} />
+              <MiniMetric label="Assigned Users" value={assignedUsers} />
               <MiniMetric label="Deployments" value={clientSubmissions.length} />
               <MiniMetric label="Approved" value={approved} />
               <MiniMetric label="Approval" value={`${clientSubmissions.length ? Math.round((approved / clientSubmissions.length) * 100) : 0}%`} />
               <MiniMetric label="Coverage" value={coverage} />
             </div>
-            <button className="min-h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white md:col-span-2">Save client profile</button>
+            <button className="min-h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white md:col-span-2">Save Client Company</button>
           </form>
         );
       })}
+      {clients.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
+          No client companies configured yet.
+        </div>
+      ) : null}
     </div>
   );
 }

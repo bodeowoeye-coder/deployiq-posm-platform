@@ -79,6 +79,7 @@ export type Client = {
   id: string;
   name: string;
   can_review?: boolean;
+  status?: "Active" | "Inactive";
 };
 
 export type ClientProfile = {
@@ -86,6 +87,7 @@ export type ClientProfile = {
   contact_person: string | null;
   email: string | null;
   phone: string | null;
+  industry_category: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -30,21 +30,44 @@ export async function POST(request: Request) {
   if (!context) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   const body = await request.json();
   const name = cleanString(body.name);
-  if (!name) return NextResponse.json({ error: "Client name is required." }, { status: 400 });
+  const status = cleanString(body.status) === "Inactive" ? "Inactive" : "Active";
+  if (!name) return NextResponse.json({ error: "Client company name is required." }, { status: 400 });
   const supabase = createAdminSupabase();
-  const { data: client, error } = await supabase.from("clients").insert({ name }).select().single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  const { data: profile } = await supabase
+
+  let clientResult = await supabase.from("clients").insert({ name, status }).select().single();
+  if (clientResult.error?.code === "42703") {
+    clientResult = await supabase.from("clients").insert({ name }).select().single();
+  }
+  if (clientResult.error) {
+    const duplicate = clientResult.error.code === "23505";
+    return NextResponse.json(
+      { error: duplicate ? "A client company with this name already exists." : clientResult.error.message },
+      { status: duplicate ? 409 : 500 }
+    );
+  }
+
+  const profilePayload = {
+    client_id: clientResult.data.id,
+    contact_person: cleanString(body.contactPerson) || null,
+    email: cleanString(body.email) || null,
+    phone: cleanString(body.phone) || null,
+    industry_category: cleanString(body.industryCategory) || null
+  };
+  let profileResult = await supabase
     .from("client_profiles")
-    .upsert({
-      client_id: client.id,
-      contact_person: cleanString(body.contactPerson) || null,
-      email: cleanString(body.email) || null,
-      phone: cleanString(body.phone) || null
-    })
+    .upsert(profilePayload)
     .select()
     .single();
-  return NextResponse.json({ client, profile });
+  if (profileResult.error?.code === "42703") {
+    const { industry_category: _industryCategory, ...fallbackProfilePayload } = profilePayload;
+    profileResult = await supabase
+      .from("client_profiles")
+      .upsert(fallbackProfilePayload)
+      .select()
+      .single();
+  }
+  if (profileResult.error) return NextResponse.json({ error: profileResult.error.message }, { status: 500 });
+  return NextResponse.json({ client: clientResult.data, profile: profileResult.data });
 }
 
 export async function PATCH(request: Request) {
@@ -53,17 +76,50 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const clientId = cleanString(body.clientId);
   if (!clientId) return NextResponse.json({ error: "Missing client id." }, { status: 400 });
-  const { data, error } = await createAdminSupabase()
+  const supabase = createAdminSupabase();
+  const name = cleanString(body.name);
+  const status = cleanString(body.status) === "Inactive" ? "Inactive" : "Active";
+  let client = null;
+  if (name) {
+    let clientResult = await supabase
+      .from("clients")
+      .update({ name, status })
+      .eq("id", clientId)
+      .select()
+      .single();
+    if (clientResult.error?.code === "42703") {
+      clientResult = await supabase
+        .from("clients")
+        .update({ name })
+        .eq("id", clientId)
+        .select()
+        .single();
+    }
+    if (clientResult.error) return NextResponse.json({ error: clientResult.error.message }, { status: 500 });
+    client = clientResult.data;
+  }
+
+  const profilePayload = {
+    client_id: clientId,
+    contact_person: cleanString(body.contactPerson) || null,
+    email: cleanString(body.email) || null,
+    phone: cleanString(body.phone) || null,
+    industry_category: cleanString(body.industryCategory) || null,
+    updated_at: new Date().toISOString()
+  };
+  let profileResult = await supabase
     .from("client_profiles")
-    .upsert({
-      client_id: clientId,
-      contact_person: cleanString(body.contactPerson) || null,
-      email: cleanString(body.email) || null,
-      phone: cleanString(body.phone) || null,
-      updated_at: new Date().toISOString()
-    })
+    .upsert(profilePayload)
     .select()
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ profile: data });
+  if (profileResult.error?.code === "42703") {
+    const { industry_category: _industryCategory, ...fallbackProfilePayload } = profilePayload;
+    profileResult = await supabase
+      .from("client_profiles")
+      .upsert(fallbackProfilePayload)
+      .select()
+      .single();
+  }
+  if (profileResult.error) return NextResponse.json({ error: profileResult.error.message }, { status: 500 });
+  return NextResponse.json({ client, profile: profileResult.data });
 }
