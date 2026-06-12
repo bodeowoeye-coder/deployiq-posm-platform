@@ -821,6 +821,44 @@ export function AdminDashboard({
     showToast("Client profile saved.");
   }
 
+  async function archiveClient(clientId: string) {
+    const client = clientRecords.find((item) => item.id === clientId);
+    if (!client) return;
+    const confirmed = window.confirm("Archive this client company? It will no longer appear in new project or user assignment dropdowns, but linked records will remain intact.");
+    if (!confirmed) return;
+    const profile = clientProfileRecords.find((item) => item.client_id === clientId);
+    const response = await fetch("/api/clients", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId,
+        name: client.name,
+        contactPerson: profile?.contact_person ?? "",
+        email: profile?.email ?? "",
+        phone: profile?.phone ?? "",
+        industryCategory: profile?.industry_category ?? "",
+        status: "Inactive"
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) return showToast(body.error || "Could not archive client company.", "error");
+    if (body.client) {
+      setClientRecords((current) => current.map((item) => (item.id === body.client.id ? { ...item, ...body.client } : item)));
+    }
+    showToast("Client company archived.");
+  }
+
+  async function deleteClient(clientId: string) {
+    const confirmed = window.confirm("Delete this client company permanently? This is only allowed when it has no projects, assigned users, submissions, or reports.");
+    if (!confirmed) return;
+    const response = await fetch(`/api/clients?clientId=${encodeURIComponent(clientId)}`, { method: "DELETE" });
+    const body = await response.json();
+    if (!response.ok) return showToast(body.error || "Could not delete client company.", "error");
+    setClientRecords((current) => current.filter((item) => item.id !== clientId));
+    setClientProfileRecords((current) => current.filter((item) => item.client_id !== clientId));
+    showToast("Client company deleted.");
+  }
+
   async function createClient(formData: FormData) {
     const response = await fetch("/api/clients", {
       method: "POST",
@@ -1253,7 +1291,7 @@ export function AdminDashboard({
           <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
             <h2 className="text-base font-bold leading-snug">Create Project</h2>
             <p className="mt-2 text-sm leading-snug text-slate-600">Configure new deployment initiatives, targets, territories, and assigned teams.</p>
-            <ProjectManager clients={clientRecords} brands={brands} agencies={agencyRecords} installers={installerRecords} users={userRecords} onCreate={createProject} />
+            <ProjectManager clients={clientRecords.filter((client) => client.status !== "Inactive")} brands={brands} agencies={agencyRecords} installers={installerRecords} users={userRecords} onCreate={createProject} />
           </div>
         ) : null}
         {activeView === "campaigns" ? (
@@ -1270,8 +1308,8 @@ export function AdminDashboard({
         ) : null}
         {activeView === "outlet-directory" ? <OutletDirectoryPanel outlets={outletRecords} isLoading={outletsLoading} onImport={importOutletRows} onClear={clearOutletDirectory} /> : null}
         {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
-        {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onCreate={createClient} onSave={updateClientProfile} /> : null}
-        {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
+        {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onCreate={createClient} onSave={updateClientProfile} onArchive={archiveClient} onDelete={deleteClient} /> : null}
+        {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords.filter((client) => client.status !== "Inactive")} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
         {activeView === "installers" ? (
           <InstallerManagementPanel installers={installerRecords} submissions={records} projects={projectRecords} agencies={agencyRecords} users={userRecords} />
         ) : null}
@@ -2753,7 +2791,9 @@ function ClientManagementPanel({
   submissions,
   projects,
   onCreate,
-  onSave
+  onSave,
+  onArchive,
+  onDelete
 }: {
   clients: Client[];
   clientProfiles: ClientProfile[];
@@ -2762,7 +2802,11 @@ function ClientManagementPanel({
   projects: Project[];
   onCreate: (formData: FormData) => Promise<boolean>;
   onSave: (formData: FormData) => Promise<void>;
+  onArchive: (clientId: string) => Promise<void>;
+  onDelete: (clientId: string) => Promise<void>;
 }) {
+  const [editingClientId, setEditingClientId] = useState<string | null>(null);
+
   return (
     <div className="grid min-w-0 gap-4">
       <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
@@ -2819,37 +2863,41 @@ function ClientManagementPanel({
         const clientProjects = projects.filter((item) => item.client_id === client.id);
         const coverage = Array.from(new Set(clientSubmissions.map((item) => item.installer_region).filter(Boolean))).length;
         const assignedUsers = users.filter((item) => item.client_id === client.id).length;
+        const isEditing = editingClientId === client.id;
+        const canDelete = clientProjects.length === 0 && assignedUsers === 0 && clientSubmissions.length === 0;
         return (
           <form key={client.id} className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-2" onSubmit={async (event) => {
             event.preventDefault();
             await onSave(new FormData(event.currentTarget));
+            setEditingClientId(null);
           }}>
             <input type="hidden" name="clientId" value={client.id} />
-            <div className="md:col-span-2">
-              <h3 className="text-base font-bold">{client.name}</h3>
-              <p className="mt-1 text-xs text-slate-500">{assignedUsers} assigned users | {clientProjects.length} projects</p>
+            <div className="flex min-w-0 flex-col gap-3 md:col-span-2 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h3 className="min-w-0 whitespace-normal break-words text-base font-bold">{client.name}</h3>
+                  <span className={`rounded-full border px-2 py-1 text-[11px] font-bold ${client.status === "Inactive" ? "border-slate-200 bg-slate-100 text-slate-500" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                    {client.status === "Inactive" ? "Archived" : "Active"}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">{profile?.contact_person || "No contact"} | {profile?.email || "No email"} | {assignedUsers} assigned users | {clientProjects.length} projects</p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button type="button" onClick={() => setEditingClientId(isEditing ? null : client.id)} className="min-h-9 rounded-lg border border-slate-200 px-3 text-sm font-semibold transition hover:bg-slate-50">
+                  {isEditing ? "Collapse" : "Edit"}
+                </button>
+                {client.status !== "Inactive" ? (
+                  <button type="button" onClick={() => onArchive(client.id)} className="min-h-9 rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-orange-800 transition hover:bg-orange-100">
+                    Archive
+                  </button>
+                ) : null}
+                {canDelete ? (
+                  <button type="button" onClick={() => onDelete(client.id)} className="min-h-9 rounded-lg border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-100">
+                    Delete
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <FilterField label="Company name">
-              <input required name="name" defaultValue={client.name} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            </FilterField>
-            <FilterField label="Contact person">
-              <input name="contactPerson" defaultValue={profile?.contact_person ?? ""} placeholder="Contact person" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            </FilterField>
-            <FilterField label="Email">
-              <input name="email" type="email" defaultValue={profile?.email ?? ""} placeholder="Email" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            </FilterField>
-            <FilterField label="Phone">
-              <input name="phone" defaultValue={profile?.phone ?? ""} placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            </FilterField>
-            <FilterField label="Industry/category">
-              <input name="industryCategory" defaultValue={profile?.industry_category ?? ""} placeholder="Industry/category" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-            </FilterField>
-            <FilterField label="Status">
-              <select name="status" defaultValue={client.status ?? "Active"} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
-                <option>Active</option>
-                <option>Inactive</option>
-              </select>
-            </FilterField>
             <div className="grid grid-cols-2 gap-2 md:col-span-2 xl:grid-cols-6">
               <MiniMetric label="Projects" value={clientProjects.length} />
               <MiniMetric label="Assigned Users" value={assignedUsers} />
@@ -2858,7 +2906,46 @@ function ClientManagementPanel({
               <MiniMetric label="Approval" value={`${clientSubmissions.length ? Math.round((approved / clientSubmissions.length) * 100) : 0}%`} />
               <MiniMetric label="Coverage" value={coverage} />
             </div>
-            <button className="min-h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white md:col-span-2">Save Client Company</button>
+            {!canDelete ? (
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 md:col-span-2">
+                This client has linked records. Archive it instead to preserve history.
+              </p>
+            ) : null}
+            {isEditing ? (
+              <>
+                <FilterField label="Company name">
+                  <input required name="name" defaultValue={client.name} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+                </FilterField>
+                <FilterField label="Contact person">
+                  <input name="contactPerson" defaultValue={profile?.contact_person ?? ""} placeholder="Contact person" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+                </FilterField>
+                <FilterField label="Email">
+                  <input name="email" type="email" defaultValue={profile?.email ?? ""} placeholder="Email" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+                </FilterField>
+                <FilterField label="Phone">
+                  <input name="phone" defaultValue={profile?.phone ?? ""} placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+                </FilterField>
+                <FilterField label="Industry/category">
+                  <input name="industryCategory" defaultValue={profile?.industry_category ?? ""} placeholder="Industry/category" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+                </FilterField>
+                <FilterField label="Status">
+                  <select name="status" defaultValue={client.status ?? "Active"} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+                    <option>Active</option>
+                    <option>Inactive</option>
+                  </select>
+                </FilterField>
+                <button className="min-h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white md:col-span-2">Save Client Company</button>
+              </>
+            ) : (
+              <>
+                <input type="hidden" name="name" value={client.name} />
+                <input type="hidden" name="contactPerson" value={profile?.contact_person ?? ""} />
+                <input type="hidden" name="email" value={profile?.email ?? ""} />
+                <input type="hidden" name="phone" value={profile?.phone ?? ""} />
+                <input type="hidden" name="industryCategory" value={profile?.industry_category ?? ""} />
+                <input type="hidden" name="status" value={client.status ?? "Active"} />
+              </>
+            )}
           </form>
         );
       })}

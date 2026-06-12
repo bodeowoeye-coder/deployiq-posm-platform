@@ -123,3 +123,32 @@ export async function PATCH(request: Request) {
   if (profileResult.error) return NextResponse.json({ error: profileResult.error.message }, { status: 500 });
   return NextResponse.json({ client, profile: profileResult.data });
 }
+
+export async function DELETE(request: Request) {
+  const context = await requireAdminContext();
+  if (!context) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  const { searchParams } = new URL(request.url);
+  const clientId = cleanString(searchParams.get("clientId"));
+  if (!clientId) return NextResponse.json({ error: "Missing client id." }, { status: 400 });
+
+  const supabase = createAdminSupabase();
+  const [{ count: projectCount, error: projectError }, { count: userCount, error: userError }, { count: submissionCount, error: submissionError }] = await Promise.all([
+    supabase.from("projects").select("id", { count: "exact", head: true }).eq("client_id", clientId),
+    supabase.from("user_roles").select("user_id", { count: "exact", head: true }).eq("client_id", clientId),
+    supabase.from("submissions").select("id", { count: "exact", head: true }).eq("client_id", clientId)
+  ]);
+
+  const countError = projectError || userError || submissionError;
+  if (countError) return NextResponse.json({ error: countError.message }, { status: 500 });
+  const linkedRecords = (projectCount ?? 0) + (userCount ?? 0) + (submissionCount ?? 0);
+  if (linkedRecords > 0) {
+    return NextResponse.json(
+      { error: "This client has linked records. Archive it instead to preserve history." },
+      { status: 409 }
+    );
+  }
+
+  const { error } = await supabase.from("clients").delete().eq("id", clientId);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ deleted: true, clientId });
+}
