@@ -3078,26 +3078,42 @@ function AuditLogPanel({ logs, users }: { logs: AuditLog[]; users: ManagedUser[]
 }
 
 type DemoDataPlan = {
-  users: Array<{ user_id: string; email: string; full_name: string; status: string | null }>;
-  projects: Array<{ id: string; project_name: string; client_id: string | null; archived_at: string | null }>;
-  submissions: Array<{ id: string; project_name: string | null; installer_name: string | null; status: string | null; submitted_at: string | null }>;
-  reports: Array<{ id: string; alert_type: string | null; created_at: string | null }>;
+  mode: "seeded" | "client" | "project";
+  selectedClientId: string | null;
+  selectedProjectId: string | null;
+  clients: Array<{ id: string; name: string; status: string | null }>;
+  projectsForSelectedClient: Array<{ id: string; project_name: string; client_id: string | null; archived_at: string | null }>;
+  users: Array<{ user_id: string; email: string; full_name: string; role: string | null; client_id: string | null; status: string | null; match_reason: string }>;
+  projects: Array<{ id: string; project_name: string; client_id: string | null; client_name: string | null; archived_at: string | null; match_reason: string }>;
+  submissions: Array<{ id: string; project_id: string | null; project_name: string | null; client_id: string | null; brand_name: string | null; installer_user_id: string | null; installer_name: string | null; status: string | null; submitted_at: string | null; match_reason: string }>;
+  reports: Array<{ id: string; alert_type: string | null; created_at: string | null; match_reason: string }>;
+  rules: string[];
   warnings: string[];
 };
 
 function DemoDataManagementPanel() {
   const [plan, setPlan] = useState<DemoDataPlan | null>(null);
+  const [clientId, setClientId] = useState("");
+  const [projectId, setProjectId] = useState("");
   const [loading, setLoading] = useState(true);
   const [archiving, setArchiving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const { showToast } = useToast();
 
-  async function loadPlan() {
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (clientId) params.set("clientId", clientId);
+    if (projectId) params.set("projectId", projectId);
+    const value = params.toString();
+    return value ? `?${value}` : "";
+  }, [clientId, projectId]);
+
+  async function loadPlan(nextQueryString = queryString) {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/demo-data", { cache: "no-store" });
+      const response = await fetch(`/api/demo-data${nextQueryString}`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Could not load demo data plan.");
       setPlan(body.plan ?? null);
@@ -3109,8 +3125,8 @@ function DemoDataManagementPanel() {
   }
 
   useEffect(() => {
-    loadPlan();
-  }, []);
+    loadPlan(queryString);
+  }, [queryString]);
 
   async function archiveDemoData() {
     if (!plan) return;
@@ -3119,20 +3135,25 @@ function DemoDataManagementPanel() {
       showToast("No demo/test records found to archive.");
       return;
     }
-    const confirmed = window.confirm("Archive the matched demo/test records? This will not delete production data or remove auth users. Continue?");
+    const scopeLabel = projectId
+      ? plan.projectsForSelectedClient.find((project) => project.id === projectId)?.project_name ?? "the selected project"
+      : clientId
+        ? plan.clients.find((client) => client.id === clientId)?.name ?? "the selected client"
+        : "seeded/test records";
+    const confirmed = window.confirm(`Archive ${total} matched records for ${scopeLabel}? This will not delete production data or remove auth users. Continue?`);
     if (!confirmed) return;
     setArchiving(true);
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/demo-data", { method: "POST" });
+      const response = await fetch(`/api/demo-data${queryString}`, { method: "POST" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Could not archive demo data.");
       const archived = body.archived ?? {};
       const summary = `Archived ${archived.projects ?? 0} projects, ${archived.users ?? 0} users, ${archived.submissions ?? 0} submissions, and ${archived.reports ?? 0} report records.`;
       setMessage(summary);
       showToast(summary);
-      await loadPlan();
+      await loadPlan(queryString);
     } catch (archiveError) {
       const nextError = archiveError instanceof Error ? archiveError.message : "Could not archive demo data.";
       setError(nextError);
@@ -3149,20 +3170,61 @@ function DemoDataManagementPanel() {
     reports: plan?.reports.length ?? 0
   };
 
+  const selectedClientLabel = clientId ? plan?.clients.find((client) => client.id === clientId)?.name ?? "Selected Client Company" : "Seeded/Test Records";
+  const selectedProjectLabel = projectId ? plan?.projectsForSelectedClient.find((project) => project.id === projectId)?.project_name ?? "Selected Project" : clientId ? "All Projects" : "Seeded/Test Projects";
+
   return (
     <div className="grid min-w-0 gap-4">
       <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-orange-700">Safety first</p>
         <h2 className="mt-2 text-lg font-bold">Demo/Test Data Management</h2>
         <p className="mt-2 max-w-3xl text-sm leading-snug text-slate-700">
-          This section identifies seeded sample records and archives them instead of deleting them. It targets known test emails, demo project names, and submissions tied to those records. Review the plan before archiving.
+          Preview exactly which records will be archived before you approve cleanup. Choose a Client Company or Project to archive a full demo environment such as Godrej, or leave both selectors empty to review only seeded test records.
         </p>
       </div>
 
+      <div className="grid min-w-0 gap-3 rounded-lg border border-slate-200 bg-white p-4 lg:grid-cols-[1fr_1fr]">
+        <FilterField label="Client Company archive scope">
+          <select
+            value={clientId}
+            onChange={(event) => {
+              setClientId(event.target.value);
+              setProjectId("");
+              setMessage("");
+            }}
+            className="min-h-11 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+          >
+            <option value="">Seeded/Test Records Only</option>
+            {plan?.clients.map((client) => (
+              <option key={client.id} value={client.id}>{client.name}</option>
+            ))}
+          </select>
+        </FilterField>
+        <FilterField label="Project archive scope">
+          <select
+            value={projectId}
+            onChange={(event) => {
+              setProjectId(event.target.value);
+              setMessage("");
+            }}
+            disabled={!clientId}
+            className="min-h-11 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+          >
+            <option value="">{clientId ? "All Projects Under Client" : "Select Client Company first"}</option>
+            {plan?.projectsForSelectedClient.map((project) => (
+              <option key={project.id} value={project.id}>{project.project_name}</option>
+            ))}
+          </select>
+        </FilterField>
+        <div className="lg:col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+          Previewing: {selectedClientLabel} / {selectedProjectLabel}
+        </div>
+      </div>
+
       <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Demo Projects" value={counts.projects} />
-        <SummaryCard label="Test Users" value={counts.users} />
-        <SummaryCard label="Sample Submissions" value={counts.submissions} />
+        <SummaryCard label="Projects To Archive" value={counts.projects} />
+        <SummaryCard label="Users To Archive" value={counts.users} />
+        <SummaryCard label="Submissions To Archive" value={counts.submissions} />
         <SummaryCard label="Report Records" value={counts.reports} />
       </div>
 
@@ -3174,42 +3236,126 @@ function DemoDataManagementPanel() {
         </div>
       ) : null}
 
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <h3 className="text-base font-bold">Matching rules currently in use</h3>
+        {plan?.rules.length ? (
+          <ul className="mt-3 grid gap-2 text-sm text-slate-700">
+            {plan.rules.map((rule) => (
+              <li key={rule} className="rounded-lg bg-slate-50 px-3 py-2 leading-snug">{rule}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-slate-500">Load a preview to see matching rules.</p>
+        )}
+      </div>
+
       <div className="flex min-w-0 flex-wrap gap-2">
-        <button type="button" onClick={loadPlan} disabled={loading || archiving} className="min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:bg-slate-50 disabled:opacity-60">
-          {loading ? "Refreshing..." : "Refresh deletion plan"}
+        <button type="button" onClick={() => loadPlan(queryString)} disabled={loading || archiving} className="min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:bg-slate-50 disabled:opacity-60">
+          {loading ? "Refreshing..." : "Refresh archive preview"}
         </button>
         <button type="button" onClick={archiveDemoData} disabled={loading || archiving || !plan} className="min-h-10 rounded-lg bg-orange-500 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-600 disabled:opacity-60">
-          {archiving ? "Archiving..." : "Archive matched demo/test data"}
+          {archiving ? "Archiving..." : "Archive previewed records"}
         </button>
       </div>
 
       {loading ? (
-        <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading demo/test data plan...</div>
+        <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading archive preview...</div>
       ) : (
-        <div className="grid min-w-0 gap-4 xl:grid-cols-2">
-          <DemoPlanList title="Seeded sample projects" rows={plan?.projects.map((project) => `${project.project_name} (${project.id.slice(0, 8)})`) ?? []} />
-          <DemoPlanList title="Test users" rows={plan?.users.map((user) => `${user.full_name} | ${user.email}`) ?? []} />
-          <DemoPlanList title="Sample submissions" rows={plan?.submissions.map((submission) => `${submission.project_name || "No project"} | ${submission.installer_name || "No installer"} | ${submission.status || "No status"}`) ?? []} />
-          <DemoPlanList title="Report/activity records" rows={plan?.reports.map((report) => `${report.alert_type || "Alert"} | ${report.created_at ? formatDateTime(report.created_at) : "No date"}`) ?? []} />
+        <div className="grid min-w-0 gap-4">
+          <DemoProjectsTable projects={plan?.projects ?? []} />
+          <DemoUsersTable users={plan?.users ?? []} />
+          <DemoSubmissionsTable submissions={plan?.submissions ?? []} />
+          <DemoReportsTable reports={plan?.reports ?? []} />
         </div>
       )}
     </div>
   );
 }
 
-function DemoPlanList({ title, rows }: { title: string; rows: string[] }) {
+function DemoPreviewTable({ title, empty, headings, children }: { title: string; empty: string; headings: string[]; children: ReactNode }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
       <h3 className="text-base font-bold">{title}</h3>
-      {rows.length === 0 ? (
-        <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">No matching records found.</p>
+      {!children ? (
+        <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">{empty}</p>
       ) : (
-        <ul className="mt-3 grid max-h-72 gap-2 overflow-y-auto text-sm text-slate-700">
-          {rows.map((row) => (
-            <li key={row} className="rounded-lg bg-slate-50 px-3 py-2 leading-snug">{row}</li>
-          ))}
-        </ul>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[900px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500">
+              <tr>
+                {headings.map((heading) => <th key={heading} className="px-3 py-2">{heading}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">{children}</tbody>
+          </table>
+        </div>
       )}
     </div>
+  );
+}
+
+function DemoProjectsTable({ projects }: { projects: DemoDataPlan["projects"] }) {
+  return (
+    <DemoPreviewTable title="Projects that will be archived" empty="No matching projects found." headings={["Project", "Client", "Archived", "Reason", "ID"]}>
+      {projects.length === 0 ? null : projects.map((project) => (
+        <tr key={project.id}>
+          <td className="px-3 py-3 font-semibold text-slate-900">{project.project_name || "Untitled project"}</td>
+          <td className="px-3 py-3">{project.client_name || project.client_id || "No client"}</td>
+          <td className="px-3 py-3">{project.archived_at ? formatDateTime(project.archived_at) : "No"}</td>
+          <td className="px-3 py-3">{project.match_reason}</td>
+          <td className="px-3 py-3 font-mono text-xs text-slate-500">{project.id.slice(0, 8)}</td>
+        </tr>
+      ))}
+    </DemoPreviewTable>
+  );
+}
+
+function DemoUsersTable({ users }: { users: DemoDataPlan["users"] }) {
+  return (
+    <DemoPreviewTable title="Users that will be archived" empty="No matching users found." headings={["Name", "Email", "Role", "Status", "Reason", "User ID"]}>
+      {users.length === 0 ? null : users.map((user) => (
+        <tr key={user.user_id}>
+          <td className="px-3 py-3 font-semibold text-slate-900">{user.full_name || "Unnamed user"}</td>
+          <td className="px-3 py-3">{user.email || "No email"}</td>
+          <td className="px-3 py-3">{user.role || "No role"}</td>
+          <td className="px-3 py-3">{user.status || "Active"}</td>
+          <td className="px-3 py-3">{user.match_reason}</td>
+          <td className="px-3 py-3 font-mono text-xs text-slate-500">{user.user_id.slice(0, 8)}</td>
+        </tr>
+      ))}
+    </DemoPreviewTable>
+  );
+}
+
+function DemoSubmissionsTable({ submissions }: { submissions: DemoDataPlan["submissions"] }) {
+  return (
+    <DemoPreviewTable title="Submissions that will be archived" empty="No matching submissions found." headings={["Project", "Brand", "Installer", "Status", "Submitted", "Reason", "ID"]}>
+      {submissions.length === 0 ? null : submissions.map((submission) => (
+        <tr key={submission.id}>
+          <td className="px-3 py-3 font-semibold text-slate-900">{submission.project_name || submission.project_id || "No project"}</td>
+          <td className="px-3 py-3">{submission.brand_name || "No brand"}</td>
+          <td className="px-3 py-3">{submission.installer_name || submission.installer_user_id || "No installer"}</td>
+          <td className="px-3 py-3">{submission.status || "No status"}</td>
+          <td className="px-3 py-3">{submission.submitted_at ? formatDateTime(submission.submitted_at) : "No date"}</td>
+          <td className="px-3 py-3">{submission.match_reason}</td>
+          <td className="px-3 py-3 font-mono text-xs text-slate-500">{submission.id.slice(0, 8)}</td>
+        </tr>
+      ))}
+    </DemoPreviewTable>
+  );
+}
+
+function DemoReportsTable({ reports }: { reports: DemoDataPlan["reports"] }) {
+  return (
+    <DemoPreviewTable title="Report/activity records that will be archived" empty="No matching report/activity records found, or optional alert records are not enabled in this database." headings={["Type", "Created", "Reason", "ID"]}>
+      {reports.length === 0 ? null : reports.map((report) => (
+        <tr key={report.id}>
+          <td className="px-3 py-3 font-semibold text-slate-900">{report.alert_type || "Alert"}</td>
+          <td className="px-3 py-3">{report.created_at ? formatDateTime(report.created_at) : "No date"}</td>
+          <td className="px-3 py-3">{report.match_reason}</td>
+          <td className="px-3 py-3 font-mono text-xs text-slate-500">{report.id.slice(0, 8)}</td>
+        </tr>
+      ))}
+    </DemoPreviewTable>
   );
 }
