@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { BrandMark } from "@/components/BrandMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
@@ -19,6 +19,7 @@ export default function LoginPage() {
   const [publicConfig, setPublicConfig] = useState<PublicSupabaseConfig | null>(null);
   const { showToast } = useToast();
   const router = useRouter();
+  const loginInProgressRef = useRef(false);
 
   function logLoginDiagnostic(stage: string, extra: Record<string, unknown> = {}) {
     if (typeof window === "undefined") return;
@@ -104,6 +105,7 @@ export default function LoginPage() {
     fetch(`/api/auth/session${nextReturnTo ? `?returnTo=${encodeURIComponent(nextReturnTo)}` : ""}`, { cache: "no-store", credentials: "include" })
       .then(async (response) => (response.ok ? response.json() : null))
       .then((session) => {
+        if (loginInProgressRef.current) return;
         console.info("[login-timing]", {
           stage: "existing-session-check",
           authenticated: Boolean(session?.authenticated),
@@ -112,6 +114,7 @@ export default function LoginPage() {
         });
         if (session?.authenticated && session.redirectTo) {
           console.info("[login] existing session redirect", { redirectTo: session.redirectTo });
+          setIsRedirecting(true);
           router.replace(session.redirectTo);
         }
       })
@@ -132,7 +135,9 @@ export default function LoginPage() {
       logLoginDiagnostic("submit-ignored-already-submitting");
       return;
     }
+    loginInProgressRef.current = true;
     setIsSubmitting(true);
+    setIsRedirecting(true);
     setError("");
     console.info("[login] submit", { emailPresent: Boolean(email.trim()), passwordPresent: Boolean(password), online: typeof navigator !== "undefined" ? navigator.onLine : null });
     const totalStart = performance.now();
@@ -218,6 +223,7 @@ export default function LoginPage() {
       });
       router.replace(redirectTo);
     } catch (loginError) {
+      loginInProgressRef.current = false;
       const message = loginError instanceof Error ? loginError.message : "Could not sign in.";
       logLoginDiagnostic("login-error", {
         message,
@@ -227,12 +233,15 @@ export default function LoginPage() {
       setError(message);
       showToast(message, "error");
     } finally {
-      if (!didStartRedirect) setIsSubmitting(false);
+      if (!didStartRedirect) {
+        setIsSubmitting(false);
+        setIsRedirecting(false);
+      }
     }
   }
 
   return (
-    <main className="min-h-screen bg-white text-slate-950 lg:flex">
+    <main className="min-h-[100dvh] bg-white text-slate-950 lg:flex">
       {/* Left side - Login form */}
       <div className="flex flex-col lg:w-1/2 lg:flex-col">
         <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4 lg:border-b-0 lg:border-r">
@@ -297,8 +306,8 @@ export default function LoginPage() {
           />
         </div>
       </div>
-      {isRedirecting ? (
-        <div className="fixed inset-0 z-50 grid min-h-screen place-items-center bg-white/90 px-6 text-center backdrop-blur-sm">
+      {isSubmitting || isRedirecting ? (
+        <div className="fixed inset-0 z-50 grid min-h-[100dvh] place-items-center overflow-hidden bg-white/95 px-6 text-center backdrop-blur-sm">
           <div className="w-full max-w-xs rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
             <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-orange-500" />
             <p className="text-sm font-bold text-slate-950">Opening workspace...</p>
