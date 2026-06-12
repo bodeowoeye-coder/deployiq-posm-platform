@@ -978,7 +978,7 @@ export function AdminDashboard({
       <div className="mx-auto flex min-w-0 w-[min(1380px,calc(100%-28px))] flex-col gap-4 py-4 lg:flex-row lg:items-start lg:py-6">
         <DashboardSidebar audience="admin" activeView={activeView} onSelectView={setActiveView} />
       <section className="min-w-0 flex-1" key={activeView}>
-        <div className="mb-4 grid min-w-0 gap-3 rounded-xl border border-orange-100 bg-orange-50/50 p-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_minmax(220px,280px)_minmax(220px,280px)] lg:items-end">
+        <div className="admin-workspace-scope mb-4 grid min-w-0 gap-3 rounded-xl border border-orange-100 bg-orange-50/50 p-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_minmax(220px,280px)_minmax(220px,280px)] lg:items-end">
           <div className="min-w-0">
             <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-700">Admin workspace scope</p>
             <p className="mt-1 whitespace-normal break-words text-sm font-semibold leading-snug text-slate-950">
@@ -992,7 +992,7 @@ export function AdminDashboard({
                 setScopeClientId(event.target.value);
                 setScopeProjectId("");
               }}
-              className="min-h-10 w-full rounded-lg border border-orange-200 bg-white px-3 text-sm shadow-sm"
+              className="admin-workspace-scope-select min-h-10 w-full rounded-lg border border-orange-200 bg-white px-3 text-sm shadow-sm"
             >
               <option value="">All Client Companies</option>
               {clientRecords.map((client) => (
@@ -1006,7 +1006,7 @@ export function AdminDashboard({
             <select
               value={scopeProjectId}
               onChange={(event) => setScopeProjectId(event.target.value)}
-              className="min-h-10 w-full rounded-lg border border-orange-200 bg-white px-3 text-sm shadow-sm"
+              className="admin-workspace-scope-select min-h-10 w-full rounded-lg border border-orange-200 bg-white px-3 text-sm shadow-sm"
             >
               <option value="">All Projects</option>
               {scopeProjectOptions.map((project) => (

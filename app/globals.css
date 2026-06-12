@@ -154,6 +154,31 @@ html[data-theme="dark"] .hover\:bg-orange-50:hover {
   background-color: rgb(234 122 24 / 0.12) !important;
 }
 
+html[data-theme="dark"] .admin-workspace-scope {
+  background-color: rgb(42 32 25 / 0.96) !important;
+  border-color: rgb(251 146 60 / 0.7) !important;
+}
+
+html[data-theme="dark"] .admin-workspace-scope p,
+html[data-theme="dark"] .admin-workspace-scope label {
+  color: #f8fafc !important;
+}
+
+html[data-theme="dark"] .admin-workspace-scope .text-orange-700 {
+  color: #ff8a3d !important;
+}
+
+html[data-theme="dark"] .admin-workspace-scope-select {
+  background-color: #17191e !important;
+  border-color: rgb(251 146 60 / 0.75) !important;
+  color: #f8fafc !important;
+}
+
+html[data-theme="dark"] .admin-workspace-scope-select option {
+  background-color: #17191e;
+  color: #f8fafc;
+}
+
 button,
 input,
 select,
