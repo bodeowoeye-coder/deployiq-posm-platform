@@ -86,7 +86,7 @@ export async function GET(request: Request) {
       (!endDate || date <= endDate) &&
       (!searchText || searchable.includes(searchText))
     );
-  }) as Submission[];
+  }).filter((submission) => !submission.archived_at) as Submission[];
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-FLT" : "DPIQ-CLT");

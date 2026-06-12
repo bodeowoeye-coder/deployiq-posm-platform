@@ -110,6 +110,7 @@ export async function loadClientSubmissionScope(supabase: SupabaseClient, client
       submissionResults
         .filter((result) => !result.error)
         .flatMap((result) => result.data ?? [])
+        .filter((item) => !(item as Submission).archived_at)
         .filter((item) => clientCanSeeSubmission(item as Submission, effectiveClientId, visibilityScope))
         .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)))
         .map((item) => [item.id, item])

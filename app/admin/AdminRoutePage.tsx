@@ -98,7 +98,7 @@ export async function AdminRoutePage({ initialView, requestedPath }: { initialVi
     clientProfiles: clientProfiles.length,
     needsAdminManagementData
   });
-  const normalizedProjects = normalizeProjectRecords(projects) as Project[];
+  const normalizedProjects = (normalizeProjectRecords(projects) as Project[]).filter((project) => !project.archived_at);
 
   const historyStart = nowMs();
   const { data: history } =
@@ -128,7 +128,7 @@ export async function AdminRoutePage({ initialView, requestedPath }: { initialVi
   });
   return (
     <AdminDashboard
-      submissions={(data ?? []) as Submission[]}
+      submissions={((data ?? []) as Submission[]).filter((submission) => !submission.archived_at)}
       history={(history ?? []) as SubmissionStatusHistory[]}
       projects={normalizedProjects}
       projectTargets={projectTargets}

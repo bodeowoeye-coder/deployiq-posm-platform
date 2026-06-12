@@ -71,6 +71,7 @@ export type Submission = {
   installation_date: string | null;
   installation_time: string | null;
   submitted_at: string;
+  archived_at?: string | null;
 };
 
 export type UserRole = "admin" | "client" | "installer";

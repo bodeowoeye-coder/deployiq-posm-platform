@@ -306,6 +306,7 @@ alter table public.submissions add column if not exists selected_outlet_brand_ty
 alter table public.submissions add column if not exists selected_outlet_state text;
 alter table public.submissions add column if not exists outlet_match_status text;
 alter table public.submissions add column if not exists outlet_match_notes text;
+alter table public.submissions add column if not exists archived_at timestamptz;
 alter table public.submissions add column if not exists salon_name text;
 alter table public.submissions add column if not exists address text;
 alter table public.submissions add column if not exists phone text;
@@ -327,6 +328,7 @@ alter table public.deployment_locations add column if not exists brand_type text
 alter table public.deployment_locations add column if not exists outlet_code text;
 alter table public.deployment_locations add column if not exists created_at timestamptz not null default now();
 alter table public.deployment_locations add column if not exists updated_at timestamptz not null default now();
+alter table public.alert_events add column if not exists archived_at timestamptz;
 
 update public.submissions
 set status = case
@@ -426,6 +428,7 @@ create unique index if not exists submissions_project_outlet_code_active_uidx
     and lower(status) in ('submitted', 'pending', 'approved');
 create index if not exists submissions_project_name_idx on public.submissions (project_name);
 create index if not exists submissions_status_idx on public.submissions (status);
+create index if not exists submissions_archived_at_idx on public.submissions (archived_at);
 create index if not exists submissions_image_fingerprint_idx on public.submissions (image_fingerprint);
 create index if not exists submissions_duplicate_status_idx on public.submissions (duplicate_status);
 create index if not exists submissions_outlet_match_status_idx on public.submissions (outlet_match_status);
@@ -443,6 +446,7 @@ create index if not exists audit_logs_target_user_id_idx on public.audit_logs (t
 create index if not exists audit_logs_created_at_idx on public.audit_logs (created_at desc);
 create index if not exists submission_status_history_submission_id_idx on public.submission_status_history (submission_id, created_at desc);
 create index if not exists alert_events_submission_id_idx on public.alert_events (submission_id, created_at desc);
+create index if not exists alert_events_archived_at_idx on public.alert_events (archived_at);
 create index if not exists deployment_locations_state_idx on public.deployment_locations (state);
 create index if not exists deployment_locations_outlet_name_idx on public.deployment_locations (outlet_name);
 create unique index if not exists deployment_locations_outlet_code_unique_idx

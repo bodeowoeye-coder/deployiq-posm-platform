@@ -105,7 +105,7 @@ export async function GET(request: Request) {
 
   const reportId = createReportId(isFiltered ? "DPIQ-XLS-FLT" : "DPIQ-XLS");
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
-  const rows = ((data ?? []) as Submission[]).map((item) => ({
+  const rows = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at).map((item) => ({
     "Installer Name": item.installer_name ?? "",
     "Project Name": displayProjectName(item.project_name),
     "Selected Brand": item.brand_name ?? "",

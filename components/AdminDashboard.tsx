@@ -77,6 +77,7 @@ const adminAccountSettingsItems: Array<{ view: DashboardView; label: string; sta
   { view: "agencies", label: "Agencies" },
   { view: "regions", label: "Regions & Territories", status: "coming-soon" },
   { view: "preferences", label: "System Preferences", status: "coming-soon" },
+  { view: "demo-data", label: "Demo/Test Data" },
   { view: "audit-logs", label: "Audit Logs" }
 ];
 
@@ -166,6 +167,7 @@ function adminViewTitle(view: DashboardView) {
     agencies: "Agencies",
     regions: "Regions & Territories",
     preferences: "System Preferences",
+    "demo-data": "Demo/Test Data",
     "audit-logs": "Audit Logs"
   };
   return titles[view] ?? "Dashboard";
@@ -191,6 +193,7 @@ function adminViewDescription(view: DashboardView) {
     agencies: "Agency directory and assignment configuration.",
     regions: "Territory planning and regional configuration.",
     preferences: "System-wide operational preferences.",
+    "demo-data": "Safely archive seeded sample data before pilots and demos.",
     "audit-logs": "Governance, review, and system activity trails."
   };
   return descriptions[view] ?? "Executive intelligence across deployments.";
@@ -244,7 +247,7 @@ export function AdminDashboard({
   currentUserEmail?: string | null;
   initialView?: DashboardView;
 }) {
-  const [records, setRecords] = useState(submissions);
+  const [records, setRecords] = useState(submissions.filter((item) => !item.archived_at));
   const [projectRecords, setProjectRecords] = useState(projects);
   const [targetRecords, setTargetRecords] = useState(projectTargets);
   const [userRecords, setUserRecords] = useState(managedUsers);
@@ -1400,6 +1403,7 @@ export function AdminDashboard({
         {activeView === "agencies" ? <AgencyManagementPanel agencies={agencyRecords} installers={installerRecords} submissions={records} projects={projectRecords} onCreate={createAgency} /> : null}
         {activeView === "regions" ? <AdminPlaceholder title="Regions & Territories" message="Coming soon: territory rules and coverage configuration." /> : null}
         {activeView === "preferences" ? <AdminPlaceholder title="System Preferences" message="Coming soon: operational defaults and platform preferences." /> : null}
+        {activeView === "demo-data" ? <DemoDataManagementPanel /> : null}
         {activeView === "audit-logs" ? <AuditLogPanel logs={auditLogRecords} users={userRecords} /> : null}
       </section>
       </div>
@@ -3069,6 +3073,143 @@ function AuditLogPanel({ logs, users }: { logs: AuditLog[]; users: ManagedUser[]
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+type DemoDataPlan = {
+  users: Array<{ user_id: string; email: string; full_name: string; status: string | null }>;
+  projects: Array<{ id: string; project_name: string; client_id: string | null; archived_at: string | null }>;
+  submissions: Array<{ id: string; project_name: string | null; installer_name: string | null; status: string | null; submitted_at: string | null }>;
+  reports: Array<{ id: string; alert_type: string | null; created_at: string | null }>;
+  warnings: string[];
+};
+
+function DemoDataManagementPanel() {
+  const [plan, setPlan] = useState<DemoDataPlan | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [archiving, setArchiving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const { showToast } = useToast();
+
+  async function loadPlan() {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/demo-data", { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Could not load demo data plan.");
+      setPlan(body.plan ?? null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load demo data plan.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPlan();
+  }, []);
+
+  async function archiveDemoData() {
+    if (!plan) return;
+    const total = plan.users.length + plan.projects.length + plan.submissions.length + plan.reports.length;
+    if (total === 0) {
+      showToast("No demo/test records found to archive.");
+      return;
+    }
+    const confirmed = window.confirm("Archive the matched demo/test records? This will not delete production data or remove auth users. Continue?");
+    if (!confirmed) return;
+    setArchiving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/demo-data", { method: "POST" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Could not archive demo data.");
+      const archived = body.archived ?? {};
+      const summary = `Archived ${archived.projects ?? 0} projects, ${archived.users ?? 0} users, ${archived.submissions ?? 0} submissions, and ${archived.reports ?? 0} report records.`;
+      setMessage(summary);
+      showToast(summary);
+      await loadPlan();
+    } catch (archiveError) {
+      const nextError = archiveError instanceof Error ? archiveError.message : "Could not archive demo data.";
+      setError(nextError);
+      showToast(nextError, "error");
+    } finally {
+      setArchiving(false);
+    }
+  }
+
+  const counts = {
+    projects: plan?.projects.length ?? 0,
+    users: plan?.users.length ?? 0,
+    submissions: plan?.submissions.length ?? 0,
+    reports: plan?.reports.length ?? 0
+  };
+
+  return (
+    <div className="grid min-w-0 gap-4">
+      <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
+        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-orange-700">Safety first</p>
+        <h2 className="mt-2 text-lg font-bold">Demo/Test Data Management</h2>
+        <p className="mt-2 max-w-3xl text-sm leading-snug text-slate-700">
+          This section identifies seeded sample records and archives them instead of deleting them. It targets known test emails, demo project names, and submissions tied to those records. Review the plan before archiving.
+        </p>
+      </div>
+
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard label="Demo Projects" value={counts.projects} />
+        <SummaryCard label="Test Users" value={counts.users} />
+        <SummaryCard label="Sample Submissions" value={counts.submissions} />
+        <SummaryCard label="Report Records" value={counts.reports} />
+      </div>
+
+      {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{error}</div> : null}
+      {message ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">{message}</div> : null}
+      {plan?.warnings.length ? (
+        <div className="rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800">
+          {plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+        </div>
+      ) : null}
+
+      <div className="flex min-w-0 flex-wrap gap-2">
+        <button type="button" onClick={loadPlan} disabled={loading || archiving} className="min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:bg-slate-50 disabled:opacity-60">
+          {loading ? "Refreshing..." : "Refresh deletion plan"}
+        </button>
+        <button type="button" onClick={archiveDemoData} disabled={loading || archiving || !plan} className="min-h-10 rounded-lg bg-orange-500 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-600 disabled:opacity-60">
+          {archiving ? "Archiving..." : "Archive matched demo/test data"}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading demo/test data plan...</div>
+      ) : (
+        <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+          <DemoPlanList title="Seeded sample projects" rows={plan?.projects.map((project) => `${project.project_name} (${project.id.slice(0, 8)})`) ?? []} />
+          <DemoPlanList title="Test users" rows={plan?.users.map((user) => `${user.full_name} | ${user.email}`) ?? []} />
+          <DemoPlanList title="Sample submissions" rows={plan?.submissions.map((submission) => `${submission.project_name || "No project"} | ${submission.installer_name || "No installer"} | ${submission.status || "No status"}`) ?? []} />
+          <DemoPlanList title="Report/activity records" rows={plan?.reports.map((report) => `${report.alert_type || "Alert"} | ${report.created_at ? formatDateTime(report.created_at) : "No date"}`) ?? []} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DemoPlanList({ title, rows }: { title: string; rows: string[] }) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+      <h3 className="text-base font-bold">{title}</h3>
+      {rows.length === 0 ? (
+        <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">No matching records found.</p>
+      ) : (
+        <ul className="mt-3 grid max-h-72 gap-2 overflow-y-auto text-sm text-slate-700">
+          {rows.map((row) => (
+            <li key={row} className="rounded-lg bg-slate-50 px-3 py-2 leading-snug">{row}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

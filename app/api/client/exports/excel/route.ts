@@ -92,7 +92,7 @@ export async function GET(request: Request) {
   const projectTitle = project || "All projects";
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-XLS-FLT" : "DPIQ-CLT-XLS");
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
-  const rows = ((data ?? []) as Submission[]).map((item) => ({
+  const rows = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at).map((item) => ({
     "Project Name": displayProjectName(item.project_name),
     "Brand Name": item.brand_name ?? "",
     "Salon/Store Name": item.salon_name ?? "",

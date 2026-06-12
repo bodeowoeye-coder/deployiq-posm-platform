@@ -141,7 +141,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const submissions = (data ?? []) as Submission[];
+  const submissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
   const reportId = createReportId(isFiltered ? "DPIQ-FLT" : "DPIQ-FULL");
   const installerUserIds = Array.from(new Set(submissions.map((item) => item.installer_user_id).filter((id): id is string => Boolean(id))));
   const [{ data: installers }, { data: profiles }] =

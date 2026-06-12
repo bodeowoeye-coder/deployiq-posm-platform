@@ -35,7 +35,7 @@ export default async function InstallerHistoryPage() {
     .order("submitted_at", { ascending: false });
 
   if (error) throw new Error(error.message);
-  const submissions = (data ?? []) as Submission[];
+  const submissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">

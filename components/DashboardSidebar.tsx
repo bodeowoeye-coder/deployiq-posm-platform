@@ -45,6 +45,7 @@ export type DashboardView =
   | "agencies"
   | "regions"
   | "preferences"
+  | "demo-data"
   | "audit-logs"
   | "overview";
 
