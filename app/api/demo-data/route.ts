@@ -34,6 +34,16 @@ function isDemoProjectName(value: unknown) {
   return DEMO_PROJECT_NAMES.some((demoName) => normalize(demoName) === key) || key.includes("demo") || key.includes("sample") || key.includes("test");
 }
 
+function isMissingOptionalTableError(error: { code?: string; message?: string; details?: string } | null | undefined) {
+  const message = `${error?.message ?? ""} ${error?.details ?? ""}`.toLowerCase();
+  return error?.code === "42P01" || error?.code === "PGRST205" || message.includes("could not find the table") || message.includes("does not exist");
+}
+
+function isMissingOptionalColumnError(error: { code?: string; message?: string; details?: string } | null | undefined) {
+  const message = `${error?.message ?? ""} ${error?.details ?? ""}`.toLowerCase();
+  return error?.code === "42703" || message.includes("could not find") || message.includes("schema cache") || message.includes("column");
+}
+
 async function getDemoPlan(): Promise<DemoPlan> {
   const supabase = createAdminSupabase();
   const warnings: string[] = [];
@@ -96,7 +106,11 @@ async function getDemoPlan(): Promise<DemoPlan> {
       .select("id, alert_type, created_at, archived_at")
       .in("submission_id", demoSubmissionIds);
     if (reportsError) {
-      warnings.push(`Could not inspect alert/report records: ${reportsError.message}`);
+      if (isMissingOptionalTableError(reportsError) || isMissingOptionalColumnError(reportsError)) {
+        warnings.push("Alert/report records skipped because the optional alert_events table or archive column is not available in this database.");
+      } else {
+        warnings.push(`Could not inspect alert/report records: ${reportsError.message}`);
+      }
     } else {
       reports = ((rawReports ?? []) as Array<Record<string, unknown>>)
         .filter((report) => !report.archived_at)
