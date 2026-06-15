@@ -1209,12 +1209,12 @@ export function AdminDashboard({
           <ScorePanel title="Brand compliance score" rows={brandCompliance.map((item) => [item.brand, item.score, item.total])} />
         </div>
 
-        <div className={`${activeView === "submissions" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white`}>
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+        <div className={`${activeView === "submissions" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900`}>
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
             <h2 className="min-w-0 break-words text-base font-bold leading-snug">Submissions</h2>
             <span className="text-sm text-slate-500">{filtered.length} shown</span>
           </div>
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-slate-100 dark:divide-slate-700">
             {filtered.length === 0 ? (
               <div className="p-4">
                 <EmptyState
@@ -1225,13 +1225,13 @@ export function AdminDashboard({
               </div>
             ) : null}
             {filtered.map((item) => (
-              <article className={`grid min-w-0 gap-3 overflow-hidden p-4 sm:grid-cols-[96px_minmax(0,1fr)] xl:grid-cols-[96px_minmax(0,1fr)_minmax(220px,260px)] ${item.brand_match_status === "Mismatch" ? "bg-rose-50/70" : item.duplicate_status && item.duplicate_status !== "Unique" ? "bg-orange-50/70" : ""}`} key={item.id}>
-                <button className="h-24 w-24 overflow-hidden rounded-lg border border-slate-200" onClick={() => setLightboxIndex(filtered.findIndex((record) => record.id === item.id))}>
+              <article className={`grid min-w-0 gap-3 overflow-hidden p-4 sm:grid-cols-[96px_minmax(0,1fr)] xl:grid-cols-[96px_minmax(0,1fr)_minmax(220px,260px)] ${item.brand_match_status === "Mismatch" ? "bg-rose-50/70 dark:bg-rose-950/30" : item.duplicate_status && item.duplicate_status !== "Unique" ? "bg-orange-50/70 dark:bg-orange-950/30" : "dark:bg-slate-900"}`} key={item.id}>
+                <button className="h-24 w-24 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" onClick={() => setLightboxIndex(filtered.findIndex((record) => record.id === item.id))}>
                   <img className="h-full w-full object-cover" src={item.image_url} alt={item.salon_name || "Uploaded board"} />
                 </button>
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <h3 className="min-w-0 whitespace-normal break-words text-base font-bold leading-snug">{item.salon_name || "Name not visible"}</h3>
+                    <h3 className="min-w-0 whitespace-normal break-words text-base font-bold leading-snug text-slate-950 dark:text-white">{item.salon_name || "Name not visible"}</h3>
                     <span className={`max-w-full whitespace-normal break-words rounded-full border px-2 py-1 text-xs font-semibold leading-snug ${statusClass(item.status)}`}>{item.status}</span>
                     <span className={`max-w-full whitespace-normal break-words rounded-full border px-2 py-1 text-xs font-semibold leading-snug ${matchClass(item.brand_match_status)}`}>
                       {item.brand_match_status || "Unreviewed"}
@@ -1243,33 +1243,33 @@ export function AdminDashboard({
                       {item.duplicate_status || "Unique"}
                     </span>
                   </div>
-                  <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-slate-600">{item.address || "Address not visible"}</p>
-                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-slate-700 dark:text-slate-200">{item.address || "Address not visible"}</p>
+                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-600 dark:text-slate-300">
                     {item.brand_name || "Unassigned brand"} | {canonicalInstallerName(item.installer_user_id, item.installer_name, installerIdentitySource)} | {item.installer_region || "Unknown region"}
                   </p>
-                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-600 dark:text-slate-300">
                     Project: {displayProjectName(item.project_name)}
                   </p>
-                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-600 dark:text-slate-300">
                     Stage: {formatStage(item.deployment_stage_code)}
                   </p>
-                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-600 dark:text-slate-300">
                     Confirmed geography: {item.installer_state || "Unknown state"}{item.installer_lga ? ` | ${item.installer_lga}` : ""}
                   </p>
-                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-600 dark:text-slate-300">
                     Selected brand: {item.brand_name || "Unassigned"} | Detected brand: {item.detected_brand_name || "Uncertain"}
                   </p>
-                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-600 dark:text-slate-300">
                     GPS: {item.gps_latitude ?? "n/a"}, {item.gps_longitude ?? "n/a"} | {item.installation_date ?? item.submitted_at.slice(0, 10)} {item.installation_time ?? ""}
                   </p>
-                  <p className="mt-2 whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  <p className="mt-2 whitespace-normal break-words text-xs leading-snug text-slate-600 dark:text-slate-300">
                     OCR confidence: {item.ocr_confidence || "n/a"} {item.ocr_note ? `| ${item.ocr_note}` : ""}
                   </p>
-                  {item.ai_review_note ? <p className="mt-2 whitespace-normal break-words text-xs leading-snug text-rose-700">{item.ai_review_note}</p> : null}
+                  {item.ai_review_note ? <p className="mt-2 whitespace-normal break-words text-xs leading-snug text-rose-700 dark:text-rose-300">{item.ai_review_note}</p> : null}
                   {item.outlet_match_status && item.outlet_match_status !== "not_checked" ? (
                     <p
                       className={`mt-2 whitespace-normal break-words rounded-lg px-3 py-2 text-xs font-semibold leading-snug ${
-                        item.outlet_match_status === "matched" ? "bg-emerald-50 text-emerald-800" : "bg-orange-50 text-orange-800"
+                        item.outlet_match_status === "matched" ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" : "bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200"
                       }`}
                     >
                       Outlet verification:{" "}
@@ -1280,7 +1280,7 @@ export function AdminDashboard({
                   ) : null}
                 </div>
                 <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                  <select className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100" value={item.brand_name ?? ""} onChange={(event) => updateSubmission(item.id, { brandName: event.target.value })}>
+                  <select className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500" value={item.brand_name ?? ""} onChange={(event) => updateSubmission(item.id, { brandName: event.target.value })}>
                     <option value="">Assign brand</option>
                     {BRANDS.map((brand) => (
                       <option key={brand} value={brand}>
@@ -1289,7 +1289,7 @@ export function AdminDashboard({
                     ))}
                   </select>
                   <select
-                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                     value={item.status}
                     onChange={(event) => {
                       const nextStatus = event.target.value as SubmissionStatus;
@@ -1307,7 +1307,7 @@ export function AdminDashboard({
                     ))}
                   </select>
                   <select
-                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                     value={item.deployment_stage_code ?? "installed"}
                     onChange={(event) => updateSubmission(item.id, { deploymentStageCode: event.target.value })}
                   >
@@ -1318,36 +1318,36 @@ export function AdminDashboard({
                     <option value="approved">Approved</option>
                   </select>
                   <input
-                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                     defaultValue={item.salon_name ?? ""}
                     onBlur={(event) => updateSubmission(item.id, { salonName: event.target.value })}
                     placeholder="Correct salon/store name"
                   />
                   <input
-                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                     defaultValue={item.address ?? ""}
                     onBlur={(event) => updateSubmission(item.id, { address: event.target.value })}
                     placeholder="Correct address"
                   />
                   <input
-                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                     defaultValue={item.phone ?? ""}
                     onBlur={(event) => updateSubmission(item.id, { phone: event.target.value })}
                     placeholder="Correct phone"
                   />
                   <input
-                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                     defaultValue={item.approval_comments ?? ""}
                     onBlur={(event) => updateSubmission(item.id, { approvalComments: event.target.value })}
                     placeholder="Approval comment"
                   />
                   <input
-                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                     defaultValue={item.rejection_reason ?? ""}
                     onBlur={(event) => updateSubmission(item.id, { rejectionReason: event.target.value })}
                     placeholder="Rejection reason"
                   />
-                  <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+                  <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                     <div className="font-semibold">Status history</div>
                     <div className="mt-2 grid gap-1">
                       {history.filter((entry) => entry.submission_id === item.id).length === 0 ? <span>No changes yet.</span> : null}
