@@ -5,6 +5,9 @@ import { useEffect, useState } from "react";
 import { PROJECT_NOTIFICATION_ACTIONS } from "@/lib/notifications";
 import type { NotificationEvent, Project } from "@/lib/types";
 
+const phaseLocationOptions = ["Enugu", "Nsukka", "Abakaliki", "Lagos Island"] as const;
+const customPhaseValue = "__other__";
+
 export function AdminProjectNotificationActions({
   enabled,
   project,
@@ -16,6 +19,7 @@ export function AdminProjectNotificationActions({
 }) {
   const [selectedStatus, setSelectedStatus] = useState(PROJECT_NOTIFICATION_ACTIONS[0]?.status ?? "");
   const [phaseName, setPhaseName] = useState("");
+  const [customPhaseName, setCustomPhaseName] = useState("");
   const [destination, setDestination] = useState("");
   const [quantity, setQuantity] = useState("");
   const [timeline, setTimeline] = useState<NotificationEvent[]>([]);
@@ -41,6 +45,7 @@ export function AdminProjectNotificationActions({
   async function sendNotification() {
     setSending(true);
     setMessage("");
+    const resolvedPhaseName = phaseName === customPhaseValue ? customPhaseName.trim() : phaseName;
     try {
       const response = await fetch("/api/notifications", {
         method: "POST",
@@ -50,7 +55,7 @@ export function AdminProjectNotificationActions({
           projectId: project.id,
           clientId: project.client_id,
           status: selectedStatus,
-          phaseName,
+          phaseName: resolvedPhaseName,
           destination,
           quantity
         })
@@ -59,6 +64,7 @@ export function AdminProjectNotificationActions({
       if (!response.ok) throw new Error(body?.error || "Could not send notification.");
       setMessage("Client notification sent.");
       setPhaseName("");
+      setCustomPhaseName("");
       setDestination("");
       setQuantity("");
       await loadTimeline();
@@ -94,17 +100,27 @@ export function AdminProjectNotificationActions({
               <option key={action.status} value={action.status}>{action.title}</option>
             ))}
           </select>
-          <input
+          <select
             value={phaseName}
             onChange={(event) => setPhaseName(event.target.value)}
-            list={`phase-options-${project.id}`}
-            placeholder="Phase/Location"
             className="min-h-10 w-full min-w-[170px] flex-1 rounded-lg border border-orange-200 bg-white px-3 text-sm font-semibold text-slate-900 sm:w-auto"
-          />
-          <datalist id={`phase-options-${project.id}`}>
-            <option value="Enugu" />
-            <option value="Lagos Island" />
-          </datalist>
+          >
+            <option value="">Phase/Location</option>
+            {phaseLocationOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+            <option value={customPhaseValue}>Other</option>
+          </select>
+          {phaseName === customPhaseValue ? (
+            <input
+              value={customPhaseName}
+              onChange={(event) => setCustomPhaseName(event.target.value)}
+              placeholder="Enter phase/location"
+              className="min-h-10 w-full min-w-[170px] flex-1 rounded-lg border border-orange-200 bg-white px-3 text-sm font-semibold text-slate-900 sm:w-auto"
+            />
+          ) : null}
           <input
             value={destination}
             onChange={(event) => setDestination(event.target.value)}
