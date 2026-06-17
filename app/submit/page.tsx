@@ -443,16 +443,22 @@ export default function SubmitPage() {
   async function resolveCapturedAddress(latitude: number, longitude: number) {
     try {
       const resolved = await reverseGeocode(latitude, longitude);
-      setPosition((prev) => ({
-        ...prev,
-        message: resolved.resolvedAddress ? "Location captured" : "Location captured, address unavailable",
-        address: resolved.resolvedAddress
-      }));
+      setPosition((prev) => {
+        if (prev.latitude !== latitude || prev.longitude !== longitude) return prev;
+        return {
+          ...prev,
+          message: resolved.resolvedAddress ? "Location captured" : "Location captured, address unavailable",
+          address: resolved.resolvedAddress
+        };
+      });
     } catch {
-      setPosition((prev) => ({
-        ...prev,
-        message: "Location captured, address unavailable"
-      }));
+      setPosition((prev) => {
+        if (prev.latitude !== latitude || prev.longitude !== longitude) return prev;
+        return {
+          ...prev,
+          message: "Location captured, address unavailable"
+        };
+      });
     }
   }
 
@@ -651,14 +657,6 @@ export default function SubmitPage() {
     setResult("idle");
     setSuccessDetails(null);
     setCurrentStep("outlet");
-    setPosition({
-      latitude: null,
-      longitude: null,
-      status: "pending",
-      message: "Getting phone location...",
-      address: null
-    });
-    setIsGettingLocation(true);
     void requestLocation();
   }
 
@@ -1539,7 +1537,7 @@ export default function SubmitPage() {
                   </Field>
                 ) : null}
               </div>
-              <ValidationList messages={outletStepErrors} show={validationAttemptedStep === "outlet" || outletStepErrors.length > 0} />
+              <ValidationList messages={outletStepErrors} show={validationAttemptedStep === "outlet"} />
             </section>
 
             <section className={`${currentStep === "evidence" ? "grid" : "hidden"} min-w-0 gap-3`}>
@@ -1670,7 +1668,7 @@ export default function SubmitPage() {
               />
             </Field>
 
-            <div className="flex min-h-11 min-w-0 items-start gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm leading-snug text-slate-600">
+            <div className="flex min-h-28 min-w-0 items-start gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm leading-snug text-slate-600">
               {isGettingLocation ? <Loader2 className="mt-0.5 animate-spin text-orange-500" aria-hidden size={18} /> : <MapPin aria-hidden size={18} className={position.status === "captured" ? "text-emerald-600" : "text-orange-600"} />}
               <div className="min-w-0 whitespace-normal break-words">
                 <div className="font-medium text-slate-700">
@@ -1738,7 +1736,7 @@ export default function SubmitPage() {
                 </Field>
               </div>
             </div>
-            <ValidationList messages={evidenceStepErrors} show={validationAttemptedStep === "evidence" || evidenceStepErrors.length > 0} />
+            <ValidationList messages={evidenceStepErrors} show={validationAttemptedStep === "evidence"} />
 
             {result === "success" ? (
               <div className="flex min-w-0 items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm leading-snug text-emerald-700">
@@ -1778,7 +1776,7 @@ export default function SubmitPage() {
                 <ReviewRow label="OCR/photo match" value="Checked after submission" />
                 <ReviewRow label="Duplicate/outlet validation" value="Checked during submission" />
               </div>
-              <ValidationList messages={reviewStepErrors} show={validationAttemptedStep === "review" || reviewStepErrors.length > 0} />
+              <ValidationList messages={reviewStepErrors} show={validationAttemptedStep === "review"} />
               {result === "success" ? (
                 <div className="flex min-w-0 items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm leading-snug text-emerald-700">
                   <CheckCircle2 aria-hidden size={18} />
@@ -1797,9 +1795,9 @@ export default function SubmitPage() {
           <div className="sticky bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:static sm:shadow-none">
             {currentStep === "outlet" ? (
               <button
-                className="inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+                className={`inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60 ${canContinueToEvidence ? "" : "opacity-60"}`}
                 type="button"
-                disabled={!canContinueToEvidence}
+                aria-disabled={!canContinueToEvidence}
                 onClick={() => {
                   setValidationAttemptedStep("outlet");
                   if (canContinueToEvidence) {
@@ -1821,9 +1819,9 @@ export default function SubmitPage() {
                   Back
                 </button>
                 <button
-                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+                  className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60 ${canContinueToReview ? "" : "opacity-60"}`}
                   type="button"
-                  disabled={!canContinueToReview}
+                  aria-disabled={!canContinueToReview}
                   onClick={() => {
                     setValidationAttemptedStep("evidence");
                     if (canContinueToReview) {
@@ -1846,9 +1844,10 @@ export default function SubmitPage() {
                   Back
                 </button>
                 <button
-                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+                  className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60 ${canSubmit ? "" : "opacity-60"}`}
                   type="submit"
-                  disabled={!canSubmit}
+                  aria-disabled={!canSubmit}
+                  disabled={isSubmitting}
                 >
                   {isSubmitting ? <Loader2 className="animate-spin" aria-hidden size={18} /> : <Upload aria-hidden size={18} />}
                   {isSubmitting ? "Submitting..." : "Submit Deployment"}
