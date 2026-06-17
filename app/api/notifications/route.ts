@@ -19,6 +19,26 @@ function errorPayload(error: unknown) {
   };
 }
 
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function optionalQuantity(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue >= 0 ? Math.round(numericValue) : null;
+}
+
+function phaseMessage(status: string, fallbackMessage: string, phaseName: string) {
+  if (status === "production_started") return `Production has started for ${phaseName} phase.`;
+  if (status === "production_completed") return `Production has been completed for ${phaseName} phase.`;
+  if (status === "dispatched") return `Materials have been dispatched for ${phaseName}.`;
+  if (status === "arrived_at_destination") return `Materials have arrived at ${phaseName} destination.`;
+  if (status === "deployment_started") return `Field deployment has started for ${phaseName}.`;
+  if (status === "deployment_completed") return `Field deployment has been completed for ${phaseName}.`;
+  return fallbackMessage;
+}
+
 export async function GET(request: Request) {
   if (!notificationsEnabled()) return disabledResponse();
 
@@ -67,8 +87,11 @@ export async function POST(request: Request) {
   const action = getNotificationAction(status);
   if (!action) return NextResponse.json({ error: "Unsupported notification type." }, { status: 400 });
 
-  const projectId = typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : null;
-  let clientId = typeof body.clientId === "string" && body.clientId.trim() ? body.clientId.trim() : null;
+  const projectId = stringValue(body.projectId) || null;
+  let clientId = stringValue(body.clientId) || null;
+  const phaseName = stringValue(body.phaseName) || null;
+  const destination = stringValue(body.destination) || null;
+  const quantity = optionalQuantity(body.quantity);
   const supabase = createAdminSupabase();
   let projectName = "selected project";
 
@@ -90,14 +113,25 @@ export async function POST(request: Request) {
   }
 
   if (!clientId) return NextResponse.json({ error: "Select a project with a linked client before sending a notification." }, { status: 400 });
+  const locationLabel = destination || phaseName;
+  const title = phaseName ? `${action.title} - ${phaseName}` : action.title;
+  const messageLines = [
+    phaseName ? phaseMessage(action.status, action.message, phaseName) : `${action.message} (${projectName})`,
+    destination && destination !== phaseName ? `Destination: ${destination}` : "",
+    quantity !== null ? `Quantity: ${quantity} boards` : "",
+    !phaseName && destination ? `Location: ${locationLabel}` : ""
+  ].filter(Boolean);
 
   const { data, error } = await supabase
     .from("notification_events")
     .insert({
       project_id: projectId,
       client_id: clientId,
-      title: action.title,
-      message: `${action.message} (${projectName})`,
+      phase_name: phaseName,
+      destination,
+      quantity,
+      title,
+      message: messageLines.join("\n"),
       status: action.status
     })
     .select()

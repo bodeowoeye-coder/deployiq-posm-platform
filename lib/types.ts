@@ -152,6 +152,9 @@ export type NotificationEvent = {
   id: string;
   project_id: string | null;
   client_id: string | null;
+  phase_name: string | null;
+  destination: string | null;
+  quantity: number | null;
   title: string;
   message: string;
   status: string;

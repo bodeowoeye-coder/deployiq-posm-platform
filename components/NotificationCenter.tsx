@@ -149,6 +149,13 @@ export function NotificationCenter({ enabled }: { enabled?: boolean }) {
                   {!notification.read_at ? <span className="mt-1 h-2 w-2 rounded-full bg-orange-500" aria-hidden /> : null}
                 </div>
                 <p className="mt-1 text-xs leading-5 text-slate-600">{notification.message}</p>
+                {notification.phase_name || notification.destination || notification.quantity !== null ? (
+                  <div className="mt-2 flex flex-wrap gap-1 text-[11px] font-semibold text-slate-600">
+                    {notification.phase_name ? <span className="rounded-full bg-white px-2 py-1">Phase: {notification.phase_name}</span> : null}
+                    {notification.destination ? <span className="rounded-full bg-white px-2 py-1">Destination: {notification.destination}</span> : null}
+                    {notification.quantity !== null ? <span className="rounded-full bg-white px-2 py-1">Quantity: {notification.quantity} boards</span> : null}
+                  </div>
+                ) : null}
                 <p className="mt-2 text-[11px] font-medium text-slate-400">
                   {new Date(notification.created_at).toLocaleString("en-GB", { timeZone: "Africa/Lagos" })}
                 </p>

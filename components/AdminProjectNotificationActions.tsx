@@ -15,6 +15,9 @@ export function AdminProjectNotificationActions({
   clientName: string;
 }) {
   const [selectedStatus, setSelectedStatus] = useState(PROJECT_NOTIFICATION_ACTIONS[0]?.status ?? "");
+  const [phaseName, setPhaseName] = useState("");
+  const [destination, setDestination] = useState("");
+  const [quantity, setQuantity] = useState("");
   const [timeline, setTimeline] = useState<NotificationEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -43,11 +46,21 @@ export function AdminProjectNotificationActions({
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, clientId: project.client_id, status: selectedStatus })
+        body: JSON.stringify({
+          projectId: project.id,
+          clientId: project.client_id,
+          status: selectedStatus,
+          phaseName,
+          destination,
+          quantity
+        })
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.error || "Could not send notification.");
       setMessage("Client notification sent.");
+      setPhaseName("");
+      setDestination("");
+      setQuantity("");
       await loadTimeline();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not send notification.");
@@ -81,6 +94,31 @@ export function AdminProjectNotificationActions({
               <option key={action.status} value={action.status}>{action.title}</option>
             ))}
           </select>
+          <input
+            value={phaseName}
+            onChange={(event) => setPhaseName(event.target.value)}
+            list={`phase-options-${project.id}`}
+            placeholder="Phase/Location"
+            className="min-h-10 w-full min-w-[170px] flex-1 rounded-lg border border-orange-200 bg-white px-3 text-sm font-semibold text-slate-900 sm:w-auto"
+          />
+          <datalist id={`phase-options-${project.id}`}>
+            <option value="Enugu" />
+            <option value="Lagos Island" />
+          </datalist>
+          <input
+            value={destination}
+            onChange={(event) => setDestination(event.target.value)}
+            placeholder="Destination"
+            className="min-h-10 w-full min-w-[160px] flex-1 rounded-lg border border-orange-200 bg-white px-3 text-sm font-semibold text-slate-900 sm:w-auto"
+          />
+          <input
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            type="number"
+            min="0"
+            placeholder="Quantity"
+            className="min-h-10 w-full min-w-[120px] rounded-lg border border-orange-200 bg-white px-3 text-sm font-semibold text-slate-900 sm:w-32"
+          />
           <button
             type="button"
             onClick={sendNotification}
@@ -104,6 +142,13 @@ export function AdminProjectNotificationActions({
               <p className="text-xs leading-5 text-slate-500">
                 {event.message} · {new Date(event.created_at).toLocaleString("en-GB", { timeZone: "Africa/Lagos" })}
               </p>
+              {event.phase_name || event.destination || event.quantity !== null ? (
+                <p className="mt-1 text-[11px] font-semibold text-slate-500">
+                  {[event.phase_name ? `Phase: ${event.phase_name}` : "", event.destination ? `Destination: ${event.destination}` : "", event.quantity !== null ? `Quantity: ${event.quantity}` : ""]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              ) : null}
             </div>
           </div>
         ))}
