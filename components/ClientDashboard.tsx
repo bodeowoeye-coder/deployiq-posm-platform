@@ -27,6 +27,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { getPortfolioOperations, getProjectOperations, getStageTotals } from "@/lib/operations";
 import { StateCombobox } from "@/components/StateCombobox";
 import { displaySubmissionDate } from "@/lib/dateUtils";
+import { NotificationCenter } from "@/components/NotificationCenter";
 
 type Filters = {
   query: string;
@@ -88,7 +89,8 @@ export function ClientDashboard({
   projects,
   projectTargets,
   deploymentProgress,
-  initialView
+  initialView,
+  notificationsEnabled
 }: {
   client: Client;
   submissions: Submission[];
@@ -97,6 +99,7 @@ export function ClientDashboard({
   projectTargets: ProjectTarget[];
   deploymentProgress: DeploymentProgress[];
   initialView?: DashboardView;
+  notificationsEnabled?: boolean;
 }) {
   const [filters, setFilters] = useState<Filters>(blankFilters);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -237,6 +240,7 @@ export function ClientDashboard({
             </p>
           </div>
           <div className="flex min-w-0 flex-wrap gap-2">
+            <NotificationCenter enabled={notificationsEnabled} />
             <ThemeToggle />
           </div>
         </div>

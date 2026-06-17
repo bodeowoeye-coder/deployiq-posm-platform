@@ -29,6 +29,7 @@ import { DashboardSidebar, type DashboardView } from "@/components/DashboardSide
 import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, getStageTotals, getTargetAllocationRows } from "@/lib/operations";
 import { StateCombobox } from "@/components/StateCombobox";
 import { getRegionForState, NIGERIA_REGIONS, NIGERIA_STATES } from "@/lib/geography";
+import { AdminProjectNotificationActions } from "@/components/AdminProjectNotificationActions";
 
 type Filters = {
   query: string;
@@ -229,7 +230,8 @@ export function AdminDashboard({
   auditLogs,
   currentUserId,
   currentUserEmail,
-  initialView = "dashboard"
+  initialView = "dashboard",
+  notificationsEnabled
 }: {
   submissions: Submission[];
   history: SubmissionStatusHistory[];
@@ -246,6 +248,7 @@ export function AdminDashboard({
   currentUserId: string;
   currentUserEmail?: string | null;
   initialView?: DashboardView;
+  notificationsEnabled?: boolean;
 }) {
   const [records, setRecords] = useState(submissions.filter((item) => !item.archived_at));
   const [projectRecords, setProjectRecords] = useState(projects);
@@ -1383,7 +1386,7 @@ export function AdminDashboard({
         ) : null}
         {activeView === "campaigns" ? (
           <div className="grid min-w-0 gap-4">
-            <ProjectCrudPanel projects={projectRecords} clients={clientRecords} brands={brands} agencies={agencyRecords} onUpdate={updateProject} />
+            <ProjectCrudPanel projects={projectRecords} clients={clientRecords} brands={brands} agencies={agencyRecords} notificationsEnabled={notificationsEnabled} onUpdate={updateProject} />
             <TargetAllocationPanel
               projects={projectRecords}
               rows={allocationRows}
@@ -2086,12 +2089,14 @@ function ProjectCrudPanel({
   clients,
   brands,
   agencies,
+  notificationsEnabled,
   onUpdate
 }: {
   projects: Project[];
   clients: Client[];
   brands: Brand[];
   agencies: Agency[];
+  notificationsEnabled?: boolean;
   onUpdate: (formData: FormData) => Promise<void>;
 }) {
   return (
@@ -2142,6 +2147,11 @@ function ProjectCrudPanel({
                   <SummaryPill label="Target Quantity" value={project.target_quantity.toLocaleString()} />
                 </div>
               </div>
+              {notificationsEnabled ? (
+                <div className="md:col-span-2 xl:col-span-3">
+                  <AdminProjectNotificationActions enabled={notificationsEnabled} project={project} clientName={clientName} />
+                </div>
+              ) : null}
               <FilterField label="Project Name">
                 <input disabled readOnly value={project.project_name ?? ""} className="min-h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600 disabled:opacity-100" />
               </FilterField>

@@ -124,6 +124,17 @@ create table if not exists public.client_projects (
   primary key (client_id, project_id)
 );
 
+create table if not exists public.notification_events (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid references public.projects(id) on delete set null,
+  client_id uuid references public.clients(id) on delete cascade,
+  title text not null,
+  message text not null,
+  status text not null default 'unread',
+  created_at timestamptz not null default now(),
+  read_at timestamptz
+);
+
 create table if not exists public.user_roles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   role text not null check (role in ('admin', 'client', 'installer')),
@@ -436,6 +447,9 @@ create index if not exists projects_client_id_idx on public.projects (client_id)
 create index if not exists projects_brand_id_idx on public.projects (brand_id);
 create index if not exists project_targets_project_id_idx on public.project_targets (project_id);
 create index if not exists deployment_progress_project_id_idx on public.deployment_progress (project_id);
+create index if not exists notification_events_client_id_idx on public.notification_events (client_id);
+create index if not exists notification_events_project_id_idx on public.notification_events (project_id);
+create index if not exists notification_events_unread_idx on public.notification_events (client_id, read_at);
 create index if not exists installers_agency_id_idx on public.installers (agency_id);
 create index if not exists user_profiles_agency_id_idx on public.user_profiles (agency_id);
 create index if not exists user_profiles_status_idx on public.user_profiles (status);
@@ -463,6 +477,7 @@ alter table public.installer_performance enable row level security;
 alter table public.agencies enable row level security;
 alter table public.installers enable row level security;
 alter table public.client_projects enable row level security;
+alter table public.notification_events enable row level security;
 alter table public.user_roles enable row level security;
 alter table public.user_profiles enable row level security;
 alter table public.audit_logs enable row level security;
@@ -599,6 +614,64 @@ using (
     where projects.id = deployment_progress.project_id
       and user_roles.user_id = auth.uid()
       and user_roles.role = 'client'
+  )
+);
+
+drop policy if exists "Admins can manage notification events" on public.notification_events;
+create policy "Admins can manage notification events"
+on public.notification_events
+for all
+using (
+  exists (
+    select 1
+    from public.user_roles
+    where user_roles.user_id = auth.uid()
+      and user_roles.role = 'admin'
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.user_roles
+    where user_roles.user_id = auth.uid()
+      and user_roles.role = 'admin'
+  )
+);
+
+drop policy if exists "Clients can read own notification events" on public.notification_events;
+create policy "Clients can read own notification events"
+on public.notification_events
+for select
+using (
+  exists (
+    select 1
+    from public.user_roles
+    where user_roles.user_id = auth.uid()
+      and user_roles.role = 'client'
+      and user_roles.client_id = notification_events.client_id
+  )
+);
+
+drop policy if exists "Clients can mark own notification events read" on public.notification_events;
+create policy "Clients can mark own notification events read"
+on public.notification_events
+for update
+using (
+  exists (
+    select 1
+    from public.user_roles
+    where user_roles.user_id = auth.uid()
+      and user_roles.role = 'client'
+      and user_roles.client_id = notification_events.client_id
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.user_roles
+    where user_roles.user_id = auth.uid()
+      and user_roles.role = 'client'
+      and user_roles.client_id = notification_events.client_id
   )
 );
 

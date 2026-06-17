@@ -3,6 +3,7 @@ import { BrandMark } from "@/components/BrandMark";
 import type { DashboardView } from "@/components/DashboardSidebar";
 import { requireRole } from "@/lib/auth";
 import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
+import { notificationsEnabled } from "@/lib/notifications";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { DeploymentProgress, Project, ProjectTarget, Submission } from "@/lib/types";
 
@@ -96,6 +97,7 @@ export async function ClientRoutePage({ initialView = "overview" }: { initialVie
       projectTargets={(projectTargets ?? []) as ProjectTarget[]}
       deploymentProgress={(deploymentProgress ?? []) as DeploymentProgress[]}
       initialView={initialView}
+      notificationsEnabled={notificationsEnabled()}
     />
   );
 }

@@ -148,6 +148,17 @@ export type DeploymentProgress = {
   updated_at: string;
 };
 
+export type NotificationEvent = {
+  id: string;
+  project_id: string | null;
+  client_id: string | null;
+  title: string;
+  message: string;
+  status: string;
+  created_at: string;
+  read_at: string | null;
+};
+
 export type Agency = {
   id: string;
   agency_name: string;

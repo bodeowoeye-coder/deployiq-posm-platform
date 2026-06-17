@@ -1,6 +1,7 @@
 import { AdminDashboard } from "@/components/AdminDashboard";
 import type { DashboardView } from "@/components/DashboardSidebar";
 import { requireRole } from "@/lib/auth";
+import { notificationsEnabled } from "@/lib/notifications";
 import { normalizeProjectRecords } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { listAuditLogs, listManagedUsers } from "@/lib/userManagement";
@@ -143,6 +144,7 @@ export async function AdminRoutePage({ initialView, requestedPath }: { initialVi
       currentUserId={context.user.id}
       currentUserEmail={context.user.email ?? null}
       initialView={initialView}
+      notificationsEnabled={notificationsEnabled()}
     />
   );
 }
