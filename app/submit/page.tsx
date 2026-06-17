@@ -13,6 +13,7 @@ import { reverseGeocode } from "@/lib/reverseGeocoding";
 import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
 import {
   buildQueuedSubmissionFormData,
+  clearInstallerDraft,
   createLocalSubmissionId,
   hasQueuedImagePayload,
   queueSubmission,
@@ -615,21 +616,27 @@ export default function SubmitPage() {
   }
 
   function resetSubmissionFieldsAfterSuccess() {
+    clearInstallerDraft();
     setImage(null);
     console.info("[android-preview]", { stage: "preview-cleared-after-success" });
     resetPreviewObjectUrl();
     setPreviewUrl("");
     setPreviewError("");
     setPreviewStatus("idle");
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
+    if (galleryInputRef.current) galleryInputRef.current.value = "";
     setBrandName("");
+    setInstallerState("");
+    setInstallerLga("");
     setSelectedLocationId("");
     setOutletSearch("");
-    setInstallerLga("");
     setManualLocationDescription("");
     setManualLandmark("");
     setMismatchWarning(null);
     setOutletWarning(null);
     setValidationAttemptedStep(null);
+    setCurrentStep("outlet");
+    setError("");
     setPosition({
       latitude: null,
       longitude: null,
