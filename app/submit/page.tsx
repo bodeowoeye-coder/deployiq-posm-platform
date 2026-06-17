@@ -122,6 +122,7 @@ export default function SubmitPage() {
   const [successDetails, setSuccessDetails] = useState<UploadSuccessDetails | null>(null);
   const [error, setError] = useState("");
   const [currentStep, setCurrentStep] = useState<"outlet" | "evidence" | "review">("outlet");
+  const [validationAttemptedStep, setValidationAttemptedStep] = useState<"outlet" | "evidence" | "review" | null>(null);
   const [mismatchWarning, setMismatchWarning] = useState<MismatchWarning | null>(null);
   const [outletWarning, setOutletWarning] = useState<OutletWarning | null>(null);
   const [role, setRole] = useState<"admin" | "client" | "installer" | null>(null);
@@ -177,6 +178,10 @@ export default function SubmitPage() {
   const outletSelected = Boolean(selectedOutlet);
   const gpsCaptured = position.status === "captured";
   const photoCaptured = Boolean(image);
+  const manualOutletName = manualLandmark.trim();
+  const manualAddress = manualLocationDescription.trim();
+  const brandConfirmed = Boolean(brandName.trim());
+  const outletOrManualNameConfirmed = outletSelected || Boolean(manualOutletName);
   const stepNumber = currentStep === "outlet" ? 1 : currentStep === "evidence" ? 2 : 3;
   const stepTitle = currentStep === "outlet" ? "Confirm Outlet" : currentStep === "evidence" ? "Capture Evidence" : "Review & Submit";
 
@@ -391,17 +396,43 @@ export default function SubmitPage() {
   }, [queuedItems]);
 
   const canSubmit = useMemo(
-    () => Boolean(role && installerUserId && image && installerName.trim() && projectName.trim() && installerState && installerRegion && !isSubmitting && !isGettingLocation),
-    [image, installerName, installerRegion, installerState, installerUserId, isGettingLocation, isSubmitting, projectName, role]
+    () =>
+      Boolean(
+        role &&
+          installerUserId &&
+          image &&
+          installerName.trim() &&
+          projectName.trim() &&
+          installerState &&
+          installerRegion &&
+          brandName.trim() &&
+          (selectedOutlet || manualLandmark.trim()) &&
+          manualLocationDescription.trim() &&
+          !isSubmitting &&
+          !isGettingLocation
+      ),
+    [brandName, image, installerName, installerRegion, installerState, installerUserId, isGettingLocation, isSubmitting, manualLandmark, manualLocationDescription, projectName, role, selectedOutlet]
   );
-  const canContinueToEvidence = useMemo(
-    () => Boolean(role && installerUserId && installerName.trim() && projectName.trim() && installerState && installerRegion && !isSubmitting),
-    [installerName, installerRegion, installerState, installerUserId, isSubmitting, projectName, role]
-  );
-  const canContinueToReview = useMemo(
-    () => Boolean(image && !isSubmitting && !isGettingLocation),
-    [image, isGettingLocation, isSubmitting]
-  );
+  const outletStepErrors = useMemo(() => {
+    const messages: string[] = [];
+    if (!role || !installerUserId) messages.push("Please wait for your installer account to load.");
+    if (!projectName.trim()) messages.push("Project name is required.");
+    if (!brandConfirmed) messages.push("Brand is required.");
+    if (!installerState) messages.push("State is required.");
+    if (!installerRegion) messages.push("A valid region must be derived from the selected State.");
+    if (!outletOrManualNameConfirmed) messages.push("Select an approved outlet or enter a manual outlet/landmark name.");
+    return messages;
+  }, [brandConfirmed, installerRegion, installerState, installerUserId, outletOrManualNameConfirmed, projectName, role]);
+  const evidenceStepErrors = useMemo(() => {
+    const messages: string[] = [];
+    if (!image) messages.push("Photo evidence is required.");
+    if (!manualAddress) messages.push("Location / Address is required.");
+    if (isGettingLocation) messages.push("Please wait for GPS capture to finish, or retry if location is unavailable.");
+    return messages;
+  }, [image, isGettingLocation, manualAddress]);
+  const reviewStepErrors = useMemo(() => [...outletStepErrors, ...evidenceStepErrors], [evidenceStepErrors, outletStepErrors]);
+  const canContinueToEvidence = outletStepErrors.length === 0 && !isSubmitting;
+  const canContinueToReview = evidenceStepErrors.length === 0 && !isSubmitting;
 
   async function resolveCapturedAddress(latitude: number, longitude: number) {
     try {
@@ -576,6 +607,47 @@ export default function SubmitPage() {
       URL.revokeObjectURL(previewObjectUrlRef.current);
       previewObjectUrlRef.current = null;
     }
+  }
+
+  function resetSubmissionFieldsAfterSuccess() {
+    setImage(null);
+    console.info("[android-preview]", { stage: "preview-cleared-after-success" });
+    resetPreviewObjectUrl();
+    setPreviewUrl("");
+    setPreviewError("");
+    setPreviewStatus("idle");
+    setBrandName("");
+    setSelectedLocationId("");
+    setOutletSearch("");
+    setInstallerLga("");
+    setManualLocationDescription("");
+    setManualLandmark("");
+    setMismatchWarning(null);
+    setOutletWarning(null);
+    setValidationAttemptedStep(null);
+    setPosition({
+      latitude: null,
+      longitude: null,
+      status: "pending",
+      message: "Getting phone location...",
+      address: null
+    });
+    setIsGettingLocation(false);
+  }
+
+  function startAnotherSubmission() {
+    setResult("idle");
+    setSuccessDetails(null);
+    setCurrentStep("outlet");
+    setPosition({
+      latitude: null,
+      longitude: null,
+      status: "pending",
+      message: "Getting phone location...",
+      address: null
+    });
+    setIsGettingLocation(true);
+    void requestLocation();
   }
 
   function prepareImagePreview(file: File) {
@@ -1073,17 +1145,7 @@ export default function SubmitPage() {
         installer: installerName || installerEmail || "Signed-in installer",
         submittedOn: formatSubmissionDate(submittedAt)
       });
-      setImage(null);
-      console.info("[android-preview]", { stage: "preview-cleared-after-success" });
-      resetPreviewObjectUrl();
-      setPreviewUrl("");
-      setPreviewError("");
-      setPreviewStatus("idle");
-      setBrandName("");
-      setSelectedLocationId("");
-      setOutletSearch("");
-      setMismatchWarning(null);
-      setOutletWarning(null);
+      resetSubmissionFieldsAfterSuccess();
       setResult("success");
       showToast(body.submission?.outlet_match_status === "matched" ? "Outlet match confirmed." : "Report submitted successfully.");
       console.info("[submit-timing]", { stage: "submit-total", result: "success", durationMs: timingMs(totalSubmitStart) });
@@ -1110,13 +1172,17 @@ export default function SubmitPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (currentStep === "outlet") {
+      setValidationAttemptedStep("outlet");
       if (canContinueToEvidence) setCurrentStep("evidence");
       return;
     }
     if (currentStep === "evidence") {
+      setValidationAttemptedStep("evidence");
       if (canContinueToReview) setCurrentStep("review");
       return;
     }
+    setValidationAttemptedStep("review");
+    if (!canSubmit) return;
     await submitReport(false);
   }
 
@@ -1164,11 +1230,7 @@ export default function SubmitPage() {
               </Link>
               <button
                 type="button"
-                onClick={() => {
-                  setResult("idle");
-                  setSuccessDetails(null);
-                  setCurrentStep("outlet");
-                }}
+                onClick={startAnotherSubmission}
                 className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-950 shadow-sm transition hover:-translate-y-0.5 hover:border-orange-200 hover:bg-orange-50"
               >
                 Submit Another Outlet
@@ -1450,7 +1512,22 @@ export default function SubmitPage() {
                 </div>
                 {locationsError ? <p className="text-xs font-medium text-rose-700">{locationsError}</p> : null}
                 {selectedOutlet ? <SelectedOutletSummary outlet={selectedOutlet} /> : null}
+                {!selectedOutlet ? (
+                  <Field label="Manual outlet / landmark name">
+                    <input
+                      className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                      value={manualLandmark}
+                      onChange={(event) => setManualLandmark(event.target.value)}
+                      placeholder="Enter outlet name if not in directory"
+                      autoComplete="off"
+                    />
+                    <span className="whitespace-normal break-words text-xs leading-snug text-slate-500">
+                      Required only when no approved outlet is selected.
+                    </span>
+                  </Field>
+                ) : null}
               </div>
+              <ValidationList messages={outletStepErrors} show={validationAttemptedStep === "outlet" || outletStepErrors.length > 0} />
             </section>
 
             <section className={`${currentStep === "evidence" ? "grid" : "hidden"} min-w-0 gap-3`}>
@@ -1649,6 +1726,7 @@ export default function SubmitPage() {
                 </Field>
               </div>
             </div>
+            <ValidationList messages={evidenceStepErrors} show={validationAttemptedStep === "evidence" || evidenceStepErrors.length > 0} />
 
             {result === "success" ? (
               <div className="flex min-w-0 items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm leading-snug text-emerald-700">
@@ -1688,6 +1766,7 @@ export default function SubmitPage() {
                 <ReviewRow label="OCR/photo match" value="Checked after submission" />
                 <ReviewRow label="Duplicate/outlet validation" value="Checked during submission" />
               </div>
+              <ValidationList messages={reviewStepErrors} show={validationAttemptedStep === "review" || reviewStepErrors.length > 0} />
               {result === "success" ? (
                 <div className="flex min-w-0 items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm leading-snug text-emerald-700">
                   <CheckCircle2 aria-hidden size={18} />
@@ -1709,7 +1788,13 @@ export default function SubmitPage() {
                 className="inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
                 type="button"
                 disabled={!canContinueToEvidence}
-                onClick={() => setCurrentStep("evidence")}
+                onClick={() => {
+                  setValidationAttemptedStep("outlet");
+                  if (canContinueToEvidence) {
+                    setValidationAttemptedStep(null);
+                    setCurrentStep("evidence");
+                  }
+                }}
               >
                 Continue to Evidence
               </button>
@@ -1727,7 +1812,13 @@ export default function SubmitPage() {
                   className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-black px-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
                   type="button"
                   disabled={!canContinueToReview}
-                  onClick={() => setCurrentStep("review")}
+                  onClick={() => {
+                    setValidationAttemptedStep("evidence");
+                    if (canContinueToReview) {
+                      setValidationAttemptedStep(null);
+                      setCurrentStep("review");
+                    }
+                  }}
                 >
                   Continue to Review
                 </button>
@@ -1907,6 +1998,20 @@ function ProgressCheck({ checked, label }: { checked: boolean; label: string }) 
         {checked ? "✓ " : ""}
         {label}
       </span>
+    </div>
+  );
+}
+
+function ValidationList({ messages, show }: { messages: string[]; show: boolean }) {
+  if (!show || messages.length === 0) return null;
+
+  return (
+    <div className="grid gap-1 rounded-lg border border-rose-100 bg-rose-50 p-3 text-xs font-semibold leading-snug text-rose-700" role="alert">
+      {messages.map((message) => (
+        <p key={message} className="whitespace-normal break-words">
+          {message}
+        </p>
+      ))}
     </div>
   );
 }
