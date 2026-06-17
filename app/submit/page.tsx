@@ -180,6 +180,9 @@ export default function SubmitPage() {
   const photoCaptured = Boolean(image);
   const manualOutletName = manualLandmark.trim();
   const manualAddress = manualLocationDescription.trim();
+  const approvedOutletAddress = selectedOutlet?.address?.trim() ?? "";
+  const capturedAddress = position.address?.trim() ?? "";
+  const hasUsableAddress = Boolean(manualAddress || approvedOutletAddress || capturedAddress);
   const brandConfirmed = Boolean(brandName.trim());
   const outletOrManualNameConfirmed = outletSelected || Boolean(manualOutletName);
   const stepNumber = currentStep === "outlet" ? 1 : currentStep === "evidence" ? 2 : 3;
@@ -407,11 +410,12 @@ export default function SubmitPage() {
           installerRegion &&
           brandName.trim() &&
           (selectedOutlet || manualLandmark.trim()) &&
-          manualLocationDescription.trim() &&
+          gpsCaptured &&
+          hasUsableAddress &&
           !isSubmitting &&
           !isGettingLocation
       ),
-    [brandName, image, installerName, installerRegion, installerState, installerUserId, isGettingLocation, isSubmitting, manualLandmark, manualLocationDescription, projectName, role, selectedOutlet]
+    [brandName, gpsCaptured, hasUsableAddress, image, installerName, installerRegion, installerState, installerUserId, isGettingLocation, isSubmitting, manualLandmark, projectName, role, selectedOutlet]
   );
   const outletStepErrors = useMemo(() => {
     const messages: string[] = [];
@@ -426,10 +430,11 @@ export default function SubmitPage() {
   const evidenceStepErrors = useMemo(() => {
     const messages: string[] = [];
     if (!image) messages.push("Photo evidence is required.");
-    if (!manualAddress) messages.push("Location / Address is required.");
+    if (!gpsCaptured) messages.push("GPS capture is required before review.");
+    if (!hasUsableAddress) messages.push("Location / Address is required unless the approved outlet or GPS capture already provides one.");
     if (isGettingLocation) messages.push("Please wait for GPS capture to finish, or retry if location is unavailable.");
     return messages;
-  }, [image, isGettingLocation, manualAddress]);
+  }, [gpsCaptured, hasUsableAddress, image, isGettingLocation]);
   const reviewStepErrors = useMemo(() => [...outletStepErrors, ...evidenceStepErrors], [evidenceStepErrors, outletStepErrors]);
   const canContinueToEvidence = outletStepErrors.length === 0 && !isSubmitting;
   const canContinueToReview = evidenceStepErrors.length === 0 && !isSubmitting;
