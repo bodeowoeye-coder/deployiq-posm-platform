@@ -170,6 +170,10 @@ export async function updateQueuedSubmission(id: string, changes: Partial<Omit<Q
   return next;
 }
 
+export async function deleteQueuedSubmission(id: string) {
+  await withQueueStore<undefined>("readwrite", (store) => store.delete(id) as IDBRequest<undefined>);
+}
+
 function imageSourceType(image: Blob) {
   if (typeof File !== "undefined" && image instanceof File) return "File";
   if (image instanceof Blob) return "Blob";
