@@ -15,6 +15,7 @@ import {
   buildQueuedSubmissionFormData,
   clearInstallerDraft,
   createLocalSubmissionId,
+  deleteQueuedSubmission,
   hasQueuedImagePayload,
   queueSubmission,
   readInstallerDraft,
@@ -140,6 +141,7 @@ export default function SubmitPage() {
   const syncInProgressRef = useRef(false);
   const locationAttemptRef = useRef(0);
   const previewObjectUrlRef = useRef<string | null>(null);
+  const resetInProgressRef = useRef(false);
   const { showToast } = useToast();
   const [showSyncedHistory, setShowSyncedHistory] = useState(false);
   const [pendingUploadsOpen, setPendingUploadsOpen] = useState(false);
@@ -210,6 +212,10 @@ export default function SubmitPage() {
   }, []);
 
   useEffect(() => {
+    if (resetInProgressRef.current) {
+      clearInstallerDraft();
+      return;
+    }
     saveInstallerDraft({ installerName, projectName, brandName, installerState, installerLga, manualLocationDescription, manualLandmark, selectedLocationId });
   }, [brandName, installerLga, installerName, installerState, manualLandmark, manualLocationDescription, projectName, selectedLocationId]);
 
@@ -621,7 +627,8 @@ export default function SubmitPage() {
     }
   }
 
-  function resetSubmissionFieldsAfterSuccess() {
+  function resetSingleSubmissionState() {
+    resetInProgressRef.current = true;
     clearInstallerDraft();
     setImage(null);
     console.info("[android-preview]", { stage: "preview-cleared-after-success" });
@@ -643,6 +650,7 @@ export default function SubmitPage() {
     setValidationAttemptedStep(null);
     setCurrentStep("outlet");
     setError("");
+    setResult("idle");
     setPosition({
       latitude: null,
       longitude: null,
@@ -651,12 +659,30 @@ export default function SubmitPage() {
       address: null
     });
     setIsGettingLocation(false);
+    window.setTimeout(() => {
+      resetInProgressRef.current = false;
+      clearInstallerDraft();
+    }, 0);
+  }
+
+  function resetSubmissionFieldsAfterSuccess() {
+    resetSingleSubmissionState();
+  }
+
+  function queuedItemMatchesActiveSubmission(item: QueuedSubmissionRecord) {
+    const sameOutlet = item.fields.selectedLocationId && item.fields.selectedLocationId === selectedLocationId;
+    const sameOutletCode = item.fields.selectedOutletCode && item.fields.selectedOutletCode === selectedOutlet?.outlet_code;
+    const sameCoordinates =
+      item.fields.latitude !== null &&
+      item.fields.longitude !== null &&
+      item.fields.latitude === position.latitude &&
+      item.fields.longitude === position.longitude;
+    return Boolean(sameOutlet || sameOutletCode || sameCoordinates);
   }
 
   function startAnotherSubmission() {
-    setResult("idle");
+    resetSingleSubmissionState();
     setSuccessDetails(null);
-    setCurrentStep("outlet");
     void requestLocation();
   }
 
@@ -877,13 +903,8 @@ export default function SubmitPage() {
       fields: currentQueueFields(submitAnyway)
     });
     await refreshQueue();
-    console.info("[android-preview]", { stage: "preview-cleared-after-offline-queue" });
-    setImage(null);
-    resetPreviewObjectUrl();
-    setPreviewUrl("");
-    setPreviewError("");
-    setPreviewStatus("idle");
-    setMismatchWarning(null);
+    console.info("[android-preview]", { stage: "form-cleared-after-offline-queue" });
+    resetSingleSubmissionState();
     setResult("offline");
     setError(message);
     showToast(message);
@@ -992,12 +1013,11 @@ export default function SubmitPage() {
         throw new Error(body.error || "Sync failed. Please retry when your network is stable.");
       }
 
-      await updateQueuedSubmission(item.id, {
-        status: "Synced",
-        errorMessage: null,
-        syncedAt: new Date().toISOString(),
-        serverSubmissionId: body.submission?.id ?? null
-      });
+      const shouldClearActiveForm = queuedItemMatchesActiveSubmission(item);
+      await deleteQueuedSubmission(item.id);
+      if (shouldClearActiveForm) {
+        resetSingleSubmissionState();
+      }
       await refreshQueue();
       if (showSuccessToast) showToast("Upload synced successfully.");
     } catch (syncError) {
@@ -1065,10 +1085,11 @@ export default function SubmitPage() {
     setIsSubmitting(true);
     setResult("idle");
     setError("");
+    let compressed: File | null = null;
 
     try {
       const compressionStart = performance.now();
-      const compressed = await compressImage(image);
+      compressed = await compressImage(image);
       console.info("[submit-timing]", {
         stage: "photo-compression",
         originalSize: image.size,
@@ -1165,7 +1186,7 @@ export default function SubmitPage() {
       setError(message);
       if (isQueueableFailure(submitError)) {
         try {
-          const compressed = await compressImage(image);
+          compressed = compressed ?? (await compressImage(image));
           await saveOfflineUpload(compressed, submitAnyway, localSubmissionId);
           console.info("[submit-timing]", { stage: "submit-total", result: "queued-after-network-error", durationMs: timingMs(totalSubmitStart) });
           return;

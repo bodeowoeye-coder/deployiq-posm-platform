@@ -41,6 +41,8 @@ const emptyResolvedLocation: ResolvedLocation = {
   resolvedCountry: null
 };
 
+const DEFAULT_REVERSE_GEOCODE_TIMEOUT_MS = 3500;
+
 function compactAddress(parts: Array<string | null | undefined>) {
   return parts
     .map((part) => part?.trim())
@@ -48,10 +50,17 @@ function compactAddress(parts: Array<string | null | undefined>) {
     .join(", ");
 }
 
-export async function reverseGeocode(latitude: number | null, longitude: number | null): Promise<ResolvedLocation> {
+export async function reverseGeocode(
+  latitude: number | null,
+  longitude: number | null,
+  timeoutMs = DEFAULT_REVERSE_GEOCODE_TIMEOUT_MS
+): Promise<ResolvedLocation> {
   if (latitude === null || longitude === null) {
     return emptyResolvedLocation;
   }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const params = new URLSearchParams({
@@ -66,7 +75,8 @@ export async function reverseGeocode(latitude: number | null, longitude: number 
         "User-Agent": "DeployIQ/1.0 (Impact Visibility Ltd)",
         "Accept-Language": "en"
       },
-      cache: "no-store"
+      cache: "no-store",
+      signal: controller.signal
     });
     if (!response.ok) throw new Error("Reverse geocoding failed.");
     const result = (await response.json()) as NominatimResult;
@@ -90,5 +100,7 @@ export async function reverseGeocode(latitude: number | null, longitude: number 
     };
   } catch {
     return emptyResolvedLocation;
+  } finally {
+    clearTimeout(timeout);
   }
 }

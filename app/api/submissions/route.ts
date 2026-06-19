@@ -408,10 +408,58 @@ export async function POST(request: Request) {
     } = supabase.storage.from(storageBucket).getPublicUrl(path);
 
     const ocrStart = nowMs();
-    const extraction = await extractBoardTextFromImage(publicUrl);
-    console.info("[submit-server-timing]", { stage: "ocr-vision", confidence: extraction.confidence, durationMs: timingMs(ocrStart) });
+    const extractionPromise = extractBoardTextFromImage(publicUrl).then((extraction) => {
+      console.info("[submit-server-timing]", {
+        stage: "ocr-vision",
+        confidence: extraction.confidence,
+        durationMs: timingMs(ocrStart)
+      });
+      return extraction;
+    });
+
     const brandLoadStart = nowMs();
-    const { data: allBrands } = await supabase.from("brands").select("brand_name");
+    const allBrandsPromise = supabase
+      .from("brands")
+      .select("brand_name")
+      .then((result) => {
+        console.info("[submit-server-timing]", {
+          stage: "brand-list-load",
+          ok: !result.error,
+          durationMs: timingMs(brandLoadStart)
+        });
+        return result;
+      });
+
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const recentLoadStart = nowMs();
+    const recentDataPromise = supabase
+      .from("submissions")
+      .select("*")
+      .gte("submitted_at", cutoff)
+      .order("submitted_at", { ascending: false })
+      .limit(150)
+      .then((result) => {
+        console.info("[submit-server-timing]", {
+          stage: "recent-submissions-load",
+          ok: !result.error,
+          durationMs: timingMs(recentLoadStart)
+        });
+        return result;
+      });
+
+    const reverseGeocodeStart = nowMs();
+    const resolvedLocationPromise = reverseGeocode(latitude, longitude).then((resolvedLocation) => {
+      console.info("[submit-server-timing]", {
+        stage: "reverse-geocoding",
+        hasCoordinates: Boolean(latitude && longitude),
+        resolved: Boolean(resolvedLocation.resolvedAddress),
+        durationMs: timingMs(reverseGeocodeStart)
+      });
+      return resolvedLocation;
+    });
+
+    const [extraction, allBrandsResult] = await Promise.all([extractionPromise, allBrandsPromise]);
+    const allBrands = allBrandsResult.data ?? [];
     const brandReview = reviewBrandMatch(resolvedBrandName, extraction, allBrands ?? []);
     const confidence = scoreBrandVerification(extraction.confidence, brandReview.brandMatchStatus);
     const outletReview = reviewOutletMatch({
@@ -464,14 +512,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const [recentDataResult, resolvedLocation] = await Promise.all([recentDataPromise, resolvedLocationPromise]);
     const duplicateStart = nowMs();
-    const { data: recentData } = await supabase
-      .from("submissions")
-      .select("*")
-      .gte("submitted_at", cutoff)
-      .order("submitted_at", { ascending: false })
-      .limit(150);
+    const recentData = recentDataResult.data ?? [];
     const duplicateReview = detectDuplicate(
       {
         installerName: canonicalInstallerName,
@@ -497,9 +540,6 @@ export async function POST(request: Request) {
     ]
       .filter(Boolean)
       .join(" ");
-    const reverseGeocodeStart = nowMs();
-    const resolvedLocation = await reverseGeocode(latitude, longitude);
-    console.info("[submit-server-timing]", { stage: "reverse-geocoding", hasCoordinates: Boolean(latitude && longitude), resolved: Boolean(resolvedLocation.resolvedAddress), durationMs: timingMs(reverseGeocodeStart) });
     const manualFallbackAddress = [
       manualLocationDescription,
       manualLandmark ? `Landmark: ${manualLandmark}` : "",
