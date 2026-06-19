@@ -67,6 +67,7 @@ function clientViewTitle(view: DashboardView) {
     overview: "Executive Dashboard",
     reports: "Deployment Reports",
     map: "Deployment Map",
+    analytics: "Analytics",
     profile: "Account"
   };
   return titles[view] ?? "Executive Dashboard";
@@ -77,6 +78,7 @@ function clientViewDescription(view: DashboardView) {
     overview: "Review deployment progress, evidence, filters, and downloadable reports.",
     reports: "Browse submitted deployment evidence and installation records.",
     map: "View mapped installation locations and geographic coverage.",
+    analytics: "Review client-safe deployment trends, coverage, and brand progress.",
     profile: "Client account, project, and platform preferences."
   };
   return descriptions[view] ?? "Review deployment progress and installation visibility.";
@@ -404,6 +406,36 @@ export function ClientDashboard({
               <BreakdownPanel title="Region coverage" rows={regionCounts.map((item) => [item.region, item.count])} />
               <BreakdownPanel title="Brand distribution" rows={brandCounts.map((item) => [item.brand, item.count])} />
               <BreakdownPanel title="Project distribution" rows={projectCounts.map((item) => [displayProjectName(item.project), item.count])} />
+            </div>
+          </div>
+        ) : null}
+
+        {activeView === "analytics" ? (
+          <div className="grid min-w-0 gap-5">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <SummaryCard label="Expected deployment" value={portfolio.expected} />
+              <SummaryCard label="Actual deployment" value={portfolio.actual} />
+              <SummaryCard label="Outstanding" value={portfolio.outstanding} />
+              <SummaryCard label="Completion" value={portfolio.completion} suffix="%" />
+            </div>
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <SummaryCard label="States covered" value={statesCovered} />
+              <SummaryCard label="Regions covered" value={regionsCovered} />
+              <SummaryCard label="Brands covered" value={brandsCovered} />
+              <SummaryCard label="GPS evidence" value={mappedCount} />
+            </div>
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <ExecutiveBars title="Deployment by region" rows={regionCounts.map((item) => [item.region, item.count])} />
+              <ExecutiveBars title="Deployment by brand" rows={brandCounts.map((item) => [item.brand, item.count])} accent="#7c3aed" />
+            </div>
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <BreakdownPanel title="State coverage" rows={stateCounts.map((item) => [item.state, item.count])} />
+              <BreakdownPanel title="Project distribution" rows={projectCounts.map((item) => [displayProjectName(item.project), item.count])} />
+            </div>
+            <ChartPanel title="Daily deployment trend" data={dailyCounts} xKey="date" color="#f97316" />
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <ProjectPortfolioPanel rows={projectOperations} />
+              <FunnelPanel rows={getStageTotals(projectOperations)} />
             </div>
           </div>
         ) : null}

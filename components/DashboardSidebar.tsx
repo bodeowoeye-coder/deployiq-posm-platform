@@ -64,6 +64,7 @@ const clientItems: NavItem[] = [
   { view: "overview", label: "Executive Dashboard", icon: LayoutDashboard, href: "/client" },
   { view: "reports", label: "Deployment Reports", icon: FileText, href: "/client/reports" },
   { view: "map", label: "Deployment Map", icon: MapPinned, href: "/client/map" },
+  { view: "analytics", label: "Analytics", icon: BriefcaseBusiness, href: "/client/analytics" },
   { view: "profile", label: "Account", icon: Settings2, href: "/client/account" }
 ];
 
