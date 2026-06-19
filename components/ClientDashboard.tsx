@@ -184,6 +184,20 @@ export function ClientDashboard({
   const exportQuery = buildExportQuery(filters);
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
+  const clientTrendSeries = useMemo(() => {
+    const buckets = new Map<string, { date: string; deployments: number; gpsVerified: number; photoEvidence: number }>();
+
+    filtered.forEach((item) => {
+      const date = new Date(item.submitted_at).toISOString().slice(0, 10);
+      const current = buckets.get(date) ?? { date, deployments: 0, gpsVerified: 0, photoEvidence: 0 };
+      current.deployments += 1;
+      if (item.gps_latitude !== null && item.gps_longitude !== null) current.gpsVerified += 1;
+      if (item.image_url) current.photoEvidence += 1;
+      buckets.set(date, current);
+    });
+
+    return Array.from(buckets.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [filtered]);
   const projectOptions = Array.from(new Set(submissions.map((item) => displayProjectName(item.project_name)))).sort();
   const campaignOptions = Array.from(new Set(projects.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
   const activeProjectName = filters.project || DEFAULT_PROJECT_NAME;
@@ -424,15 +438,18 @@ export function ClientDashboard({
               <SummaryCard label="Brands covered" value={brandsCovered} />
               <SummaryCard label="GPS evidence" value={mappedCount} />
             </div>
+            <div className="grid min-w-0 gap-4 xl:grid-cols-3">
+              <ChartPanel title="Installations by region" data={regionCounts} xKey="region" />
+              <ChartPanel title="Installations by brand" data={brandCounts} xKey="brand" color="#7c3aed" />
+              <ChartPanel title="Daily uploads" data={dailyCounts} xKey="date" color="#2563eb" />
+            </div>
+            <ClientTrendPanel data={clientTrendSeries} />
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <ExecutiveBars title="Deployment by region" rows={regionCounts.map((item) => [item.region, item.count])} />
               <ExecutiveBars title="Deployment by brand" rows={brandCounts.map((item) => [item.brand, item.count])} accent="#7c3aed" />
-            </div>
-            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <BreakdownPanel title="State coverage" rows={stateCounts.map((item) => [item.state, item.count])} />
               <BreakdownPanel title="Project distribution" rows={projectCounts.map((item) => [displayProjectName(item.project), item.count])} />
             </div>
-            <ChartPanel title="Daily deployment trend" data={dailyCounts} xKey="date" color="#f97316" />
             <div className="grid min-w-0 gap-4 lg:grid-cols-2">
               <ProjectPortfolioPanel rows={projectOperations} />
               <FunnelPanel rows={getStageTotals(projectOperations)} />
@@ -619,6 +636,37 @@ function ChartPanel({ title, data, xKey, color = "#0b7c59" }: { title: string; d
       </ResponsiveContainer>
       </div>
       </div>}
+    </div>
+  );
+}
+
+function ClientTrendPanel({
+  data
+}: {
+  data: Array<{ date: string; deployments: number; gpsVerified: number; photoEvidence: number }>;
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="mb-3 whitespace-normal break-words text-base font-bold leading-snug">Executive trends</h2>
+      {data.length === 0 ? (
+        <EmptyState title="No trend data" message="This trend will populate once matching submissions are available." />
+      ) : (
+        <div className="min-w-0 overflow-x-auto overflow-y-hidden">
+          <div className="w-[560px] sm:w-full">
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={56} />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Line type="monotone" dataKey="deployments" name="Deployments" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="gpsVerified" name="GPS verified" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="photoEvidence" name="Photo evidence" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
