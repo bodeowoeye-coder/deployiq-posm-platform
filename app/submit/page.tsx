@@ -34,11 +34,6 @@ type PositionState = {
   address: string | null;
 };
 
-type BrandOption = {
-  id: string;
-  brand_name: string;
-};
-
 type DeploymentLocationOption = {
   id: string;
   state: string;
@@ -84,6 +79,7 @@ const connectionCheckTimeoutMs = 5000;
 const staleSyncingTimeoutMs = 2 * 60 * 1000;
 const syncedQueueVisibleMs = 2 * 60 * 1000;
 const queueRetryIntervalMs = 60000;
+const GCPLC_PILOT_BRAND = "Darling";
 
 function isQueueableFailure(error: unknown) {
   if (typeof navigator !== "undefined" && !navigator.onLine) return true;
@@ -95,14 +91,12 @@ function isQueueableFailure(error: unknown) {
 export default function SubmitPage() {
   const [installerName, setInstallerName] = useState("");
   const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
-  const [brandName, setBrandName] = useState("");
+  const [brandName, setBrandName] = useState(GCPLC_PILOT_BRAND);
   const [installerState, setInstallerState] = useState("");
   const installerRegion = getRegionForState(installerState);
   const [installerLga, setInstallerLga] = useState("");
   const [manualLocationDescription, setManualLocationDescription] = useState("");
   const [manualLandmark, setManualLandmark] = useState("");
-  const [brands, setBrands] = useState<BrandOption[]>([]);
-  const [brandsError, setBrandsError] = useState("");
   const [deploymentLocations, setDeploymentLocations] = useState<DeploymentLocationOption[]>([]);
   const [locationsError, setLocationsError] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("");
@@ -186,7 +180,7 @@ export default function SubmitPage() {
   const approvedOutletAddress = selectedOutlet?.address?.trim() ?? "";
   const capturedAddress = position.address?.trim() ?? "";
   const hasUsableAddress = Boolean(manualAddress || approvedOutletAddress || capturedAddress);
-  const brandConfirmed = Boolean(brandName.trim());
+  const brandConfirmed = brandName === GCPLC_PILOT_BRAND;
   const outletOrManualNameConfirmed = outletSelected || Boolean(manualOutletName);
   const stepNumber = currentStep === "outlet" ? 1 : currentStep === "evidence" ? 2 : 3;
   const stepTitle = currentStep === "outlet" ? "Confirm Outlet" : currentStep === "evidence" ? "Capture Evidence" : "Review & Submit";
@@ -201,7 +195,7 @@ export default function SubmitPage() {
     if (draft) {
       setInstallerName(draft.installerName);
       setProjectName(draft.projectName || DEFAULT_PROJECT_NAME);
-      setBrandName(draft.brandName);
+      setBrandName(GCPLC_PILOT_BRAND);
       setInstallerState(draft.installerState);
       setInstallerLga(draft.installerLga);
       setManualLocationDescription(draft.manualLocationDescription ?? "");
@@ -247,32 +241,8 @@ export default function SubmitPage() {
   }, []);
 
   useEffect(() => {
-    async function loadBrands() {
-      const brandsStart = performance.now();
-      try {
-        const response = await fetch("/api/brands");
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "Could not load brands.");
-        setBrands(body.brands ?? []);
-        console.info("[submit-timing]", {
-          stage: "brands-fetch",
-          count: body.brands?.length ?? 0,
-          durationMs: timingMs(brandsStart)
-        });
-      } catch (loadError) {
-        setBrandsError(loadError instanceof Error ? loadError.message : "Could not load brands.");
-        console.info("[submit-timing]", {
-          stage: "brands-fetch-error",
-          message: loadError instanceof Error ? loadError.message : "Unknown error",
-          durationMs: timingMs(brandsStart)
-        });
-      }
-    }
+    let isActive = true;
 
-    loadBrands();
-  }, []);
-
-  useEffect(() => {
     async function loadDeploymentLocations() {
       if (!installerState) {
         setDeploymentLocations([]);
@@ -284,6 +254,7 @@ export default function SubmitPage() {
         const response = await fetch(`/api/deployment-locations?state=${encodeURIComponent(installerState)}`, { credentials: "include" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Could not load approved outlets.");
+        if (!isActive) return;
         setDeploymentLocations(body.locations ?? []);
         console.info("[submit-timing]", {
           stage: "approved-outlets-fetch",
@@ -292,6 +263,7 @@ export default function SubmitPage() {
           durationMs: timingMs(outletsStart)
         });
       } catch (loadError) {
+        if (!isActive) return;
         setLocationsError(loadError instanceof Error ? loadError.message : "Could not load approved outlets.");
         console.info("[submit-timing]", {
           stage: "approved-outlets-fetch-error",
@@ -303,18 +275,23 @@ export default function SubmitPage() {
     }
 
     loadDeploymentLocations();
+    return () => {
+      isActive = false;
+    };
   }, [installerState]);
-
-  useEffect(() => {
-    if (!selectedOutlet) return;
-    if (selectedOutlet.state && installerState !== selectedOutlet.state) setInstallerState(selectedOutlet.state);
-    if (selectedOutlet.brand_type && !brandName.trim()) setBrandName(selectedOutlet.brand_type);
-  }, [brandName, installerState, selectedOutlet]);
 
   useEffect(() => {
     if (!selectedOutlet) return;
     if (installerState && selectedOutlet.state !== installerState) setSelectedLocationId("");
   }, [installerState, selectedOutlet]);
+
+  function handleInstallerStateChange(nextState: string) {
+    setInstallerState(nextState);
+    setSelectedLocationId("");
+    setOutletSearch("");
+    setDeploymentLocations([]);
+    setLocationsError("");
+  }
 
   useEffect(() => {
     requestLocation();
@@ -428,7 +405,7 @@ export default function SubmitPage() {
     const messages: string[] = [];
     if (!role || !installerUserId) messages.push("Please wait for your installer account to load.");
     if (!projectName.trim()) messages.push("Project name is required.");
-    if (!brandConfirmed) messages.push("Brand is required.");
+    if (!brandConfirmed) messages.push("Brand must be Darling for this pilot.");
     if (!installerState) messages.push("State is required.");
     if (!installerRegion) messages.push("A valid region must be derived from the selected State.");
     if (!outletOrManualNameConfirmed) messages.push("Select an approved outlet or enter a manual outlet/landmark name.");
@@ -638,7 +615,7 @@ export default function SubmitPage() {
     setPreviewStatus("idle");
     if (cameraInputRef.current) cameraInputRef.current.value = "";
     if (galleryInputRef.current) galleryInputRef.current.value = "";
-    setBrandName("");
+    setBrandName(GCPLC_PILOT_BRAND);
     setInstallerState("");
     setInstallerLga("");
     setSelectedLocationId("");
@@ -1427,21 +1404,12 @@ export default function SubmitPage() {
               </Field>
 
               <Field label="Brand">
-                <select
-                  className="min-h-11 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                  id="brandName"
-                  name="brandName"
-                  value={brandName}
-                  onChange={(event) => setBrandName(event.target.value)}
-                >
-                  <option value="">Select if known</option>
-                  {brands.map((brand) => (
-                    <option key={brand.id} value={brand.brand_name}>
-                      {brand.brand_name}
-                    </option>
-                  ))}
-                </select>
-                <span className="whitespace-normal break-words text-xs leading-snug text-slate-500">{brandsError || "The office can assign this later if unsure."}</span>
+                <div className="min-h-11 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-black text-slate-950">
+                  Brand: {GCPLC_PILOT_BRAND}
+                </div>
+                <span className="whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  Locked for the GCPLC Darling pilot.
+                </span>
               </Field>
 
               <Field label="State">
@@ -1450,7 +1418,7 @@ export default function SubmitPage() {
                   name="installerState"
                   id="installerState"
                   value={installerState}
-                  onChange={(e) => setInstallerState(e.target.value)}
+                  onChange={(event) => handleInstallerStateChange(event.target.value)}
                   required
                 >
                   <option value="">Select state</option>
