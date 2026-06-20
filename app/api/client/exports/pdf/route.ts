@@ -6,7 +6,7 @@ import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getBrandCounts, getRegionCounts } from "@/lib/reporting";
 import { getPortfolioOperations, getProjectOperations } from "@/lib/operations";
 import type { DeploymentProgress, ProjectTarget, Submission } from "@/lib/types";
-import { DEFAULT_PROJECT_NAME, displayProjectName } from "@/lib/projects";
+import { displayProjectName } from "@/lib/projects";
 import { createReportId, drawReportFooter, drawReportHeader } from "@/lib/reportBranding";
 
 export const runtime = "nodejs";
@@ -91,7 +91,7 @@ export async function GET(request: Request) {
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-FLT" : "DPIQ-CLT");
   let y = 66;
-  const projectTitle = project || DEFAULT_PROJECT_NAME;
+  const projectTitle = project || "All projects";
   const clientDisplayName = scoped.effectiveClient.name;
   const regionCounts = getRegionCounts(submissions);
   const brandCounts = getBrandCounts(submissions);

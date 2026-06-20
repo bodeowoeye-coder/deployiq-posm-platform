@@ -8,7 +8,6 @@ import { scoreBrandVerification } from "@/lib/confidence";
 import { detectDuplicate, fingerprintImage } from "@/lib/duplicates";
 import { buildAlertEvent } from "@/lib/alerts";
 import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
-import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
 import { reverseGeocode } from "@/lib/reverseGeocoding";
 import type { Submission } from "@/lib/types";
 
@@ -226,11 +225,15 @@ export async function POST(request: Request) {
 
     const submittedInstallerName = cleanString(formData.get("installerName"));
     const localSubmissionId = cleanString(formData.get("localSubmissionId"));
-    const projectName = cleanString(formData.get("projectName")) || DEFAULT_PROJECT_NAME;
+    const projectName = cleanString(formData.get("projectName"));
     const submittedBrandName = cleanString(formData.get("brandName"));
     const installerState = cleanString(formData.get("installerState"));
     const submittedInstallerRegion = cleanString(formData.get("installerRegion"));
     const installerLga = cleanString(formData.get("installerLga"));
+    if (!projectName) {
+      return NextResponse.json({ error: "Project name is required." }, { status: 400 });
+    }
+
     const submittedResolvedAddress = cleanString(formData.get("resolvedAddress"));
     const manualLocationDescription = cleanString(formData.get("manualLocationDescription"));
     const manualLandmark = cleanString(formData.get("manualLandmark"));

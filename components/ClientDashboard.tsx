@@ -21,7 +21,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { NIGERIA_REGIONS } from "@/lib/geography";
-import { DEFAULT_PROJECT_NAME, displayProjectName } from "@/lib/projects";
+import { displayProjectName } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { SignOutButton } from "@/components/SignOutButton";
 import { getPortfolioOperations, getProjectOperations, getStageTotals } from "@/lib/operations";
@@ -202,7 +202,7 @@ export function ClientDashboard({
   }, [filtered]);
   const projectOptions = Array.from(new Set(submissions.map((item) => displayProjectName(item.project_name)))).sort();
   const campaignOptions = Array.from(new Set(projects.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
-  const activeProjectName = filters.project || DEFAULT_PROJECT_NAME;
+  const activeProjectName = filters.project || (projectOptions.length === 1 ? projectOptions[0] : "All projects");
   const clientDisplayName = client.name;
   const projectOperations = getProjectOperations(projects, projectTargets, filtered, deploymentProgress);
   const portfolio = getPortfolioOperations(projectOperations);

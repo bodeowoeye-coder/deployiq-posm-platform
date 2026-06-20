@@ -10,7 +10,6 @@ import { useToast } from "@/components/ToastProvider";
 import { compressImage } from "@/lib/imageCompression";
 import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
 import { reverseGeocode } from "@/lib/reverseGeocoding";
-import { DEFAULT_PROJECT_NAME } from "@/lib/projects";
 import {
   buildQueuedSubmissionFormData,
   clearInstallerDraft,
@@ -90,7 +89,7 @@ function isQueueableFailure(error: unknown) {
 
 export default function SubmitPage() {
   const [installerName, setInstallerName] = useState("");
-  const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
+  const [projectName, setProjectName] = useState("");
   const [brandName, setBrandName] = useState(GCPLC_PILOT_BRAND);
   const [installerState, setInstallerState] = useState("");
   const installerRegion = getRegionForState(installerState);
@@ -194,7 +193,7 @@ export default function SubmitPage() {
     const draft = readInstallerDraft();
     if (draft) {
       setInstallerName(draft.installerName);
-      setProjectName(draft.projectName || DEFAULT_PROJECT_NAME);
+      setProjectName(draft.projectName || "");
       setBrandName(GCPLC_PILOT_BRAND);
       setInstallerState(draft.installerState);
       setInstallerLga(draft.installerLga);
