@@ -36,6 +36,10 @@ function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+const GCPL_PILOT_PROJECT_ID = "ee726c3f-ed04-4173-bea9-2f542dc8a00c";
+const GCPL_PILOT_CLIENT_ID = "0ed917be-7f62-479e-b875-30624e33778f";
+const GCPL_PILOT_PROJECT_NAME = "Darling Hair Dealer Board";
+
 function isOptionalSubmissionColumnError(error: { message?: string; code?: string } | null | undefined) {
   const message = error?.message?.toLowerCase() ?? "";
   return (
@@ -225,18 +229,22 @@ export async function POST(request: Request) {
 
     const submittedInstallerName = cleanString(formData.get("installerName"));
     const localSubmissionId = cleanString(formData.get("localSubmissionId"));
-    const projectId = cleanString(formData.get("projectId"));
-    const projectName = cleanString(formData.get("projectName"));
+    const submittedProjectId = cleanString(formData.get("projectId"));
+    const submittedProjectName = cleanString(formData.get("projectName"));
     const submittedBrandName = cleanString(formData.get("brandName"));
     const installerState = cleanString(formData.get("installerState"));
     const submittedInstallerRegion = cleanString(formData.get("installerRegion"));
     const installerLga = cleanString(formData.get("installerLga"));
-    if (!projectId || projectId !== "ee726c3f-ed04-4173-bea9-2f542dc8a00c") {
-      return NextResponse.json({ error: "Project ID is invalid or required." }, { status: 400 });
+
+    if (submittedProjectId && submittedProjectId !== GCPL_PILOT_PROJECT_ID) {
+      return NextResponse.json({ error: "Project ID is invalid for GCPL pilot." }, { status: 400 });
     }
-    if (!projectName || projectName !== "Darling Hair Dealer Board") {
-      return NextResponse.json({ error: "Project name is invalid or required." }, { status: 400 });
+    if (submittedProjectName && submittedProjectName !== GCPL_PILOT_PROJECT_NAME) {
+      return NextResponse.json({ error: "Project name is invalid for GCPL pilot." }, { status: 400 });
     }
+
+    const projectId = GCPL_PILOT_PROJECT_ID;
+    const projectName = GCPL_PILOT_PROJECT_NAME;
 
     const submittedResolvedAddress = cleanString(formData.get("resolvedAddress"));
     const manualLocationDescription = cleanString(formData.get("manualLocationDescription"));
@@ -339,16 +347,37 @@ export async function POST(request: Request) {
     const { data: matchingBrand } = brandName
       ? await supabase.from("brands").select("id, client_id, brand_name").ilike("brand_name", brandName).maybeSingle()
       : { data: null };
-    const { data: projectById } = projectId
-      ? await supabase.from("projects").select("id, client_id, project_name").eq("id", projectId).maybeSingle()
-      : { data: null };
-    const { data: godrejClient } =
-      !projectById?.client_id && !matchingBrand?.client_id && projectName.toLowerCase().includes("godrej")
-        ? await supabase.from("clients").select("id, name").eq("name", "Godrej Nigeria Ltd").maybeSingle()
-        : { data: null };
-    const assignmentClientId = projectById?.client_id ?? matchingBrand?.client_id ?? godrejClient?.id ?? null;
-    const matchingProject = projectById?.id === projectId ? projectById : null;
+
+    const { data: resolvedPilotProject } = await supabase
+      .from("projects")
+      .select("id, client_id, project_name")
+      .eq("id", GCPL_PILOT_PROJECT_ID)
+      .maybeSingle();
+
+    const assignmentClientId = GCPL_PILOT_CLIENT_ID;
+    const matchingProject =
+      resolvedPilotProject?.id === GCPL_PILOT_PROJECT_ID &&
+      resolvedPilotProject.project_name === GCPL_PILOT_PROJECT_NAME
+        ? resolvedPilotProject
+        : null;
     const resolvedBrandName = matchingBrand?.brand_name ?? (brandName || null);
+
+    console.info("[submit-server-timing]", {
+      stage: "project-assignment",
+      projectId: matchingProject?.id ?? null,
+      clientId: assignmentClientId,
+      projectName,
+      brandName,
+      durationMs: timingMs(assignmentStart)
+    });
+
+    if (!matchingProject) {
+      return NextResponse.json({ error: "Could not resolve the GCPL pilot project." }, { status: 400 });
+    }
+
+    if (!assignmentClientId) {
+      return NextResponse.json({ error: "Could not resolve the GCPL pilot client." }, { status: 400 });
+    }
     console.info("[submit-server-timing]", {
       stage: "project-assignment",
       projectId: matchingProject?.id ?? null,
@@ -548,10 +577,10 @@ export async function POST(request: Request) {
         installer_name: canonicalInstallerName,
         installer_email: canonicalInstallerEmail,
         installer_user_id: context.user.id,
-        project_id: matchingProject?.id ?? null,
+        project_id: GCPL_PILOT_PROJECT_ID,
         brand_id: matchingBrand?.id ?? null,
-        project_name: projectName,
-        client_id: assignmentClientId,
+        project_name: GCPL_PILOT_PROJECT_NAME,
+        client_id: GCPL_PILOT_CLIENT_ID,
         brand_name: resolvedBrandName,
         detected_brand_name: brandReview.detectedBrandName,
         brand_match_status: brandReview.brandMatchStatus,
