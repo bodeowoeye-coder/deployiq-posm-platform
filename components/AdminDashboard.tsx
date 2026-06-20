@@ -2721,6 +2721,41 @@ function UserProfilePanel({
   const approved = userSubmissions.filter((item) => item.status === "Approved").length;
   const rejected = userSubmissions.filter((item) => item.status === "Rejected").length;
   const lastSubmission = userSubmissions[0];
+  const [currentFullName, setCurrentFullName] = useState(user.full_name);
+  const [currentPhone, setCurrentPhone] = useState(user.phone ?? "");
+  const [currentRole, setCurrentRole] = useState<ManagedUser["role"]>(user.role);
+  const [currentClientId, setCurrentClientId] = useState(user.client_id ?? "");
+  const [currentAgencyId, setCurrentAgencyId] = useState(user.agency_id ?? "");
+  const [currentAssignedProjectIds, setCurrentAssignedProjectIds] = useState<string[]>(user.assigned_project_ids ?? []);
+  const [currentStatus, setCurrentStatus] = useState(user.status ?? "Active");
+
+  const clientProjectOptions = useMemo(
+    () => projects.filter((project) => project.client_id === currentClientId),
+    [projects, currentClientId]
+  );
+
+  useEffect(() => {
+    setCurrentFullName(user.full_name);
+    setCurrentPhone(user.phone ?? "");
+    setCurrentRole(user.role);
+    setCurrentClientId(user.client_id ?? "");
+    setCurrentAgencyId(user.agency_id ?? "");
+    setCurrentAssignedProjectIds(user.assigned_project_ids ?? []);
+    setCurrentStatus(user.status ?? "Active");
+  }, [user.user_id]);
+
+  useEffect(() => {
+    setCurrentAssignedProjectIds((currentIds) =>
+      currentIds.filter((projectId) => clientProjectOptions.some((project) => project.id === projectId))
+    );
+  }, [clientProjectOptions]);
+
+  function toggleAssignedProject(projectId: string) {
+    setCurrentAssignedProjectIds((current) =>
+      current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId]
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/35">
       <div className="h-full w-full max-w-xl overflow-y-auto bg-white p-5 shadow-2xl">
@@ -2777,24 +2812,69 @@ function UserProfilePanel({
             });
           }}
         >
-          <input name="fullName" defaultValue={user.full_name} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-          <input name="phone" defaultValue={user.phone ?? ""} placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
-          <select name="role" defaultValue={user.role} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+          <input name="fullName" value={currentFullName} onChange={(event) => setCurrentFullName(event.target.value)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <input name="phone" value={currentPhone} onChange={(event) => setCurrentPhone(event.target.value)} placeholder="Phone" className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm" />
+          <select name="role" value={currentRole} onChange={(event) => setCurrentRole(event.target.value as ManagedUser["role"])} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
             <option value="admin">Admin</option>
             <option value="client">Client</option>
             <option value="installer">Installer</option>
           </select>
-          <select name="clientId" defaultValue={user.client_id ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+          <select
+            name="clientId"
+            value={currentClientId}
+            onChange={(event) => setCurrentClientId(event.target.value)}
+            className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm"
+          >
             <option value="">No client</option>
             {clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
-          <select name="agencyId" defaultValue={user.agency_id ?? ""} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
+          <select
+            name="agencyId"
+            value={currentAgencyId}
+            onChange={(event) => setCurrentAgencyId(event.target.value)}
+            className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm"
+          >
             <option value="">No agency</option>
             {agencies.map((item) => <option key={item.id} value={item.id}>{item.agency_name}</option>)}
           </select>
-          <select name="assignedProjectIds" multiple defaultValue={user.assigned_project_ids} className="min-h-24 rounded-lg border border-slate-200 px-3 py-2 text-sm">
-            {projects.map((item) => <option key={item.id} value={item.id}>{item.project_name}</option>)}
-          </select>
+          <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+            <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-600">Assigned projects</span>
+              <span className="shrink-0 text-xs text-slate-400">{currentAssignedProjectIds.length} selected</span>
+            </div>
+            <div className="grid gap-2 max-h-56 overflow-y-auto rounded-md bg-slate-50 p-2">
+              {currentClientId && clientProjectOptions.length === 0 ? (
+                <div className="rounded-md border border-dashed border-slate-300 bg-slate-100 px-3 py-3 text-sm text-slate-500">No projects available</div>
+              ) : null}
+              {clientProjectOptions.length === 0 && !currentClientId ? (
+                <div className="rounded-md border border-dashed border-slate-300 bg-slate-100 px-3 py-3 text-sm text-slate-500">Select a client company to load projects</div>
+              ) : null}
+              {clientProjectOptions.map((project) => {
+                const selected = currentAssignedProjectIds.includes(project.id);
+                return (
+                  <label
+                    key={project.id}
+                    className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition ${
+                      selected ? "border-orange-300 bg-orange-50" : "border-slate-200 bg-white hover:bg-slate-100"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      name="assignedProjectIds"
+                      value={project.id}
+                      checked={selected}
+                      onChange={() => toggleAssignedProject(project.id)}
+                      className="h-4 w-4 rounded border-slate-300 text-orange-600"
+                    />
+                    <div className="min-w-0">
+                      <div className="font-medium text-slate-900">{project.project_name}</div>
+                      <div className="text-xs text-slate-500">{project.campaign_name || project.project_name}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
           <MultiSelectOptions name="assignedRegions" label="Assigned regions" options={[...NIGERIA_REGIONS]} selected={user.assigned_regions} />
           <MultiSelectOptions name="assignedStates" label="Assigned states" options={[...NIGERIA_STATES]} selected={user.assigned_states} />
           <select name="status" defaultValue={user.status} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm">
