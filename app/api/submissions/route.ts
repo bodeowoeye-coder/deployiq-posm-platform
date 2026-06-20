@@ -350,14 +350,14 @@ export async function POST(request: Request) {
 
     const { data: resolvedPilotProject } = await supabase
       .from("projects")
-      .select("id, client_id, project_name")
+      .select("id, client_id, name")
       .eq("id", GCPL_PILOT_PROJECT_ID)
       .maybeSingle();
 
     const assignmentClientId = GCPL_PILOT_CLIENT_ID;
     const matchingProject =
       resolvedPilotProject?.id === GCPL_PILOT_PROJECT_ID &&
-      resolvedPilotProject.project_name === GCPL_PILOT_PROJECT_NAME
+      resolvedPilotProject.name === GCPL_PILOT_PROJECT_NAME
         ? resolvedPilotProject
         : null;
     const resolvedBrandName = matchingBrand?.brand_name ?? (brandName || null);
