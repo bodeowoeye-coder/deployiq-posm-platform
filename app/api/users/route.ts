@@ -198,19 +198,25 @@ export async function PATCH(request: Request) {
   const { data: authUserData } = await supabase.auth.admin.getUserById(userId);
   const profileEmail = cleanString(previousProfile?.email) || cleanString(authUserData.user?.email).toLowerCase();
   if (!profileEmail) return NextResponse.json({ error: "Could not resolve user email for profile save." }, { status: 400 });
-  const profileUpdates = {
-    user_id: userId,
-    full_name: cleanString(body.fullName) || previousProfile?.full_name || "",
-    email: profileEmail,
-    phone: cleanString(body.phone) || null,
-    agency_id: cleanString(body.agencyId) || null,
-    assigned_project_ids: cleanArray(body.assignedProjectIds),
-    assigned_regions: cleanArray(body.assignedRegions),
-    assigned_states: cleanArray(body.assignedStates),
-    status: nextStatus || previousProfile?.status || "Active",
-    archived_at: nextStatus === "Archived" ? new Date().toISOString() : null,
-    updated_at: new Date().toISOString()
-  };
+  const profileUpdates = (function() {
+    const assignedProjectIds = body.assignedProjectIds !== undefined ? cleanArray(body.assignedProjectIds) : previousProfile?.assigned_project_ids ?? [];
+    const assignedRegions = body.assignedRegions !== undefined ? cleanArray(body.assignedRegions) : previousProfile?.assigned_regions ?? [];
+    const assignedStates = body.assignedStates !== undefined ? cleanArray(body.assignedStates) : previousProfile?.assigned_states ?? [];
+
+    return {
+      user_id: userId,
+      full_name: cleanString(body.fullName) || previousProfile?.full_name || "",
+      email: profileEmail,
+      phone: cleanString(body.phone) || null,
+      agency_id: cleanString(body.agencyId) || null,
+      assigned_project_ids: assignedProjectIds,
+      assigned_regions: assignedRegions,
+      assigned_states: assignedStates,
+      status: nextStatus || previousProfile?.status || "Active",
+      archived_at: nextStatus === "Archived" ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString()
+    };
+  })();
   const profileResult = await upsertUserProfileWithRetry(supabase, profileUpdates);
   if (profileResult.error) return NextResponse.json({ error: profileResult.error.message || "Could not save user profile." }, { status: 500 });
   if (previousRole?.role === "installer" || nextRole === "installer") {
