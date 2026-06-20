@@ -92,6 +92,7 @@ export function ClientDashboard({
   projectTargets,
   deploymentProgress,
   initialView,
+  initialProjectName,
   notificationsEnabled
 }: {
   client: Client;
@@ -101,9 +102,10 @@ export function ClientDashboard({
   projectTargets: ProjectTarget[];
   deploymentProgress: DeploymentProgress[];
   initialView?: DashboardView;
+  initialProjectName?: string | undefined;
   notificationsEnabled?: boolean;
 }) {
-  const [filters, setFilters] = useState<Filters>(blankFilters);
+  const [filters, setFilters] = useState<Filters>(() => ({ ...blankFilters, project: (initialProjectName ?? "") }));
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [exportError, setExportError] = useState("");
   const [exporting, setExporting] = useState("");

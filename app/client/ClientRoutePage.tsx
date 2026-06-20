@@ -75,6 +75,9 @@ export async function ClientRoutePage({ initialView = "overview" }: { initialVie
       : null
   });
   const { brandNames: clientBrandNames, projectIds } = visibilityScope;
+  const assignedProjectIds = Array.isArray((context as any).profile?.assigned_project_ids) ? ((context as any).profile.assigned_project_ids as string[]) : [];
+  const initialAssignedProject = (projects ?? []).find((p) => assignedProjectIds.includes(p.id));
+  const initialProjectName = initialAssignedProject ? initialAssignedProject.project_name : undefined;
   const [{ data: projectTargets }, { data: deploymentProgress }] =
     projectIds.length > 0
       ? await Promise.all([
@@ -97,6 +100,7 @@ export async function ClientRoutePage({ initialView = "overview" }: { initialVie
       projectTargets={(projectTargets ?? []) as ProjectTarget[]}
       deploymentProgress={(deploymentProgress ?? []) as DeploymentProgress[]}
       initialView={initialView}
+      initialProjectName={initialProjectName}
       notificationsEnabled={notificationsEnabled()}
     />
   );

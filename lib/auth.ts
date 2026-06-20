@@ -157,6 +157,7 @@ export async function getCurrentUserContext() {
     await ensureUserProfile(data.user);
 
     let client: Client | null = null;
+    let profile: Record<string, unknown> | null = null;
     if (role.client_id) {
       console.info("[auth-context] client lookup started", {
         userId: data.user.id,
@@ -216,6 +217,24 @@ export async function getCurrentUserContext() {
       }
     }
 
+    try {
+      const adminSupabase = createAdminSupabase();
+      const { data: profileRow, error: profileError } = await adminSupabase
+        .schema("public")
+        .from("user_profiles")
+        .select("user_id, full_name, email, phone, agency_id, assigned_project_ids, assigned_regions, assigned_states, status")
+        .eq("user_id", data.user.id)
+        .maybeSingle();
+      if (profileError) {
+        console.error("[auth-context] profile lookup failed (service)", dbErrorPayload(profileError));
+      }
+      profile = (profileRow as Record<string, unknown> | null) ?? null;
+    } catch (err) {
+      console.error("[auth-context] service profile lookup threw", {
+        error: err instanceof Error ? { message: err.message, stack: err.stack } : err
+      });
+    }
+
     console.info("[auth-context] final context result", {
       userId: data.user.id,
       email: data.user.email ?? null,
@@ -228,7 +247,8 @@ export async function getCurrentUserContext() {
     return {
       user: data.user,
       role: role as RoleRecord,
-      client
+      client,
+      profile
     };
   } catch (error) {
     console.error("[auth-context] caught exception", {

@@ -169,15 +169,20 @@ export async function GET(request: Request) {
     redirectTo
   });
   const profileStart = nowMs();
-  const { data: profile } = await createAdminSupabase()
-    .schema("public")
-    .from("user_profiles")
-    .select("full_name, email, phone, assigned_regions, assigned_states, status")
-    .eq("user_id", context.user.id)
-    .maybeSingle();
+  const profile = (context as any)?.profile ?? null;
   console.info("[login-server-timing]", { stage: "profile-lookup", hasProfile: Boolean(profile), durationMs: timingMs(profileStart) });
   const metadataFullName = typeof context.user.user_metadata?.full_name === "string" ? context.user.user_metadata.full_name.trim() : "";
   const fullName = typeof profile?.full_name === "string" && profile.full_name.trim() ? profile.full_name.trim() : metadataFullName;
+  let resolvedAssignedProjectName: string | null = null;
+  try {
+    const assignedIds = Array.isArray(profile?.assigned_project_ids) ? (profile.assigned_project_ids as string[]) : [];
+    if (assignedIds.length > 0) {
+      const { data: matching } = await createAdminSupabase().schema("public").from("projects").select("project_name").in("id", assignedIds).limit(1);
+      if (matching && matching.length > 0) resolvedAssignedProjectName = matching[0].project_name ?? null;
+    }
+  } catch (err) {
+    console.warn("[auth-session] could not resolve assigned project name", err instanceof Error ? err.message : err);
+  }
   console.info("[login-server-timing]", { stage: "session-verify-total", redirectTo, durationMs: timingMs(totalStart) });
 
   return NextResponse.json({
@@ -187,6 +192,7 @@ export async function GET(request: Request) {
     email: profile?.email ?? context.user.email ?? null,
     fullName: fullName || null,
     profile: profile ?? null,
+    resolvedAssignedProjectName,
     role: context.role.role,
     redirectTo
   });

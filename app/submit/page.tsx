@@ -229,6 +229,10 @@ export default function SubmitPage() {
         setInstallerEmail(body?.email ?? null);
         const accountName = body?.fullName?.trim() || body?.email?.trim() || "";
         if (accountName) setInstallerName(accountName);
+        // prefer resolved assigned project name from session when available
+        if ((body as any)?.resolvedAssignedProjectName) {
+          setProjectName((body as any).resolvedAssignedProjectName as string);
+        }
       })
       .catch((sessionError) => {
         console.info("[submit-timing]", {
