@@ -26,20 +26,19 @@ export async function loadClientSubmissionScope(supabase: SupabaseClient, client
     .select("client_id, brand_name")
     .ilike("brand_name", client.name)
     .maybeSingle();
-  const { data: allBrandRows, error: allBrandRowsError } = await supabase
-    .from("brands")
-    .select("client_id, brand_name");
   if (exactBrandError) {
     console.warn("[client-scope] exact brand lookup skipped", exactBrandError.message);
   }
-  if (allBrandRowsError) {
-    console.warn("[client-scope] brand ownership lookup skipped", allBrandRowsError.message);
+
+  const effectiveClientId = clientId;
+  if (exactBrandAccountMatch && exactBrandAccountMatch.client_id !== clientId) {
+    console.warn("[client-scope] exact brand account match found for another client; ignoring fallback", {
+      clientId,
+      clientName: client.name,
+      matchedBrand: exactBrandAccountMatch.brand_name,
+      matchedClientId: exactBrandAccountMatch.client_id
+    });
   }
-  const legacyBrandAccountMatch =
-    exactBrandAccountMatch ??
-    (allBrandRows ?? []).find((brand) => matchesLegacyBrandClientName(client.name, brand.brand_name)) ??
-    null;
-  const effectiveClientId = legacyBrandAccountMatch?.client_id ?? clientId;
   const { data: owningClient } =
     effectiveClientId !== clientId
       ? await supabase.from("clients").select("*").eq("id", effectiveClientId).maybeSingle()
@@ -124,7 +123,6 @@ export async function loadClientSubmissionScope(supabase: SupabaseClient, client
     visibilityScope,
     effectiveClient,
     effectiveClientId,
-    legacyBrandClientName: legacyBrandAccountMatch?.brand_name ?? null,
     directClientRows: submissionResults[0]?.data?.length ?? 0
   };
 }
