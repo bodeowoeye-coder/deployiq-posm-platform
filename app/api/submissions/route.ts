@@ -10,6 +10,7 @@ import { buildAlertEvent } from "@/lib/alerts";
 import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
 import { reverseGeocode } from "@/lib/reverseGeocoding";
 import type { Submission } from "@/lib/types";
+import { validateGCPLInsertedSubmission } from "@/lib/submissionValidation";
 
 export const runtime = "nodejs";
 
@@ -679,36 +680,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Post-insert validation: ensure pilot constants were persisted.
-    const insertedSubmission = data as Record<string, unknown> | null;
-    const insertedClientId = insertedSubmission?.client_id as string | undefined | null;
-    const insertedProjectId = insertedSubmission?.project_id as string | undefined | null;
-    const insertedProjectName = insertedSubmission?.project_name as string | undefined | null;
-
-    if (
-      !insertedSubmission ||
-      insertedClientId !== GCPL_PILOT_CLIENT_ID ||
-      insertedProjectId !== GCPL_PILOT_PROJECT_ID ||
-      insertedProjectName !== GCPL_PILOT_PROJECT_NAME
-    ) {
-      // If a row was created but doesn't have the expected pilot IDs/names, remove it and return an error.
-      try {
-        if (insertedSubmission?.id) {
-          await supabase.from("submissions").delete().eq("id", insertedSubmission.id);
-        }
-      } catch (cleanupError) {
-        console.warn("[submissions] failed to cleanup invalid insertion", { message: (cleanupError as Error).message });
-      }
-      console.warn("[submissions] GCPL post-insert validation failed", {
-        clientId: insertedClientId,
-        projectId: insertedProjectId,
-        projectName: insertedProjectName
-      });
-      return NextResponse.json(
-        { error: "Submission failed server validation for GCPL pilot: inconsistent project/client data." },
-        { status: 500 }
-      );
-    }
+    await validateGCPLInsertedSubmission(supabase, data);
 
     const alertEvents = [];
     if (brandReview.brandMatchStatus === "Mismatch") {
