@@ -21,7 +21,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { NIGERIA_REGIONS } from "@/lib/geography";
-import { displayProjectName } from "@/lib/projects";
+import { displayProjectName, FALLBACK_PROJECT_NAME } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { SignOutButton } from "@/components/SignOutButton";
 import { getPortfolioOperations, getProjectOperations, getStageTotals } from "@/lib/operations";
@@ -223,11 +223,13 @@ export function ClientDashboard({
   useEffect(() => {
     console.info("[client-dashboard] project context", {
       selectedProjectId,
-      selectedProjectName: selectedProjectName || null,
+      activeProjectId: selectedProjectId,
+      activeProjectName,
+      displayedProjectName: activeProjectName,
+      fallbackProjectName: FALLBACK_PROJECT_NAME,
       expectedDeploymentProjectId: selectedProjectId,
       dashboardProjectId: selectedProjectId,
       filtersProject: filters.project || null,
-      activeProjectName,
       projectOptions: projectOptions.slice(0, 10),
       projectCount: projects.length,
       submissionCount: submissions.length

@@ -6,6 +6,7 @@ import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
 import { notificationsEnabled } from "@/lib/notifications";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { DeploymentProgress, Project, ProjectTarget, Submission } from "@/lib/types";
+import { normalizeProjectRecords } from "@/lib/projects";
 
 export async function ClientRoutePage({ initialView = "overview" }: { initialView?: DashboardView }) {
   console.info("[client-route] entered", { initialView });
@@ -78,6 +79,7 @@ export async function ClientRoutePage({ initialView = "overview" }: { initialVie
   const assignedProjectIds = Array.isArray((context as any).profile?.assigned_project_ids) ? ((context as any).profile.assigned_project_ids as string[]) : [];
   const initialAssignedProject = (projects ?? []).find((p) => assignedProjectIds.includes(p.id));
   const initialProjectName = initialAssignedProject ? initialAssignedProject.project_name : undefined;
+  const normalizedProjects = normalizeProjectRecords(projects ?? []) as Project[];
   const [{ data: projectTargets }, { data: deploymentProgress }] =
     projectIds.length > 0
       ? await Promise.all([
@@ -96,7 +98,7 @@ export async function ClientRoutePage({ initialView = "overview" }: { initialVie
       client={effectiveClient}
       submissions={submissions as Submission[]}
       availableBrands={clientBrandNames}
-      projects={(projects ?? []) as Project[]}
+      projects={normalizedProjects}
       projectTargets={(projectTargets ?? []) as ProjectTarget[]}
       deploymentProgress={(deploymentProgress ?? []) as DeploymentProgress[]}
       initialView={initialView}
