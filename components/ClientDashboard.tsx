@@ -200,12 +200,41 @@ export function ClientDashboard({
 
     return Array.from(buckets.values()).sort((a, b) => a.date.localeCompare(b.date));
   }, [filtered]);
-  const projectOptions = Array.from(new Set(submissions.map((item) => displayProjectName(item.project_name)))).sort();
-  const campaignOptions = Array.from(new Set(projects.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
-  const activeProjectName = filters.project || (projectOptions.length === 1 ? projectOptions[0] : "All projects");
-  const clientDisplayName = client.name;
+  const projectOptions = useMemo(
+    () => Array.from(new Set([...projects.map((project) => displayProjectName(project.project_name)), ...submissions.map((item) => displayProjectName(item.project_name))])).sort(),
+    [projects, submissions]
+  );
+  const selectedProject = useMemo(
+    () =>
+      filters.project
+        ? projects.find((project) => displayProjectName(project.project_name) === filters.project)
+        : projects.length === 1
+        ? projects[0]
+        : undefined,
+    [filters.project, projects]
+  );
+  const selectedProjectId = selectedProject?.id ?? null;
+  const selectedProjectName = selectedProject ? displayProjectName(selectedProject.project_name) : filters.project || "";
+  const activeProjectName = selectedProjectName || (projectOptions.length === 1 ? projectOptions[0] : "All projects");
   const projectOperations = getProjectOperations(projects, projectTargets, filtered, deploymentProgress);
+  const contextProjectOperations = selectedProject ? projectOperations.filter((row) => row.project.id === selectedProject.id) : projectOperations;
   const portfolio = getPortfolioOperations(projectOperations);
+  const contextPortfolio = getPortfolioOperations(contextProjectOperations);
+  useEffect(() => {
+    console.info("[client-dashboard] project context", {
+      selectedProjectId,
+      selectedProjectName: selectedProjectName || null,
+      expectedDeploymentProjectId: selectedProjectId,
+      dashboardProjectId: selectedProjectId,
+      filtersProject: filters.project || null,
+      activeProjectName,
+      projectOptions: projectOptions.slice(0, 10),
+      projectCount: projects.length,
+      submissionCount: submissions.length
+    });
+  }, [selectedProjectId, selectedProjectName, filters.project, activeProjectName, projectOptions.length, projects.length, submissions.length]);
+  const campaignOptions = Array.from(new Set(projects.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
+  const clientDisplayName = client.name;
   const statesCovered = stateCounts.filter((item) => item.state !== "Unknown").length;
   const regionsCovered = regionCounts.filter((item) => item.region !== "Unknown").length;
   const brandsCovered = brandCounts.length;
@@ -429,10 +458,10 @@ export function ClientDashboard({
         {activeView === "analytics" ? (
           <div className="grid min-w-0 gap-5">
             <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <SummaryCard label="Expected deployment" value={portfolio.expected} />
-              <SummaryCard label="Actual deployment" value={portfolio.actual} />
-              <SummaryCard label="Outstanding" value={portfolio.outstanding} />
-              <SummaryCard label="Completion" value={portfolio.completion} suffix="%" />
+              <SummaryCard label="Expected deployment" value={contextPortfolio.expected} />
+              <SummaryCard label="Actual deployment" value={contextPortfolio.actual} />
+              <SummaryCard label="Outstanding" value={contextPortfolio.outstanding} />
+              <SummaryCard label="Completion" value={contextPortfolio.completion} suffix="%" />
             </div>
             <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <SummaryCard label="States covered" value={statesCovered} />
