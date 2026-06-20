@@ -80,6 +80,7 @@ const syncedQueueVisibleMs = 2 * 60 * 1000;
 const queueRetryIntervalMs = 60000;
 const GCPLC_PILOT_BRAND = "Darling";
 const GCPL_PILOT_PROJECT_NAME = "Darling Hair Dealer Board";
+const GCPL_PILOT_PROJECT_ID = "ee726c3f-ed04-4173-bea9-2f542dc8a00c";
 
 function isQueueableFailure(error: unknown) {
   if (typeof navigator !== "undefined" && !navigator.onLine) return true;
@@ -91,6 +92,7 @@ function isQueueableFailure(error: unknown) {
 export default function SubmitPage() {
   const [installerName, setInstallerName] = useState("");
   const [projectName, setProjectName] = useState(GCPL_PILOT_PROJECT_NAME);
+  const [projectId, setProjectId] = useState(GCPL_PILOT_PROJECT_ID);
   const [brandName, setBrandName] = useState(GCPLC_PILOT_BRAND);
   const [installerState, setInstallerState] = useState("");
   const installerRegion = getRegionForState(installerState);
@@ -203,9 +205,11 @@ export default function SubmitPage() {
     }
     // Always force project to GCPL pilot project; do not load from draft
     setProjectName(GCPL_PILOT_PROJECT_NAME);
+    setProjectId(GCPL_PILOT_PROJECT_ID);
     console.info("[submit-project-default]", {
       stage: "page-mounted",
       project: GCPL_PILOT_PROJECT_NAME,
+      projectId: GCPL_PILOT_PROJECT_ID,
       source: "pilot-default"
     });
     refreshQueue();
@@ -216,8 +220,8 @@ export default function SubmitPage() {
       clearInstallerDraft();
       return;
     }
-    saveInstallerDraft({ installerName, projectName, brandName, installerState, installerLga, manualLocationDescription, manualLandmark, selectedLocationId });
-  }, [brandName, installerLga, installerName, installerState, manualLandmark, manualLocationDescription, projectName, selectedLocationId]);
+    saveInstallerDraft({ installerName, projectId, projectName, brandName, installerState, installerLga, manualLocationDescription, manualLandmark, selectedLocationId });
+  }, [brandName, installerLga, installerName, installerState, manualLandmark, manualLocationDescription, projectId, projectName, selectedLocationId]);
 
   useEffect(() => {
     const sessionStart = performance.now();
@@ -242,9 +246,11 @@ export default function SubmitPage() {
         if (accountName) setInstallerName(accountName);
         // For GCPL pilot, always use pilot project; do not override with session
         setProjectName(GCPL_PILOT_PROJECT_NAME);
+        setProjectId(GCPL_PILOT_PROJECT_ID);
         console.info("[submit-project-default]", {
           stage: "session-fetched",
           project: GCPL_PILOT_PROJECT_NAME,
+          projectId: GCPL_PILOT_PROJECT_ID,
           source: "pilot-default-override",
           sessionProvidedProject: (body as any)?.resolvedAssignedProjectName ?? null
         });
@@ -258,6 +264,7 @@ export default function SubmitPage() {
         setRole(null);
         // Ensure project is set even if session fails
         setProjectName(GCPL_PILOT_PROJECT_NAME);
+        setProjectId(GCPL_PILOT_PROJECT_ID);
       });
   }, []);
 
@@ -411,6 +418,7 @@ export default function SubmitPage() {
           image &&
           installerName.trim() &&
           projectName === GCPL_PILOT_PROJECT_NAME &&
+          projectId === GCPL_PILOT_PROJECT_ID &&
           installerState &&
           installerRegion &&
           brandName.trim() &&
@@ -420,12 +428,15 @@ export default function SubmitPage() {
           !isSubmitting &&
           !isGettingLocation
       ),
-    [brandName, gpsCaptured, hasUsableAddress, image, installerName, installerRegion, installerState, installerUserId, isGettingLocation, isSubmitting, manualLandmark, projectName, role, selectedOutlet]
+    [brandName, gpsCaptured, hasUsableAddress, image, installerName, installerRegion, installerState, installerUserId, isGettingLocation, isSubmitting, manualLandmark, projectId, projectName, role, selectedOutlet]
   );
   const outletStepErrors = useMemo(() => {
     const messages: string[] = [];
     if (!role || !installerUserId) messages.push("Please wait for your installer account to load.");
-    if (projectName !== GCPL_PILOT_PROJECT_NAME) messages.push(`Project is required and must be set to ${GCPL_PILOT_PROJECT_NAME}.`);
+    if (projectName !== GCPL_PILOT_PROJECT_NAME || projectId !== GCPL_PILOT_PROJECT_ID)
+      messages.push(
+        `Project must be locked to ${GCPL_PILOT_PROJECT_NAME} and use project ID ${GCPL_PILOT_PROJECT_ID}.`
+      );
     if (!brandConfirmed) messages.push("Brand must be Darling for this pilot.");
     if (!installerState) messages.push("State is required.");
     if (!installerRegion) messages.push("A valid region must be derived from the selected State.");
@@ -638,7 +649,8 @@ export default function SubmitPage() {
     if (galleryInputRef.current) galleryInputRef.current.value = "";
     setBrandName(GCPLC_PILOT_BRAND);
     setProjectName(GCPL_PILOT_PROJECT_NAME);
-    console.info("[submit-reset]", { project: GCPL_PILOT_PROJECT_NAME });
+    setProjectId(GCPL_PILOT_PROJECT_ID);
+    console.info("[submit-reset]", { project: GCPL_PILOT_PROJECT_NAME, projectId: GCPL_PILOT_PROJECT_ID });
     setInstallerState("");
     setInstallerLga("");
     setSelectedLocationId("");
@@ -873,6 +885,7 @@ export default function SubmitPage() {
       installerUserId,
       installerName,
       installerEmail,
+      projectId,
       projectName,
       brandName,
       installerState,
@@ -1107,6 +1120,7 @@ export default function SubmitPage() {
       formData.append("localSubmissionId", localSubmissionId);
       formData.append("installerName", installerName);
       formData.append("installerEmail", installerEmail ?? "");
+      formData.append("projectId", projectId);
       formData.append("projectName", projectName);
       formData.append("brandName", brandName);
       formData.append("installerState", installerState);
@@ -1416,14 +1430,13 @@ export default function SubmitPage() {
               </div>
 
               <Field label="Project name">
-                <input
-                  className="min-h-11 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                  id="projectName"
-                  name="projectName"
-                  value={projectName}
-                  onChange={(event) => setProjectName(event.target.value)}
-                  required
-                />
+                <input type="hidden" name="projectId" value={projectId} />
+                <div className="min-h-11 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-black text-slate-950">
+                  {GCPL_PILOT_PROJECT_NAME}
+                </div>
+                <span className="whitespace-normal break-words text-xs leading-snug text-slate-500">
+                  Locked for the GCPLC Darling pilot.
+                </span>
               </Field>
 
               <Field label="Brand">

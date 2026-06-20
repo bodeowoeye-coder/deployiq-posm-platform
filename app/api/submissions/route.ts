@@ -225,13 +225,17 @@ export async function POST(request: Request) {
 
     const submittedInstallerName = cleanString(formData.get("installerName"));
     const localSubmissionId = cleanString(formData.get("localSubmissionId"));
+    const projectId = cleanString(formData.get("projectId"));
     const projectName = cleanString(formData.get("projectName"));
     const submittedBrandName = cleanString(formData.get("brandName"));
     const installerState = cleanString(formData.get("installerState"));
     const submittedInstallerRegion = cleanString(formData.get("installerRegion"));
     const installerLga = cleanString(formData.get("installerLga"));
-    if (!projectName) {
-      return NextResponse.json({ error: "Project name is required." }, { status: 400 });
+    if (!projectId || projectId !== "ee726c3f-ed04-4173-bea9-2f542dc8a00c") {
+      return NextResponse.json({ error: "Project ID is invalid or required." }, { status: 400 });
+    }
+    if (!projectName || projectName !== "Darling Hair Dealer Board") {
+      return NextResponse.json({ error: "Project name is invalid or required." }, { status: 400 });
     }
 
     const submittedResolvedAddress = cleanString(formData.get("resolvedAddress"));
@@ -335,28 +339,15 @@ export async function POST(request: Request) {
     const { data: matchingBrand } = brandName
       ? await supabase.from("brands").select("id, client_id, brand_name").ilike("brand_name", brandName).maybeSingle()
       : { data: null };
-    const { data: projectByName } = projectName
-      ? await supabase
-          .from("projects")
-          .select("id, client_id, project_name")
-          .eq("project_name", projectName)
-          .maybeSingle()
+    const { data: projectById } = projectId
+      ? await supabase.from("projects").select("id, client_id, project_name").eq("id", projectId).maybeSingle()
       : { data: null };
     const { data: godrejClient } =
-      !projectByName?.client_id && !matchingBrand?.client_id && projectName.toLowerCase().includes("godrej")
+      !projectById?.client_id && !matchingBrand?.client_id && projectName.toLowerCase().includes("godrej")
         ? await supabase.from("clients").select("id, name").eq("name", "Godrej Nigeria Ltd").maybeSingle()
         : { data: null };
-    const assignmentClientId = projectByName?.client_id ?? matchingBrand?.client_id ?? godrejClient?.id ?? null;
-    const { data: matchingProject } = assignmentClientId
-      ? projectByName?.client_id === assignmentClientId
-        ? { data: projectByName }
-        : await supabase
-            .from("projects")
-            .select("id, project_name")
-            .eq("client_id", assignmentClientId)
-            .eq("project_name", projectName)
-            .maybeSingle()
-      : { data: null };
+    const assignmentClientId = projectById?.client_id ?? matchingBrand?.client_id ?? godrejClient?.id ?? null;
+    const matchingProject = projectById?.id === projectId ? projectById : null;
     const resolvedBrandName = matchingBrand?.brand_name ?? (brandName || null);
     console.info("[submit-server-timing]", {
       stage: "project-assignment",

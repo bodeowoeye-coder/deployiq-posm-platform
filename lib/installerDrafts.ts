@@ -2,6 +2,7 @@ import { getRegionForState } from "@/lib/geography";
 
 export type InstallerDraft = {
   installerName: string;
+  projectId: string;
   projectName: string;
   brandName: string;
   installerState: string;
@@ -18,6 +19,7 @@ export type QueuedSubmissionFields = {
   installerUserId: string | null;
   installerName: string;
   installerEmail?: string | null;
+  projectId: string;
   projectName: string;
   brandName: string;
   installerState: string;
@@ -278,6 +280,7 @@ export function buildQueuedSubmissionFormData(item: QueuedSubmissionRecord, subm
   formData.append("localSubmissionId", item.id);
   formData.append("installerName", item.fields.installerName);
   formData.append("installerEmail", item.fields.installerEmail ?? "");
+  formData.append("projectId", item.fields.projectId);
   formData.append("projectName", item.fields.projectName);
   formData.append("brandName", item.fields.brandName);
   formData.append("installerState", item.fields.installerState);
