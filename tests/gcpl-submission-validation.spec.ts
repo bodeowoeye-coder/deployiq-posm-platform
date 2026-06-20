@@ -8,11 +8,15 @@ function mockSupabase() {
     deletedFlag: () => deleted,
     from: (tableName: string) => {
       return {
-        delete: async () => {
-          deleted = true;
-          return { data: null, error: null };
+        delete: function () {
+          return {
+            eq: () => {
+              deleted = true;
+              return { data: null, error: null };
+            }
+          };
         },
-        eq: function () {
+        select: function () {
           return this;
         }
       };
