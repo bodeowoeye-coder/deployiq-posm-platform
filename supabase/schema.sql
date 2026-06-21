@@ -464,9 +464,6 @@ create index if not exists submission_status_history_submission_id_idx on public
 create index if not exists alert_events_submission_id_idx on public.alert_events (submission_id, created_at desc);
 create index if not exists deployment_locations_state_idx on public.deployment_locations (state);
 create index if not exists deployment_locations_outlet_name_idx on public.deployment_locations (outlet_name);
-create unique index if not exists deployment_locations_outlet_code_unique_idx
-  on public.deployment_locations (outlet_code)
-  where outlet_code is not null and outlet_code <> '';
 
 alter table public.submissions enable row level security;
 alter table public.clients enable row level security;
