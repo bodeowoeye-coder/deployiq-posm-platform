@@ -84,6 +84,13 @@ function clientViewDescription(view: DashboardView) {
   return descriptions[view] ?? "Review deployment progress and installation visibility.";
 }
 
+function clientStatusClass(status: string) {
+  if (status === "Approved") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (status === "Rejected") return "bg-rose-100 text-rose-800 border-rose-200";
+  if (status === "Flagged") return "bg-orange-100 text-orange-800 border-orange-200";
+  return "bg-amber-100 text-amber-800 border-amber-200";
+}
+
 export function ClientDashboard({
   client,
   submissions,
@@ -493,7 +500,10 @@ export function ClientDashboard({
         <div className={`${activeView === "reports" ? "block" : "hidden"} min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white`}>
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
             <h2 className="min-w-0 break-words text-base font-bold leading-snug">Latest installations</h2>
-            <span className="text-sm text-slate-500">{filtered.length} shown</span>
+            <div className="text-right">
+              <span className="text-sm text-slate-500">{filtered.length} shown</span>
+              <p className="text-xs text-slate-500">Includes rejected and duplicate records.</p>
+            </div>
           </div>
           <div className="divide-y divide-slate-100">
             {filtered.length === 0 ? (
@@ -513,6 +523,10 @@ export function ClientDashboard({
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <h3 className="min-w-0 whitespace-normal break-words text-base font-bold leading-snug">{item.salon_name || "Name not visible"}</h3>
+                    <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${clientStatusClass(item.status)}`}>{item.status}</span>
+                    {item.duplicate_status && item.duplicate_status !== "Unique" ? (
+                      <span className="rounded-full border border-orange-200 bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-800">{item.duplicate_status}</span>
+                    ) : null}
                   </div>
                   <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-slate-600">{item.address || "Address not visible"}</p>
                   <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-500">
@@ -528,6 +542,18 @@ export function ClientDashboard({
                     GPS: {item.gps_latitude ?? "n/a"}, {item.gps_longitude ?? "n/a"} | {item.installation_date ?? displaySubmissionDate(item.submitted_at)} {item.installation_time ?? ""}
                   </p>
                   <p className="mt-2 whitespace-normal break-words text-sm leading-snug text-slate-600">OCR: {item.ocr_text || item.ai_raw_text || "No extracted text"}</p>
+                  {item.status === "Rejected" ? (
+                    <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">
+                      <p>
+                        <strong>Rejection reason:</strong> {item.rejection_reason || "Not specified"}
+                      </p>
+                      {item.approval_comments ? (
+                        <p className="mt-1">
+                          <strong>Admin comment:</strong> {item.approval_comments}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </article>
             ))}

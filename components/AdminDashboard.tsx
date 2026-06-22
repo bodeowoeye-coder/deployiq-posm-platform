@@ -30,6 +30,7 @@ import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, get
 import { StateCombobox } from "@/components/StateCombobox";
 import { getRegionForState, NIGERIA_REGIONS, NIGERIA_STATES } from "@/lib/geography";
 import { AdminProjectNotificationActions } from "@/components/AdminProjectNotificationActions";
+import { SUBMISSION_REJECTION_REASONS, isSubmissionRejectionReason } from "@/lib/submissionRejection";
 
 type Filters = {
   query: string;
@@ -52,6 +53,12 @@ type OutletImportRow = {
   address?: string | null;
   brand_type?: string | null;
   outlet_code?: string | null;
+};
+
+type PendingRejectionState = {
+  id: string;
+  reason: string;
+  comment: string;
 };
 
 const blankFilters: Filters = {
@@ -272,6 +279,7 @@ export function AdminDashboard({
   const [dashboardPanelsReady, setDashboardPanelsReady] = useState(initialView !== "dashboard");
   const [scopeClientId, setScopeClientId] = useState("");
   const [scopeProjectId, setScopeProjectId] = useState("");
+  const [pendingRejection, setPendingRejection] = useState<PendingRejectionState | null>(null);
   const contentTopRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
   const currentUser =
@@ -484,13 +492,14 @@ export function AdminDashboard({
 
     if (!response.ok) {
       showToast("Could not save update.", "error");
-      return;
+      return false;
     }
 
     const body = await response.json();
     setRecords((current) => current.map((item) => (item.id === id ? body.submission : item)));
     setLastUpdated(formatDateTime(new Date()));
     showToast(changes.status ? `Status updated to ${changes.status}.` : "Update saved.");
+    return true;
   }
 
   async function downloadExport(href: string, label: string) {
@@ -1296,11 +1305,17 @@ export function AdminDashboard({
                     value={item.status}
                     onChange={(event) => {
                       const nextStatus = event.target.value as SubmissionStatus;
-                      if (nextStatus === "Rejected" && !window.confirm("Reject this installation?")) {
-                        event.target.value = item.status;
+                      if (nextStatus === "Rejected") {
+                        const existingReason = isSubmissionRejectionReason(item.rejection_reason ?? "") ? (item.rejection_reason ?? "") : "";
+                        setPendingRejection({
+                          id: item.id,
+                          reason: existingReason,
+                          comment: item.approval_comments ?? ""
+                        });
                         return;
                       }
-                      updateSubmission(item.id, { status: nextStatus });
+                      setPendingRejection((current) => (current?.id === item.id ? null : current));
+                      void updateSubmission(item.id, { status: nextStatus });
                     }}
                   >
                     {STATUSES.map((status) => (
@@ -1342,14 +1357,72 @@ export function AdminDashboard({
                     className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                     defaultValue={item.approval_comments ?? ""}
                     onBlur={(event) => updateSubmission(item.id, { approvalComments: event.target.value })}
-                    placeholder="Approval comment"
+                    placeholder="Admin comment (optional)"
                   />
-                  <input
+                  <select
                     className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
-                    defaultValue={item.rejection_reason ?? ""}
-                    onBlur={(event) => updateSubmission(item.id, { rejectionReason: event.target.value })}
-                    placeholder="Rejection reason"
-                  />
+                    value={isSubmissionRejectionReason(item.rejection_reason ?? "") ? item.rejection_reason ?? "" : ""}
+                    onChange={(event) => void updateSubmission(item.id, { rejectionReason: event.target.value })}
+                  >
+                    <option value="">Rejection reason (if rejected)</option>
+                    {SUBMISSION_REJECTION_REASONS.map((reason) => (
+                      <option key={reason} value={reason}>
+                        {reason}
+                      </option>
+                    ))}
+                  </select>
+                  {pendingRejection?.id === item.id ? (
+                    <div className="sm:col-span-2 xl:col-span-1 rounded-lg border border-rose-200 bg-rose-50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-rose-700">Reject submission</p>
+                      <div className="mt-2 grid gap-2">
+                        <select
+                          className="min-h-10 min-w-0 max-w-full rounded-lg border border-rose-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100"
+                          value={pendingRejection.reason}
+                          onChange={(event) => setPendingRejection((current) => (current ? { ...current, reason: event.target.value } : current))}
+                        >
+                          <option value="">Select rejection reason</option>
+                          {SUBMISSION_REJECTION_REASONS.map((reason) => (
+                            <option key={reason} value={reason}>
+                              {reason}
+                            </option>
+                          ))}
+                        </select>
+                        <textarea
+                          className="min-h-20 min-w-0 max-w-full rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100"
+                          value={pendingRejection.comment}
+                          onChange={(event) => setPendingRejection((current) => (current ? { ...current, comment: event.target.value } : current))}
+                          placeholder="Optional admin comment"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                            onClick={() => setPendingRejection(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-rose-300 bg-rose-600 px-3 text-xs font-semibold text-white transition hover:bg-rose-700"
+                            onClick={async () => {
+                              if (!pendingRejection.reason) {
+                                showToast("Select a rejection reason before rejecting.", "error");
+                                return;
+                              }
+                              const saved = await updateSubmission(item.id, {
+                                status: "Rejected",
+                                rejectionReason: pendingRejection.reason,
+                                approvalComments: pendingRejection.comment
+                              });
+                              if (saved) setPendingRejection(null);
+                            }}
+                          >
+                            Save rejection
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                     <div className="font-semibold">Status history</div>
                     <div className="mt-2 grid gap-1">

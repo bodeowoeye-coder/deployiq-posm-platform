@@ -173,10 +173,13 @@ export async function GET(request: Request) {
     const rows = [
       `Project: ${displayProjectName(item.project_name)}`,
       `Brand: ${item.brand_name || "Unassigned"}`,
+      `Status: ${item.status} | Duplicate: ${item.duplicate_status || "Unique"}`,
       `Region: ${item.installer_region || item.state_region || "Unknown"} | State: ${item.installer_state || "Unknown"} | LGA: ${item.installer_lga || "n/a"}`,
       `GPS: ${item.gps_latitude ?? "n/a"}, ${item.gps_longitude ?? "n/a"}`,
       `Address: ${item.address || "Address not visible"}`,
-      `Resolved GPS address: ${item.resolved_address || "Not resolved"}`
+      `Resolved GPS address: ${item.resolved_address || "Not resolved"}`,
+      `Rejection reason: ${item.rejection_reason || "Not rejected"}`,
+      `Admin comment: ${item.approval_comments || "None"}`
     ].map((row) => wrappedLines(doc, row, textWidth));
     const titleLines = wrappedLines(doc, item.salon_name || "Name not visible", textWidth);
     const textHeight = titleLines.length * 5 + rows.reduce((total, lines) => total + lines.length * rowLineHeight + 1.6, 0);

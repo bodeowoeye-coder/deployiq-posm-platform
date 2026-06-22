@@ -95,6 +95,10 @@ export async function GET(request: Request) {
   const rows = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at).map((item) => ({
     "Project Name": displayProjectName(item.project_name),
     "Brand Name": item.brand_name ?? "",
+    Status: item.status,
+    "Duplicate Status": item.duplicate_status ?? "Unique",
+    "Rejection Reason": item.rejection_reason ?? "",
+    "Admin Comment": item.approval_comments ?? "",
     "Salon/Store Name": item.salon_name ?? "",
     Address: item.address ?? "",
     "GPS Latitude": item.gps_latitude ?? "",
@@ -128,6 +132,10 @@ export async function GET(request: Request) {
     rows[0] ?? {
       "Project Name": "",
       "Brand Name": "",
+      Status: "",
+      "Duplicate Status": "",
+      "Rejection Reason": "",
+      "Admin Comment": "",
       "Salon/Store Name": "",
       Address: "",
       "GPS Latitude": "",

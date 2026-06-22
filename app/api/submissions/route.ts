@@ -11,6 +11,7 @@ import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
 import { reverseGeocode } from "@/lib/reverseGeocoding";
 import type { Submission } from "@/lib/types";
 import { validateGCPLInsertedSubmission } from "@/lib/submissionValidation";
+import { isSubmissionRejectionReason } from "@/lib/submissionRejection";
 
 export const runtime = "nodejs";
 
@@ -773,16 +774,23 @@ export async function PATCH(request: Request) {
       if (!(STATUSES as readonly string[]).includes(status)) {
         return NextResponse.json({ error: "Unsupported status." }, { status: 400 });
       }
+      if (status === "Rejected" && !rejectionReason) {
+        return NextResponse.json({ error: "Rejection reason is required when rejecting a submission." }, { status: 400 });
+      }
       updates.status = status;
       updates.reviewed_by = context.user.id;
       updates.reviewed_at = new Date().toISOString();
     }
 
+    if (rejectionReason && !isSubmissionRejectionReason(rejectionReason)) {
+      return NextResponse.json({ error: "Unsupported rejection reason." }, { status: 400 });
+    }
+
     if (salonName) updates.salon_name = salonName;
     if (address) updates.address = address;
     if (phone) updates.phone = phone;
-    if (approvalComments) updates.approval_comments = approvalComments;
-    if (rejectionReason) updates.rejection_reason = rejectionReason;
+    if (typeof body.approvalComments === "string") updates.approval_comments = approvalComments || null;
+    if (typeof body.rejectionReason === "string") updates.rejection_reason = rejectionReason || null;
     if (deploymentStageCode) {
       const validStages = ["production", "warehouse", "in_transit", "installed", "approved"];
       if (!validStages.includes(deploymentStageCode)) {
