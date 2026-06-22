@@ -40,6 +40,9 @@ type Filters = {
   campaign: string;
   brand: string;
 };
+type QuickReportFilter = "all" | "approved" | "pending" | "rejected" | "duplicates";
+
+type InsightView = "rejections" | "duplicates";
 
 const blankFilters: Filters = {
   query: "",
@@ -53,11 +56,12 @@ const blankFilters: Filters = {
   brand: ""
 };
 
-function buildExportQuery(filters: Filters) {
+function buildExportQuery(filters: Filters, quickFilter: QuickReportFilter = "all") {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (value.trim()) params.set(key, value.trim());
   });
+  if (quickFilter !== "all") params.set("quickFilter", quickFilter);
   const query = params.toString();
   return query ? `?${query}` : "";
 }
@@ -118,6 +122,8 @@ export function ClientDashboard({
   const [exporting, setExporting] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
   const [activeView, setActiveView] = useState<DashboardView>(initialView ?? "overview");
+  const [quickReportFilter, setQuickReportFilter] = useState<QuickReportFilter>("all");
+  const [insightView, setInsightView] = useState<InsightView | null>(null);
   const contentTopRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
 
@@ -190,7 +196,14 @@ export function ClientDashboard({
   const stateCounts = getStateCounts(filtered);
   const projectCounts = getProjectCounts(filtered);
   const mappedCount = filtered.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null).length;
-  const exportQuery = buildExportQuery(filters);
+    const reportFiltered = useMemo(() => {
+      if (quickReportFilter === "all") return filtered;
+      if (quickReportFilter === "approved") return filtered.filter((item) => item.status === "Approved");
+      if (quickReportFilter === "pending") return filtered.filter((item) => item.status === "Pending");
+      if (quickReportFilter === "rejected") return filtered.filter((item) => item.status === "Rejected");
+      return filtered.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique");
+    }, [filtered, quickReportFilter]);
+    const exportQuery = buildExportQuery(filters, quickReportFilter);
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
   const clientTrendSeries = useMemo(() => {
@@ -248,6 +261,13 @@ export function ClientDashboard({
   const regionsCovered = regionCounts.filter((item) => item.region !== "Unknown").length;
   const brandsCovered = brandCounts.length;
   const recentEvidence = filtered.slice(0, 5);
+  const approvedCount = filtered.filter((item) => item.status === "Approved").length;
+  const pendingCount = filtered.filter((item) => item.status === "Pending").length;
+  const rejectedCount = filtered.filter((item) => item.status === "Rejected").length;
+  const duplicateCount = filtered.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique").length;
+  const rejectionRows = filtered.filter((item) => item.status === "Rejected");
+  const duplicateRows = filtered.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique");
+  const insightRows = insightView === "rejections" ? rejectionRows : insightView === "duplicates" ? duplicateRows : [];
 
   function setFilter(key: keyof Filters, value: string) {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -337,10 +357,34 @@ export function ClientDashboard({
         </div>
 
         <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+          <SummaryCard label="Approved" value={approvedCount} />
+          <SummaryCard label="Pending" value={pendingCount} />
+          <SummaryActionCard label="Rejected" value={rejectedCount} onClick={() => setInsightView("rejections")} />
+          <SummaryActionCard label="Possible Duplicates" value={duplicateCount} onClick={() => setInsightView("duplicates")} />
+        </div>
+
+        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-4 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
           <SummaryCard label="States covered" value={statesCovered} />
           <SummaryCard label="Regions covered" value={regionsCovered} />
           <SummaryCard label="GPS/location evidence" value={mappedCount} />
           <SummaryCard label="Brands covered" value={brandsCovered} />
+        </div>
+
+        <div className={`${activeView === "overview" ? "flex" : "hidden"} mt-4 min-w-0 flex-wrap gap-2`}>
+          <button
+            type="button"
+            className="inline-flex min-h-10 items-center rounded-lg border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-800 transition hover:bg-rose-100"
+            onClick={() => setInsightView("rejections")}
+          >
+            View Rejections
+          </button>
+          <button
+            type="button"
+            className="inline-flex min-h-10 items-center rounded-lg border border-orange-200 bg-orange-50 px-4 text-sm font-semibold text-orange-800 transition hover:bg-orange-100"
+            onClick={() => setInsightView("duplicates")}
+          >
+            View Possible Duplicates
+          </button>
         </div>
 
         <div className={`${activeView === "overview" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
@@ -501,12 +545,21 @@ export function ClientDashboard({
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
             <h2 className="min-w-0 break-words text-base font-bold leading-snug">Latest installations</h2>
             <div className="text-right">
-              <span className="text-sm text-slate-500">{filtered.length} shown</span>
+              <span className="text-sm text-slate-500">{reportFiltered.length} shown</span>
               <p className="text-xs text-slate-500">Includes rejected and duplicate records.</p>
             </div>
           </div>
+          <div className="border-b border-slate-200 px-4 py-3">
+            <div className="flex min-w-0 flex-wrap gap-2">
+              <QuickFilterChip label="All Records" active={quickReportFilter === "all"} onClick={() => setQuickReportFilter("all")} />
+              <QuickFilterChip label="Approved" active={quickReportFilter === "approved"} onClick={() => setQuickReportFilter("approved")} />
+              <QuickFilterChip label="Pending" active={quickReportFilter === "pending"} onClick={() => setQuickReportFilter("pending")} />
+              <QuickFilterChip label="Rejected" active={quickReportFilter === "rejected"} onClick={() => setQuickReportFilter("rejected")} />
+              <QuickFilterChip label="Duplicates" active={quickReportFilter === "duplicates"} onClick={() => setQuickReportFilter("duplicates")} />
+            </div>
+          </div>
           <div className="divide-y divide-slate-100">
-            {filtered.length === 0 ? (
+            {reportFiltered.length === 0 ? (
               <div className="p-4">
                 <EmptyState
                   title={submissions.length === 0 ? "No submissions yet" : "No filtered results"}
@@ -515,7 +568,7 @@ export function ClientDashboard({
                 />
               </div>
             ) : null}
-            {filtered.map((item) => (
+            {reportFiltered.map((item) => (
               <article className="grid min-w-0 gap-3 overflow-hidden p-4 sm:grid-cols-[96px_minmax(0,1fr)]" key={item.id}>
                 <button className="h-24 w-24 overflow-hidden rounded-lg border border-slate-200" onClick={() => setLightboxIndex(filtered.findIndex((record) => record.id === item.id))}>
                   <img className="h-full w-full object-cover" src={item.image_url} alt={item.salon_name || "Uploaded board"} />
@@ -579,6 +632,68 @@ export function ClientDashboard({
         </div>
       </section>
       </div>
+      {insightView ? (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm p-4 sm:p-6" role="dialog" aria-modal="true">
+          <div className="mx-auto mt-4 w-[min(1180px,calc(100%-8px))] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-950">{insightView === "rejections" ? "Rejected Deployments" : "Possible Duplicates"}</h2>
+                <p className="text-xs text-slate-500">{insightRows.length} record{insightRows.length === 1 ? "" : "s"} shown</p>
+              </div>
+              <button
+                type="button"
+                className="inline-flex min-h-10 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                onClick={() => setInsightView(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-auto">
+              <table className="min-w-[900px] w-full text-left text-sm">
+                <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">Photo</th>
+                    <th className="px-3 py-2">Outlet Name</th>
+                    <th className="px-3 py-2">State</th>
+                    <th className="px-3 py-2">Installer</th>
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Rejection Reason</th>
+                    <th className="px-3 py-2">Admin Comment</th>
+                    <th className="px-3 py-2">Duplicate Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {insightRows.map((item) => (
+                    <tr key={item.id} className="border-t border-slate-100 align-top">
+                      <td className="px-3 py-2">
+                        <button type="button" className="h-12 w-12 overflow-hidden rounded border border-slate-200" onClick={() => setLightboxIndex(filtered.findIndex((record) => record.id === item.id))}>
+                          <img className="h-full w-full object-cover" src={item.image_url} alt={item.salon_name || "Submission"} />
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 font-semibold text-slate-900">{item.salon_name || "Name not visible"}</td>
+                      <td className="px-3 py-2 text-slate-700">{item.installer_state || "Unknown"}</td>
+                      <td className="px-3 py-2 text-slate-700">{item.installer_name || "Unknown"}</td>
+                      <td className="px-3 py-2 text-slate-700">{item.installation_date ?? displaySubmissionDate(item.submitted_at)}</td>
+                      <td className="px-3 py-2 text-slate-700">{item.status}</td>
+                      <td className="px-3 py-2 text-slate-700">{item.rejection_reason || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{item.approval_comments || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{item.duplicate_status || "Unique"}</td>
+                    </tr>
+                  ))}
+                  {insightRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="px-3 py-6 text-center text-slate-500">
+                        No records to display.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <PhotoLightbox submissions={filtered} activeIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} onNavigate={setLightboxIndex} audience="client" />
     </main>
   );
@@ -624,6 +739,20 @@ function ExportButton({ onClick, icon, label, loading }: { onClick: () => void; 
   );
 }
 
+function QuickFilterChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex min-h-9 items-center rounded-lg border px-3 text-xs font-semibold transition ${
+        active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+      }`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
 function ExecutiveBars({ title, rows, accent = "#0b7c59" }: { title: string; rows: Array<[string, number]>; accent?: string }) {
   const max = Math.max(...rows.map((row) => row[1]), 1);
   return (
@@ -647,6 +776,21 @@ function ExecutiveBars({ title, rows, accent = "#0b7c59" }: { title: string; row
         </div>
       )}
     </div>
+  );
+}
+
+function SummaryActionCard({ label, value, onClick }: { label: string; value: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="min-w-0 h-full overflow-hidden rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-orange-200 hover:bg-orange-50"
+    >
+      <div className="whitespace-normal break-words text-xs font-semibold uppercase leading-snug text-slate-500">{label}</div>
+      <div className="mt-3 flex items-baseline gap-3">
+        <div className="text-3xl font-extrabold leading-tight text-slate-900">{value}</div>
+      </div>
+    </button>
   );
 }
 

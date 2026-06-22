@@ -4,8 +4,7 @@ import { getCurrentUserContext } from "@/lib/auth";
 import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getBrandCounts, getRegionCounts } from "@/lib/reporting";
-import { getPortfolioOperations, getProjectOperations } from "@/lib/operations";
-import type { DeploymentProgress, ProjectTarget, Submission } from "@/lib/types";
+import type { Submission } from "@/lib/types";
 import { displayProjectName } from "@/lib/projects";
 import { createReportId, drawReportFooter, drawReportHeader } from "@/lib/reportBranding";
 
@@ -16,6 +15,13 @@ const pageWidth = 210;
 const margin = 14;
 const contentBottom = 280;
 const rowLineHeight = 4.5;
+
+function ensurePageSpace(doc: jsPDF, requiredHeight: number, y: number, header: Array<[string, string]>) {
+  if (y + requiredHeight <= contentBottom) return y;
+  doc.addPage();
+  drawReportHeader(doc, pageWidth, "Client Deployment Evidence", header);
+  return 66;
+}
 
 function wrappedLines(doc: jsPDF, text: string, width: number) {
   return doc.splitTextToSize(text, width) as string[];
@@ -54,10 +60,11 @@ export async function GET(request: Request) {
   const startDate = searchParams.get("startDate")?.trim();
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
+  const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected" | "duplicates";
   const supabase = createAdminSupabase();
   const scoped = await loadClientSubmissionScope(supabase, client, clientId);
   const searchText = search?.toLowerCase() ?? "";
-  const submissions = scoped.submissions.filter((item) => {
+  let submissions = scoped.submissions.filter((item) => {
     const date = item.installation_date ?? item.submitted_at.slice(0, 10);
     const campaignName = scoped.projects.find((projectRow) => projectRow.id === item.project_id || projectRow.project_name === item.project_name)?.campaign_name ?? "";
     const searchable = [
@@ -87,6 +94,12 @@ export async function GET(request: Request) {
       (!searchText || searchable.includes(searchText))
     );
   }).filter((submission) => !submission.archived_at) as Submission[];
+
+  if (quickFilter === "approved") submissions = submissions.filter((item) => item.status === "Approved");
+  if (quickFilter === "pending") submissions = submissions.filter((item) => item.status === "Pending");
+  if (quickFilter === "rejected") submissions = submissions.filter((item) => item.status === "Rejected");
+  if (quickFilter === "duplicates") submissions = submissions.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique");
+
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-FLT" : "DPIQ-CLT");
@@ -95,18 +108,16 @@ export async function GET(request: Request) {
   const clientDisplayName = scoped.effectiveClient.name;
   const regionCounts = getRegionCounts(submissions);
   const brandCounts = getBrandCounts(submissions);
-  const projectIds = scoped.projects.map((item) => item.id);
-  const [{ data: projectTargets }, { data: deploymentProgress }] =
-    projectIds.length > 0
-      ? await Promise.all([
-          supabase.from("project_targets").select("*").in("project_id", projectIds),
-          supabase.from("deployment_progress").select("*").in("project_id", projectIds)
-        ])
-      : [{ data: [] }, { data: [] }];
-  const projectOperations = getProjectOperations(scoped.projects, (projectTargets ?? []) as ProjectTarget[], submissions, (deploymentProgress ?? []) as DeploymentProgress[]);
-  const portfolio = getPortfolioOperations(projectOperations);
-  const statesCovered = new Set(submissions.map((item) => item.installer_state).filter(Boolean)).size;
-  const gpsEvidence = submissions.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null).length;
+  const approvedCount = submissions.filter((item) => item.status === "Approved").length;
+  const pendingCount = submissions.filter((item) => item.status === "Pending").length;
+  const rejectedRows = submissions.filter((item) => item.status === "Rejected");
+  const possibleDuplicateRows = submissions.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique");
+  const headerRows: Array<[string, string]> = [
+    ["Client Name", clientDisplayName],
+    ["Project Name", projectTitle],
+    ["Generated Date/Time", generatedAt],
+    ["Report ID", reportId]
+  ];
   drawReportHeader(doc, pageWidth, `${isFiltered ? "Filtered" : "Full"} Client Deployment Report`, [
     ["Client Name", clientDisplayName],
     ["Project Name", projectTitle],
@@ -115,17 +126,16 @@ export async function GET(request: Request) {
   ]);
 
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, y, pageWidth - margin * 2, 30, 2, 2, "F");
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 34, 2, 2, "F");
   const summary = [
-    ["Expected", portfolio.expected],
-    ["Actual", portfolio.actual],
-    ["Outstanding", portfolio.outstanding],
-    ["Complete", `${portfolio.completion}%`],
-    ["States", statesCovered],
-    ["GPS evidence", gpsEvidence]
+    ["Total Deployments", submissions.length],
+    ["Approved", approvedCount],
+    ["Pending", pendingCount],
+    ["Rejected", rejectedRows.length],
+    ["Possible Duplicates", possibleDuplicateRows.length]
   ];
   summary.forEach(([label, value], index) => {
-    const x = margin + 8 + index * 29;
+    const x = margin + 8 + index * 36;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
@@ -135,7 +145,7 @@ export async function GET(request: Request) {
     doc.setTextColor(15, 23, 42);
     doc.text(String(value), x, y + 22);
   });
-  y += 42;
+  y += 46;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
@@ -166,6 +176,59 @@ export async function GET(request: Request) {
   });
   y += 56;
 
+  y = ensurePageSpace(doc, 34, y, headerRows);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Rejected Deployments Summary", margin, y);
+  y += 6;
+  if (rejectedRows.length === 0) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text("No rejected deployments in this dataset.", margin, y);
+    y += 8;
+  } else {
+    rejectedRows.slice(0, 10).forEach((item) => {
+      y = ensurePageSpace(doc, 8, y, headerRows);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`• ${item.salon_name || "Name not visible"} | ${item.installer_state || "Unknown state"} | ${item.rejection_reason || "Not specified"}`, margin, y);
+      y += 5;
+      if (item.approval_comments) {
+        doc.setTextColor(100, 116, 139);
+        doc.text(`  Admin comment: ${item.approval_comments}`, margin, y);
+        y += 4;
+      }
+    });
+    y += 3;
+  }
+
+  y = ensurePageSpace(doc, 28, y, headerRows);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Possible Duplicates Summary", margin, y);
+  y += 6;
+  if (possibleDuplicateRows.length === 0) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text("No possible duplicates in this dataset.", margin, y);
+    y += 8;
+  } else {
+    possibleDuplicateRows.slice(0, 10).forEach((item) => {
+      y = ensurePageSpace(doc, 6, y, headerRows);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`• ${item.salon_name || "Name not visible"} | ${item.installer_state || "Unknown state"} | ${item.duplicate_status || "Possible Duplicate"}`, margin, y);
+      y += 4.5;
+    });
+    y += 3;
+  }
+
   for (const item of submissions) {
     doc.setFontSize(8);
     const textX = margin + 30;
@@ -187,12 +250,7 @@ export async function GET(request: Request) {
 
     if (y + cardHeight > contentBottom) {
       doc.addPage();
-      drawReportHeader(doc, pageWidth, "Client Deployment Evidence", [
-        ["Client Name", clientDisplayName],
-        ["Project Name", projectTitle],
-        ["Generated Date/Time", generatedAt],
-        ["Report ID", reportId]
-      ]);
+      drawReportHeader(doc, pageWidth, "Client Deployment Evidence", headerRows);
       y = 66;
     }
 
