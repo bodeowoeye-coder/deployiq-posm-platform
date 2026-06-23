@@ -408,6 +408,7 @@ export function AdminDashboard({
   const filtered = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     const installer = filters.installer.trim().toLowerCase();
+    const isSubmissionsView = activeView === "submissions";
 
     return scopedRecords.filter((item) => {
       const date = item.installation_date ?? item.submitted_at.slice(0, 10);
@@ -431,21 +432,22 @@ export function AdminDashboard({
 
       return (
         (!query || searchable.includes(query)) &&
-        (!filters.startDate || date >= filters.startDate) &&
-        (!filters.endDate || date <= filters.endDate) &&
-        (!filters.state || item.installer_state === filters.state) &&
-        (!filters.region || item.installer_region === filters.region) &&
-        (!filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
-        (!installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
-        (!filters.project || displayProjectName(item.project_name) === filters.project) &&
-        (!filters.campaign ||
+        (isSubmissionsView || !filters.startDate || date >= filters.startDate) &&
+        (isSubmissionsView || !filters.endDate || date <= filters.endDate) &&
+        (isSubmissionsView || !filters.state || item.installer_state === filters.state) &&
+        (isSubmissionsView || !filters.region || item.installer_region === filters.region) &&
+        (isSubmissionsView || !filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
+        (isSubmissionsView || !installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
+        (isSubmissionsView || !filters.project || displayProjectName(item.project_name) === filters.project) &&
+        (isSubmissionsView ||
+          !filters.campaign ||
           scopedProjectRecords.find((project) => project.id === item.project_id || project.project_name === item.project_name)?.campaign_name === filters.campaign) &&
-        (!filters.brand || item.brand_name === filters.brand) &&
+        (isSubmissionsView || !filters.brand || item.brand_name === filters.brand) &&
         (!filters.status || item.status === filters.status) &&
         (filters.gps === "all" || (filters.gps === "verified" ? hasValidGps(item) : !hasValidGps(item)))
       );
     });
-  }, [filters, scopedRecords, scopedProjectRecords]);
+  }, [activeView, filters, scopedRecords, scopedProjectRecords]);
 
   const dailyCounts = getDailyCounts(filtered);
   const regionCounts = getRegionCounts(filtered);
@@ -1057,21 +1059,21 @@ export function AdminDashboard({
           <p className="mt-2 text-xs font-medium text-slate-500">Last updated: {lastUpdated || "Loading..."}</p>
         </div>
 
-        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
           <SummaryCard label="Expected deployments" value={portfolio.expected} />
           <SummaryCard label="Actual deployments" value={portfolio.actual} />
           <SummaryCard label="Completion" value={portfolio.completion} suffix="%" />
           <SummaryCard label="Outstanding" value={portfolio.outstanding} />
         </div>
 
-        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
           <SummaryCard label="Deployment efficiency" value={portfolio.deploymentEfficiency} suffix="%" />
           <SummaryCard label="Installer performance" value={portfolio.installerPerformance} suffix="%" />
           <SummaryCard label="Average approval time" value={portfolio.averageApprovalHours} suffix="h" />
           <SummaryCard label="SLA compliance" value={portfolio.slaCompliance} suffix="%" />
         </div>
 
-        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-6`}>
+        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-6`}>
           <SummaryCard label="Total installs" value={filtered.length} />
           <SummaryCard label="Today" value={todayCount} />
           <SummaryCard label="Brands" value={brandCounts.length} />
@@ -1080,13 +1082,13 @@ export function AdminDashboard({
           <SummaryCard label="Rejected" value={rejectedCount} />
         </div>
 
-        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3`}>
+        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3`}>
           <SummaryCard label="GPS Verified" value={gpsVerifiedCount} />
           <SummaryCard label="GPS Missing" value={gpsMissingCount} />
           <SummaryCard label="GPS Coverage" value={gpsCoveragePercent} suffix="%" />
         </div>
 
-        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-5`}>
+        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-5`}>
           <SummaryCard label="Success rate" value={metrics.successRate} suffix="%" />
           <SummaryCard label="Mismatch rate" value={metrics.mismatchRate} suffix="%" />
           <SummaryCard label="Duplicate rate" value={metrics.duplicateRate} suffix="%" />
@@ -1094,7 +1096,7 @@ export function AdminDashboard({
           <SummaryCard label="Avg. turnaround" value={metrics.approvalTurnaroundHours} suffix="h" />
         </div>
 
-        <div className={`${activeView === "dashboard" || activeView === "reports" || activeView === "submissions" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
+        <div className={`${activeView === "dashboard" || activeView === "reports" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
           <div className="grid min-w-0 gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
             <FilterField label="Search">
               <div className="relative">
@@ -1189,6 +1191,78 @@ export function AdminDashboard({
             <ExportButton onClick={() => downloadExport(`/api/exports/pdf${exportQuery}`, "Filtered PDF report")} icon="pdf" label="Filtered PDF report" loading={exporting === "Filtered PDF report"} />
           </div>
           {exportError ? <p className="mt-3 whitespace-normal break-words text-sm leading-snug text-rose-700">{exportError}</p> : null}
+        </div>
+
+        <div className={`${activeView === "submissions" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
+          <div className="grid min-w-0 gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+            <FilterField label="Search">
+              <div className="relative">
+                <Search className="absolute left-3 top-3 text-slate-400" aria-hidden size={16} />
+                <input className="min-h-10 w-full rounded-lg border border-slate-200 pl-9 pr-3 text-sm" value={filters.query} onChange={(event) => setFilter("query", event.target.value)} placeholder="Store, OCR, installer" />
+              </div>
+            </FilterField>
+            <FilterField label="Client Company">
+              <select
+                value={scopeClientId}
+                onChange={(event) => {
+                  setScopeClientId(event.target.value);
+                  setScopeProjectId("");
+                }}
+                className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
+              >
+                <option value="">All Client Companies</option>
+                {clientRecords.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.name}{client.status === "Inactive" ? " (Archived)" : ""}
+                  </option>
+                ))}
+              </select>
+            </FilterField>
+            <FilterField label="Project">
+              <select
+                value={scopeProjectId}
+                onChange={(event) => setScopeProjectId(event.target.value)}
+                className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
+              >
+                <option value="">All Projects</option>
+                {scopeProjectOptions.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {displayProjectName(project.project_name)}
+                  </option>
+                ))}
+              </select>
+            </FilterField>
+            <FilterField label="Status">
+              <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.status} onChange={(event) => setFilter("status", event.target.value)}>
+                <option value="">All statuses</option>
+                {STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </FilterField>
+            <FilterField label="GPS Status">
+              <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.gps} onChange={(event) => setFilter("gps", event.target.value as Filters["gps"])}>
+                <option value="all">All GPS</option>
+                <option value="verified">GPS Verified</option>
+                <option value="missing">GPS Missing</option>
+              </select>
+            </FilterField>
+          </div>
+
+          <div className="mt-4 flex min-w-0 flex-wrap gap-3">
+            <button
+              className="inline-flex min-h-10 min-w-[180px] flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50 sm:flex-none"
+              onClick={() => {
+                setFilters(blankFilters);
+                setScopeClientId("");
+                setScopeProjectId("");
+              }}
+            >
+              Clear filters
+            </button>
+          </div>
         </div>
 
         {activeView === "dashboard" && !dashboardPanelsReady ? (
