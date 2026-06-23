@@ -1058,21 +1058,21 @@ export function AdminDashboard({
           <p className="mt-2 text-xs font-medium text-slate-500">Last updated: {lastUpdated || "Loading..."}</p>
         </div>
 
-        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
           <SummaryCard label="Expected deployments" value={portfolio.expected} />
           <SummaryCard label="Actual deployments" value={portfolio.actual} />
           <SummaryCard label="Completion" value={portfolio.completion} suffix="%" />
           <SummaryCard label="Outstanding" value={portfolio.outstanding} />
         </div>
 
-        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
           <SummaryCard label="Deployment efficiency" value={portfolio.deploymentEfficiency} suffix="%" />
           <SummaryCard label="Installer performance" value={portfolio.installerPerformance} suffix="%" />
           <SummaryCard label="Average approval time" value={portfolio.averageApprovalHours} suffix="h" />
           <SummaryCard label="SLA compliance" value={portfolio.slaCompliance} suffix="%" />
         </div>
 
-        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-6`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-6`}>
           <SummaryCard label="Total installs" value={filtered.length} />
           <SummaryCard label="Today" value={todayCount} />
           <SummaryCard label="Brands" value={brandCounts.length} />
@@ -1081,13 +1081,13 @@ export function AdminDashboard({
           <SummaryCard label="Rejected" value={rejectedCount} />
         </div>
 
-        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3`}>
           <SummaryCard label="GPS Verified" value={gpsVerifiedCount} />
           <SummaryCard label="GPS Missing" value={gpsMissingCount} />
           <SummaryCard label="GPS Coverage" value={gpsCoveragePercent} suffix="%" />
         </div>
 
-        <div className={`${activeView === "dashboard" || activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-5`}>
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-5`}>
           <SummaryCard label="Success rate" value={metrics.successRate} suffix="%" />
           <SummaryCard label="Mismatch rate" value={metrics.mismatchRate} suffix="%" />
           <SummaryCard label="Duplicate rate" value={metrics.duplicateRate} suffix="%" />
