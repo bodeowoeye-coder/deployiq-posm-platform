@@ -26,11 +26,15 @@ function hasValidGps(item: Submission) {
   return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
+// headerContentStart: header draws metadata starting at top+37=49, 4 rows × 5mm = last row at 64.
+// Safe content start is 76 (12mm clear of last metadata row).
+const headerContentStart = 76;
+
 function ensurePageSpace(doc: jsPDF, requiredHeight: number, y: number, header: Array<[string, string]>) {
   if (y + requiredHeight <= contentBottom) return y;
   doc.addPage();
   drawReportHeader(doc, pageWidth, "Client Deployment Evidence", header);
-  return 66;
+  return headerContentStart;
 }
 
 function wrappedLines(doc: jsPDF, text: string, width: number) {
@@ -133,7 +137,7 @@ export async function GET(request: Request) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-FLT" : "DPIQ-CLT");
-  let y = 66;
+  let y = headerContentStart;
   const projectTitle = project || "All projects";
   const clientDisplayName = scoped.effectiveClient.name;
   const regionCounts = getRegionCounts(submissions);
@@ -247,7 +251,7 @@ export async function GET(request: Request) {
   doc.text(`${portfolio.outstanding} outstanding`, margin + 44, y);
 
   const insightsX = 112;
-  let insightsY = 103;
+  let insightsY = 113;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
@@ -270,7 +274,7 @@ export async function GET(request: Request) {
     insightsY += lines.length * 3.9 + 0.8;
   });
 
-  y = 122;
+  y = 132;
   doc.setFillColor(248, 250, 252);
   doc.roundedRect(margin, y, 88, 28, 2, 2, "F");
   doc.setFont("helvetica", "bold");
@@ -323,7 +327,7 @@ export async function GET(request: Request) {
     riskY += lines.length * 3.8 + 0.5;
   });
 
-  y = 154;
+  y = 164;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
@@ -372,7 +376,7 @@ export async function GET(request: Request) {
 
   doc.addPage();
   drawReportHeader(doc, pageWidth, `${isFiltered ? "Filtered" : "Full"} Client Deployment Report`, headerRows);
-  y = 66;
+  y = headerContentStart;
   y = ensurePageSpace(doc, 12, y, headerRows);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
@@ -418,7 +422,7 @@ export async function GET(request: Request) {
 
   doc.addPage();
   drawReportHeader(doc, pageWidth, "Client Deployment Evidence", headerRows);
-  y = 66;
+  y = headerContentStart;
 
   for (const item of submissions) {
     doc.setFontSize(8);
