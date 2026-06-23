@@ -70,7 +70,8 @@ export async function GET(request: Request) {
   const startDate = searchParams.get("startDate")?.trim();
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
-  const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected" | "gps_verified" | "gps_missing";
+  const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected";
+  const gpsFilter = (searchParams.get("gpsFilter")?.trim().toLowerCase() ?? "") as "" | "all_gps" | "gps_verified" | "gps_missing";
   const supabase = createAdminSupabase();
   const scoped = await loadClientSubmissionScope(supabase, client, clientId);
   const searchText = search?.toLowerCase() ?? "";
@@ -108,8 +109,15 @@ export async function GET(request: Request) {
   if (quickFilter === "approved") submissions = submissions.filter((item) => item.status === "Approved");
   if (quickFilter === "pending") submissions = submissions.filter((item) => item.status === "Pending");
   if (quickFilter === "rejected") submissions = submissions.filter((item) => item.status === "Rejected");
-  if (quickFilter === "gps_verified") submissions = submissions.filter((item) => hasValidGps(item));
-  if (quickFilter === "gps_missing") submissions = submissions.filter((item) => !hasValidGps(item));
+  const effectiveGpsFilter =
+    gpsFilter ||
+    ((searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_verified"
+      ? "gps_verified"
+      : (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_missing"
+      ? "gps_missing"
+      : "");
+  if (effectiveGpsFilter === "gps_verified") submissions = submissions.filter((item) => hasValidGps(item));
+  if (effectiveGpsFilter === "gps_missing") submissions = submissions.filter((item) => !hasValidGps(item));
 
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
@@ -163,7 +171,8 @@ export async function GET(request: Request) {
     ["Pending", pendingCount],
     ["Rejected", rejectedRows.length],
     ["GPS Verified", gpsVerifiedCount],
-    ["GPS Missing", gpsMissingCount]
+    ["GPS Missing", gpsMissingCount],
+    ["GPS Coverage %", `${gpsCoverage}%`]
   ];
   summary.forEach(([label, value], index) => {
     const column = index % 6;

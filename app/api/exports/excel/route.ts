@@ -9,6 +9,14 @@ import { createReportId, reportFooter, reportSubtitle } from "@/lib/reportBrandi
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function hasValidGps(item: Submission) {
+  if (item.gps_latitude === null || item.gps_longitude === null) return false;
+  const lat = Number(item.gps_latitude);
+  const lng = Number(item.gps_longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
 function todayForFilename() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -57,6 +65,7 @@ export async function GET(request: Request) {
   const campaign = searchParams.get("campaign")?.trim();
   const brand = searchParams.get("brand")?.trim();
   const status = searchParams.get("status")?.trim();
+  const gps = searchParams.get("gps")?.trim().toLowerCase();
   const startDate = searchParams.get("startDate")?.trim();
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
@@ -105,7 +114,11 @@ export async function GET(request: Request) {
 
   const reportId = createReportId(isFiltered ? "DPIQ-XLS-FLT" : "DPIQ-XLS");
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
-  const rows = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at).map((item) => ({
+  let filteredSubmissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
+  if (gps === "verified") filteredSubmissions = filteredSubmissions.filter((item) => hasValidGps(item));
+  if (gps === "missing") filteredSubmissions = filteredSubmissions.filter((item) => !hasValidGps(item));
+
+  const rows = filteredSubmissions.map((item) => ({
     "Installer Name": item.installer_name ?? "",
     "Project Name": displayProjectName(item.project_name),
     "Selected Brand": item.brand_name ?? "",

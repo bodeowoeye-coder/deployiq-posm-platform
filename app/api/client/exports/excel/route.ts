@@ -156,7 +156,8 @@ export async function GET(request: Request) {
   const startDate = searchParams.get("startDate")?.trim();
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
-  const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected" | "gps_verified" | "gps_missing";
+  const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected";
+  const gpsFilter = (searchParams.get("gpsFilter")?.trim().toLowerCase() ?? "") as "" | "all_gps" | "gps_verified" | "gps_missing";
   const supabase = createAdminSupabase();
   const scoped = await loadClientSubmissionScope(supabase, client, clientId);
   const searchText = search?.toLowerCase() ?? "";
@@ -195,8 +196,15 @@ export async function GET(request: Request) {
   if (quickFilter === "approved") filteredData = data.filter((item) => item.status === "Approved");
   if (quickFilter === "pending") filteredData = data.filter((item) => item.status === "Pending");
   if (quickFilter === "rejected") filteredData = data.filter((item) => item.status === "Rejected");
-  if (quickFilter === "gps_verified") filteredData = data.filter((item) => hasValidGps(item));
-  if (quickFilter === "gps_missing") filteredData = data.filter((item) => !hasValidGps(item));
+  const effectiveGpsFilter =
+    gpsFilter ||
+    ((searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_verified"
+      ? "gps_verified"
+      : (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_missing"
+      ? "gps_missing"
+      : "");
+  if (effectiveGpsFilter === "gps_verified") filteredData = filteredData.filter((item) => hasValidGps(item));
+  if (effectiveGpsFilter === "gps_missing") filteredData = filteredData.filter((item) => !hasValidGps(item));
 
   const projectTitle = project || "All projects";
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-XLS-FLT" : "DPIQ-CLT-XLS");
@@ -212,7 +220,8 @@ export async function GET(request: Request) {
     ["Generated Date", generatedAt],
     ["Report ID", reportId],
     ["Report Type", isFiltered ? "Filtered Client Excel Report" : "Full Client Excel Report"],
-    ["Quick Filter", quickFilter || "all"]
+    ["Status Filter", quickFilter || "all"],
+    ["GPS Filter", effectiveGpsFilter || "all_gps"]
   ]);
   const sheet = XLSX.utils.json_to_sheet(rows);
   styleSheet(sheet, rows);

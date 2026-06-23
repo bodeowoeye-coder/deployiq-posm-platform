@@ -44,6 +44,7 @@ type Filters = {
   campaign: string;
   brand: string;
   status: string;
+  gps: "all" | "verified" | "missing";
 };
 
 type OutletImportRow = {
@@ -72,7 +73,8 @@ const blankFilters: Filters = {
   project: "",
   campaign: "",
   brand: "",
-  status: ""
+  status: "",
+  gps: "all"
 };
 
 const adminAccountSettingsItems: Array<{ view: DashboardView; label: string; status?: "ready" | "coming-soon" }> = [
@@ -122,12 +124,25 @@ function formatDate(value: Date | string | null | undefined) {
 function buildExportQuery(filters: Filters, scope: { clientId?: string; projectId?: string } = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
+    if (key === "gps") {
+      const gpsValue = String(value).trim();
+      if (gpsValue && gpsValue !== "all") params.set(key, gpsValue);
+      return;
+    }
     if (value.trim()) params.set(key, value.trim());
   });
   if (scope.clientId?.trim()) params.set("clientId", scope.clientId.trim());
   if (scope.projectId?.trim()) params.set("projectId", scope.projectId.trim());
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function hasValidGps(item: Submission) {
+  if (item.gps_latitude === null || item.gps_longitude === null) return false;
+  const lat = Number(item.gps_latitude);
+  const lng = Number(item.gps_longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 function statusClass(status: string) {
@@ -426,7 +441,8 @@ export function AdminDashboard({
         (!filters.campaign ||
           scopedProjectRecords.find((project) => project.id === item.project_id || project.project_name === item.project_name)?.campaign_name === filters.campaign) &&
         (!filters.brand || item.brand_name === filters.brand) &&
-        (!filters.status || item.status === filters.status)
+        (!filters.status || item.status === filters.status) &&
+        (filters.gps === "all" || (filters.gps === "verified" ? hasValidGps(item) : !hasValidGps(item)))
       );
     });
   }, [filters, scopedRecords, scopedProjectRecords]);
@@ -441,6 +457,8 @@ export function AdminDashboard({
   const approvedCount = filtered.filter((item) => item.status === "Approved").length;
   const pendingCount = filtered.filter((item) => item.status === "Pending").length;
   const rejectedCount = filtered.filter((item) => item.status === "Rejected").length;
+  const gpsVerifiedCount = filtered.filter((item) => hasValidGps(item)).length;
+  const gpsMissingCount = filtered.length - gpsVerifiedCount;
   const scopeExportQuery = buildExportQuery(blankFilters, { clientId: scopeClientId, projectId: scopeProjectId });
   const exportQuery = buildExportQuery(filters, { clientId: scopeClientId, projectId: scopeProjectId });
   const metrics = getExecutiveMetrics(filtered);
@@ -452,6 +470,7 @@ export function AdminDashboard({
   const campaignOptions = Array.from(new Set(scopedProjectRecords.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
   const projectOperations = getProjectOperations(scopedProjectRecords, scopedTargetRecords, filtered, scopedDeploymentProgress);
   const portfolio = getPortfolioOperations(projectOperations);
+  const gpsCoveragePercent = portfolio.actual > 0 ? Number(((gpsVerifiedCount / portfolio.actual) * 100).toFixed(1)) : 0;
   const stageTotals = getStageTotals(projectOperations);
   const operationalAlerts = getOperationalAlerts(projectOperations);
   const allocationRows = getTargetAllocationRows(targetRecords, filtered, projectRecords);
@@ -1061,6 +1080,12 @@ export function AdminDashboard({
           <SummaryCard label="Rejected" value={rejectedCount} />
         </div>
 
+        <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3`}>
+          <SummaryCard label="GPS Verified" value={gpsVerifiedCount} />
+          <SummaryCard label="GPS Missing" value={gpsMissingCount} />
+          <SummaryCard label="GPS Coverage" value={gpsCoveragePercent} suffix="%" />
+        </div>
+
         <div className={`${activeView === "dashboard" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-5`}>
           <SummaryCard label="Success rate" value={metrics.successRate} suffix="%" />
           <SummaryCard label="Mismatch rate" value={metrics.mismatchRate} suffix="%" />
@@ -1143,6 +1168,13 @@ export function AdminDashboard({
                     {status}
                   </option>
                 ))}
+              </select>
+            </FilterField>
+            <FilterField label="GPS">
+              <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.gps} onChange={(event) => setFilter("gps", event.target.value as Filters["gps"])}>
+                <option value="all">All GPS</option>
+                <option value="verified">GPS Verified</option>
+                <option value="missing">GPS Missing</option>
               </select>
             </FilterField>
           </div>

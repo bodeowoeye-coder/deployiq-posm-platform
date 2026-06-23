@@ -40,7 +40,8 @@ type Filters = {
   campaign: string;
   brand: string;
 };
-type QuickReportFilter = "all" | "approved" | "pending" | "rejected" | "gps_verified" | "gps_missing";
+type ReportStatusFilter = "all" | "approved" | "pending" | "rejected";
+type ReportGpsFilter = "all_gps" | "gps_verified" | "gps_missing";
 
 type InsightView = "rejections";
 
@@ -56,12 +57,13 @@ const blankFilters: Filters = {
   brand: ""
 };
 
-function buildExportQuery(filters: Filters, quickFilter: QuickReportFilter = "all") {
+function buildExportQuery(filters: Filters, statusFilter: ReportStatusFilter = "all", gpsFilter: ReportGpsFilter = "all_gps") {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (value.trim()) params.set(key, value.trim());
   });
-  if (quickFilter !== "all") params.set("quickFilter", quickFilter);
+  if (statusFilter !== "all") params.set("quickFilter", statusFilter);
+  if (gpsFilter !== "all_gps") params.set("gpsFilter", gpsFilter);
   const query = params.toString();
   return query ? `?${query}` : "";
 }
@@ -130,7 +132,8 @@ export function ClientDashboard({
   const [exporting, setExporting] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
   const [activeView, setActiveView] = useState<DashboardView>(initialView ?? "overview");
-  const [quickReportFilter, setQuickReportFilter] = useState<QuickReportFilter>("all");
+  const [reportStatusFilter, setReportStatusFilter] = useState<ReportStatusFilter>("all");
+  const [reportGpsFilter, setReportGpsFilter] = useState<ReportGpsFilter>("all_gps");
   const [insightView, setInsightView] = useState<InsightView | null>(null);
   const contentTopRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
@@ -205,14 +208,20 @@ export function ClientDashboard({
   const projectCounts = getProjectCounts(filtered);
   const mappedCount = filtered.filter((item) => hasVerifiedGps(item)).length;
   const reportFiltered = useMemo(() => {
-    if (quickReportFilter === "all") return filtered;
-    if (quickReportFilter === "approved") return filtered.filter((item) => item.status === "Approved");
-    if (quickReportFilter === "pending") return filtered.filter((item) => item.status === "Pending");
-    if (quickReportFilter === "rejected") return filtered.filter((item) => item.status === "Rejected");
-    if (quickReportFilter === "gps_verified") return filtered.filter((item) => hasVerifiedGps(item));
-    return filtered.filter((item) => !hasVerifiedGps(item));
-  }, [filtered, quickReportFilter]);
-  const exportQuery = buildExportQuery(filters, quickReportFilter);
+    const byStatus =
+      reportStatusFilter === "all"
+        ? filtered
+        : reportStatusFilter === "approved"
+        ? filtered.filter((item) => item.status === "Approved")
+        : reportStatusFilter === "pending"
+        ? filtered.filter((item) => item.status === "Pending")
+        : filtered.filter((item) => item.status === "Rejected");
+
+    if (reportGpsFilter === "all_gps") return byStatus;
+    if (reportGpsFilter === "gps_verified") return byStatus.filter((item) => hasVerifiedGps(item));
+    return byStatus.filter((item) => !hasVerifiedGps(item));
+  }, [filtered, reportStatusFilter, reportGpsFilter]);
+  const exportQuery = buildExportQuery(filters, reportStatusFilter, reportGpsFilter);
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
   const clientTrendSeries = useMemo(() => {
@@ -554,12 +563,15 @@ export function ClientDashboard({
           </div>
           <div className="border-b border-slate-200 px-4 py-3">
             <div className="flex min-w-0 flex-wrap gap-2">
-              <QuickFilterChip label="All Records" active={quickReportFilter === "all"} onClick={() => setQuickReportFilter("all")} />
-              <QuickFilterChip label="Approved" active={quickReportFilter === "approved"} onClick={() => setQuickReportFilter("approved")} />
-              <QuickFilterChip label="Pending" active={quickReportFilter === "pending"} onClick={() => setQuickReportFilter("pending")} />
-              <QuickFilterChip label="Rejected" active={quickReportFilter === "rejected"} onClick={() => setQuickReportFilter("rejected")} />
-              <QuickFilterChip label="GPS Verified" active={quickReportFilter === "gps_verified"} onClick={() => setQuickReportFilter("gps_verified")} />
-              <QuickFilterChip label="GPS Missing" active={quickReportFilter === "gps_missing"} onClick={() => setQuickReportFilter("gps_missing")} />
+              <QuickFilterChip label="All Records" active={reportStatusFilter === "all"} onClick={() => setReportStatusFilter("all")} />
+              <QuickFilterChip label="Approved" active={reportStatusFilter === "approved"} onClick={() => setReportStatusFilter("approved")} />
+              <QuickFilterChip label="Pending" active={reportStatusFilter === "pending"} onClick={() => setReportStatusFilter("pending")} />
+              <QuickFilterChip label="Rejected" active={reportStatusFilter === "rejected"} onClick={() => setReportStatusFilter("rejected")} />
+            </div>
+            <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+              <QuickFilterChip label="All GPS" active={reportGpsFilter === "all_gps"} onClick={() => setReportGpsFilter("all_gps")} />
+              <QuickFilterChip label="GPS Verified" active={reportGpsFilter === "gps_verified"} onClick={() => setReportGpsFilter("gps_verified")} />
+              <QuickFilterChip label="GPS Missing" active={reportGpsFilter === "gps_missing"} onClick={() => setReportGpsFilter("gps_missing")} />
             </div>
           </div>
           <div className="divide-y divide-slate-100">
