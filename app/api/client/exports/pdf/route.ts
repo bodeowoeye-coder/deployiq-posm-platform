@@ -37,6 +37,17 @@ function wrappedLines(doc: jsPDF, text: string, width: number) {
   return doc.splitTextToSize(text, width) as string[];
 }
 
+function formatPercent(part: number, whole: number) {
+  if (whole <= 0) return 0;
+  return Math.round((part / whole) * 100);
+}
+
+function toSentenceCase(text: string) {
+  if (!text.trim()) return "Not specified";
+  const trimmed = text.trim();
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 async function imageToDataUrl(url: string) {
   try {
     const response = await fetch(url);
@@ -142,9 +153,30 @@ export async function GET(request: Request) {
   const approvedCount = submissions.filter((item) => item.status === "Approved").length;
   const pendingCount = submissions.filter((item) => item.status === "Pending").length;
   const rejectedRows = submissions.filter((item) => item.status === "Rejected");
+  const rejectedCount = rejectedRows.length;
   const gpsVerifiedCount = submissions.filter((item) => hasValidGps(item)).length;
   const gpsMissingCount = submissions.length - gpsVerifiedCount;
-  const gpsCoverage = submissions.length === 0 ? 0 : Math.round((gpsVerifiedCount / submissions.length) * 100);
+  const gpsCoverage = formatPercent(gpsVerifiedCount, submissions.length);
+  const approvalRate = formatPercent(approvedCount, submissions.length);
+  const rejectionRate = formatPercent(rejectedCount, submissions.length);
+
+  const stateCountMap = submissions.reduce((acc, item) => {
+    const key = item.installer_state || "Unknown";
+    acc.set(key, (acc.get(key) ?? 0) + 1);
+    return acc;
+  }, new Map<string, number>());
+  const leadingState = [...stateCountMap.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["N/A", 0];
+
+  const rejectionReasonMap = rejectedRows.reduce((acc, item) => {
+    const key = toSentenceCase(item.rejection_reason || "Not specified");
+    acc.set(key, (acc.get(key) ?? 0) + 1);
+    return acc;
+  }, new Map<string, number>());
+  const rejectionReasonRows = [...rejectionReasonMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => ({ reason, count }));
+  const mainRejectionReason = rejectionReasonRows[0] ?? { reason: "None", count: 0 };
+
   const headerRows: Array<[string, string]> = [
     ["Client Name", clientDisplayName],
     ["Project Name", projectTitle],
@@ -158,37 +190,140 @@ export async function GET(request: Request) {
     ["Report ID", reportId]
   ]);
 
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Executive Deployment Summary", margin, y);
+  y += 5;
+
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, y, pageWidth - margin * 2, 46, 2, 2, "F");
-  const summary = [
-    ["Expected Deployment", portfolio.expected],
-    ["Actual Deployment", portfolio.actual],
-    ["Outstanding", portfolio.outstanding],
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 27, 2, 2, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Campaign Health", margin + 3, y + 6.5);
+  const healthSummary = [
     ["Completion %", `${portfolio.completion}%`],
-    ["State Coverage", statesCovered],
-    ["Evidence Records", evidenceRecords],
-    ["Approved", approvedCount],
-    ["Pending", pendingCount],
-    ["Rejected", rejectedRows.length],
-    ["GPS Verified", gpsVerifiedCount],
-    ["GPS Missing", gpsMissingCount],
-    ["GPS Coverage %", `${gpsCoverage}%`]
+    ["GPS Compliance %", `${gpsCoverage}%`],
+    ["Approval Rate %", `${approvalRate}%`],
+    ["Rejection Rate %", `${rejectionRate}%`],
+    ["Actual Deployment", portfolio.actual],
+    ["Outstanding Deployment", portfolio.outstanding]
   ];
-  summary.forEach(([label, value], index) => {
-    const column = index % 6;
-    const row = Math.floor(index / 6);
-    const x = margin + 8 + column * 30;
-    const yOffset = y + row * 18;
+  healthSummary.forEach(([label, value], index) => {
+    const x = margin + 4 + index * 31;
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
+    doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
-    doc.text(String(label), x, yOffset + 10);
+    doc.text(String(label), x, y + 13);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
+    doc.setFontSize(10);
     doc.setTextColor(15, 23, 42);
-    doc.text(String(value), x, yOffset + 18);
+    doc.text(String(value), x, y + 20);
   });
-  y += 58;
+  y += 34;
+
+  const progressPct = Math.max(0, Math.min(100, portfolio.completion));
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Progress to Target", margin, y);
+  y += 4.5;
+  const progressBarWidth = 96;
+  doc.setDrawColor(203, 213, 225);
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(margin, y, progressBarWidth, 5, 1.5, 1.5, "FD");
+  doc.setFillColor(11, 124, 89);
+  doc.roundedRect(margin, y, (progressBarWidth * progressPct) / 100, 5, 1.5, 1.5, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`${progressPct}%`, margin + progressBarWidth + 4, y + 3.8);
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(51, 65, 85);
+  doc.text(`${portfolio.actual} completed`, margin, y);
+  doc.text(`${portfolio.outstanding} outstanding`, margin + 44, y);
+
+  const insightsX = 112;
+  let insightsY = 103;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Key Insights", insightsX, insightsY);
+  insightsY += 5;
+  const keyInsights = [
+    `Total deployed so far: ${portfolio.actual}`,
+    `Leading state: ${leadingState[0]} (${leadingState[1]})`,
+    `Total rejected deployments: ${rejectedCount}`,
+    `Main rejection reason: ${mainRejectionReason.reason} (${mainRejectionReason.count})`,
+    `GPS evidence: ${gpsVerifiedCount} valid, ${gpsMissingCount} missing`,
+    `Outstanding deployments: ${portfolio.outstanding}`
+  ];
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.6);
+  doc.setTextColor(51, 65, 85);
+  keyInsights.forEach((insight) => {
+    const lines = wrappedLines(doc, `• ${insight}`, 80);
+    doc.text(lines, insightsX, insightsY);
+    insightsY += lines.length * 3.9 + 0.8;
+  });
+
+  y = 122;
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(margin, y, 88, 28, 2, 2, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Deployment Exceptions Dashboard", margin + 3, y + 6.5);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("Reason", margin + 3, y + 12);
+  doc.text("Count", margin + 75, y + 12, { align: "right" });
+  let exceptionY = y + 16;
+  const exceptionRows = rejectionReasonRows.slice(0, 4);
+  if (exceptionRows.length === 0) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text("No deployment exceptions recorded.", margin + 3, exceptionY);
+  } else {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(51, 65, 85);
+    exceptionRows.forEach((entry) => {
+      if (exceptionY > y + 26.5) return;
+      doc.text(entry.reason.slice(0, 46), margin + 3, exceptionY);
+      doc.text(String(entry.count), margin + 75, exceptionY, { align: "right" });
+      exceptionY += 4.6;
+    });
+  }
+
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(112, y, 84, 28, 2, 2, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Risks / Attention Required", 115, y + 6.5);
+  let riskY = y + 11.5;
+  const risks: string[] = [];
+  if (portfolio.completion < 50) risks.push("Deployment still early-stage / below target.");
+  if (gpsMissingCount > 0) risks.push("Some records require GPS review.");
+  if (rejectedCount > 0) risks.push("Rejected deployments require attention.");
+  if (pendingCount > 0) risks.push("Pending approvals awaiting review.");
+  if (portfolio.outstanding > 0) risks.push(`Outstanding deployment count: ${portfolio.outstanding}.`);
+  if (risks.length === 0) risks.push("No immediate operational risks detected.");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.4);
+  doc.setTextColor(51, 65, 85);
+  risks.slice(0, 5).forEach((risk) => {
+    const lines = wrappedLines(doc, `• ${risk}`, 78);
+    doc.text(lines, 115, riskY);
+    riskY += lines.length * 3.8 + 0.5;
+  });
+
+  y = 154;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
@@ -235,11 +370,14 @@ export async function GET(request: Request) {
   doc.text(`GPS coverage: ${gpsCoverage}%`, margin, y);
   y += 7;
 
-  y = ensurePageSpace(doc, 34, y, headerRows);
+  doc.addPage();
+  drawReportHeader(doc, pageWidth, `${isFiltered ? "Filtered" : "Full"} Client Deployment Report`, headerRows);
+  y = 66;
+  y = ensurePageSpace(doc, 12, y, headerRows);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
-  doc.text("Rejected Deployments Summary", margin, y);
+  doc.text("Detailed Rejected Deployments", margin, y);
   y += 6;
   if (rejectedRows.length === 0) {
     doc.setFont("helvetica", "normal");
@@ -248,21 +386,39 @@ export async function GET(request: Request) {
     doc.text("No rejected deployments in this dataset.", margin, y);
     y += 8;
   } else {
-    rejectedRows.slice(0, 10).forEach((item) => {
-      y = ensurePageSpace(doc, 8, y, headerRows);
+    for (const item of rejectedRows) {
+      const detailRows = [
+        `Outlet: ${item.salon_name || "Name not visible"}`,
+        `State: ${item.installer_state || "Unknown"} | LGA: ${item.installer_lga || "n/a"}`,
+        `Reason: ${item.rejection_reason || "Not specified"}`,
+        `Comment: ${item.approval_comments || "None"}`,
+        `Submitted by: ${item.installer_name || "Unknown installer"}`,
+        `Submission date: ${(item.installation_date || item.submitted_at || "").slice(0, 10) || "Not available"}`
+      ];
+      const wrappedDetailRows = detailRows.map((detail) => wrappedLines(doc, detail, pageWidth - margin * 2 - 8));
+      const detailHeight = wrappedDetailRows.reduce((total, lines) => total + lines.length * 4.2, 0);
+      const cardHeight = Math.max(20, detailHeight + 6);
+
+      y = ensurePageSpace(doc, cardHeight + 3, y, headerRows);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
+
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
       doc.setTextColor(30, 41, 59);
-      doc.text(`• ${item.salon_name || "Name not visible"} | ${item.installer_state || "Unknown state"} | ${item.rejection_reason || "Not specified"}`, margin, y);
-      y += 5;
-      if (item.approval_comments) {
-        doc.setTextColor(100, 116, 139);
-        doc.text(`  Admin comment: ${item.approval_comments}`, margin, y);
-        y += 4;
-      }
-    });
-    y += 3;
+      let detailY = y + 4.8;
+      wrappedDetailRows.forEach((lines) => {
+        doc.text(lines, margin + 3, detailY);
+        detailY += lines.length * 4.2;
+      });
+
+      y += cardHeight + 3;
+    }
   }
+
+  doc.addPage();
+  drawReportHeader(doc, pageWidth, "Client Deployment Evidence", headerRows);
+  y = 66;
 
   for (const item of submissions) {
     doc.setFontSize(8);
