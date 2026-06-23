@@ -439,8 +439,7 @@ export function AdminDashboard({
         (isSubmissionsView || !filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
         (isSubmissionsView || !installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
         (isSubmissionsView || !filters.project || displayProjectName(item.project_name) === filters.project) &&
-        (isSubmissionsView ||
-          !filters.campaign ||
+        (isSubmissionsView || !filters.campaign ||
           scopedProjectRecords.find((project) => project.id === item.project_id || project.project_name === item.project_name)?.campaign_name === filters.campaign) &&
         (isSubmissionsView || !filters.brand || item.brand_name === filters.brand) &&
         (!filters.status || item.status === filters.status) &&
@@ -1096,7 +1095,7 @@ export function AdminDashboard({
           <SummaryCard label="Avg. turnaround" value={metrics.approvalTurnaroundHours} suffix="h" />
         </div>
 
-        <div className={`${activeView === "dashboard" || activeView === "reports" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
+        <div className={`${activeView === "reports" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
           <div className="grid min-w-0 gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
             <FilterField label="Search">
               <div className="relative">
@@ -1201,37 +1200,6 @@ export function AdminDashboard({
                 <input className="min-h-10 w-full rounded-lg border border-slate-200 pl-9 pr-3 text-sm" value={filters.query} onChange={(event) => setFilter("query", event.target.value)} placeholder="Store, OCR, installer" />
               </div>
             </FilterField>
-            <FilterField label="Client Company">
-              <select
-                value={scopeClientId}
-                onChange={(event) => {
-                  setScopeClientId(event.target.value);
-                  setScopeProjectId("");
-                }}
-                className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
-              >
-                <option value="">All Client Companies</option>
-                {clientRecords.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.name}{client.status === "Inactive" ? " (Archived)" : ""}
-                  </option>
-                ))}
-              </select>
-            </FilterField>
-            <FilterField label="Project">
-              <select
-                value={scopeProjectId}
-                onChange={(event) => setScopeProjectId(event.target.value)}
-                className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
-              >
-                <option value="">All Projects</option>
-                {scopeProjectOptions.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {displayProjectName(project.project_name)}
-                  </option>
-                ))}
-              </select>
-            </FilterField>
             <FilterField label="Status">
               <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.status} onChange={(event) => setFilter("status", event.target.value)}>
                 <option value="">All statuses</option>
@@ -1265,30 +1233,22 @@ export function AdminDashboard({
           </div>
         </div>
 
-        {activeView === "dashboard" && !dashboardPanelsReady ? (
-          <div className="mt-5 grid min-w-0 gap-4 lg:grid-cols-3">
-            <InlineDashboardSkeleton />
-            <InlineDashboardSkeleton />
-            <InlineDashboardSkeleton />
-          </div>
-        ) : null}
-
-        <div className={`${activeView === "dashboard" && dashboardPanelsReady ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
+        <div className={`${activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
           <ChartPanel title="Installations by region" data={regionCounts} xKey="region" />
           <ChartPanel title="Installations by brand" data={brandCounts} xKey="brand" color="#7c3aed" />
           <ChartPanel title="Daily uploads" data={dailyCounts} xKey="date" color="#2563eb" />
         </div>
 
-        <div className={`${activeView === "dashboard" && dashboardPanelsReady ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]`}>
+        <div className={`${activeView === "reports" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]`}>
           <ProjectPortfolioPanel rows={projectOperations} />
           <FunnelPanel rows={stageTotals} />
         </div>
 
-        <div className={`${(activeView === "dashboard" && dashboardPanelsReady) || activeView === "alerts" ? "block" : "hidden"} mt-5 min-w-0`}>
+        <div className={`${activeView === "alerts" ? "block" : "hidden"} mt-5 min-w-0`}>
           <AlertPanel rows={operationalAlerts} />
         </div>
 
-        <div className={`${(activeView === "dashboard" && dashboardPanelsReady) || activeView === "analytics" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
+        <div className={`${activeView === "reports" || activeView === "analytics" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4`}>
           <h2 className="mb-3 whitespace-normal break-words text-base font-bold leading-snug">Executive trends</h2>
           <div className="min-w-0 overflow-hidden">
           <ResponsiveContainer width="100%" height={260}>
@@ -1321,7 +1281,7 @@ export function AdminDashboard({
           <BreakdownPanel title="Installer performance" rows={installerCounts.slice(0, 8).map((item) => [item.installer, item.count])} />
         </div>
 
-        <div className={`${(activeView === "dashboard" && dashboardPanelsReady) || activeView === "analytics" || activeView === "installers" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
+        <div className={`${activeView === "reports" || activeView === "analytics" || activeView === "installers" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 lg:grid-cols-3`}>
           <ScorePanel title="Installer accuracy ranking" rows={installerAccuracy.map((item) => [item.installer, item.score, item.total])} />
           <ScorePanel title="Region performance ranking" rows={regionPerformance.map((item) => [item.region, item.score, item.total])} />
           <ScorePanel title="Brand compliance score" rows={brandCompliance.map((item) => [item.brand, item.score, item.total])} />
