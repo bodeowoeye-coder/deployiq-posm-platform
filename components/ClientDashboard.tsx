@@ -40,9 +40,9 @@ type Filters = {
   campaign: string;
   brand: string;
 };
-type QuickReportFilter = "all" | "approved" | "pending" | "rejected" | "duplicates";
+type QuickReportFilter = "all" | "approved" | "pending" | "rejected" | "gps_verified" | "gps_missing";
 
-type InsightView = "rejections" | "duplicates";
+type InsightView = "rejections";
 
 const blankFilters: Filters = {
   query: "",
@@ -64,6 +64,10 @@ function buildExportQuery(filters: Filters, quickFilter: QuickReportFilter = "al
   if (quickFilter !== "all") params.set("quickFilter", quickFilter);
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function hasVerifiedGps(item: Submission) {
+  return item.gps_latitude !== null && item.gps_longitude !== null;
 }
 
 function clientViewTitle(view: DashboardView) {
@@ -195,15 +199,16 @@ export function ClientDashboard({
   const brandCounts = getBrandCounts(filtered);
   const stateCounts = getStateCounts(filtered);
   const projectCounts = getProjectCounts(filtered);
-  const mappedCount = filtered.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null).length;
-    const reportFiltered = useMemo(() => {
-      if (quickReportFilter === "all") return filtered;
-      if (quickReportFilter === "approved") return filtered.filter((item) => item.status === "Approved");
-      if (quickReportFilter === "pending") return filtered.filter((item) => item.status === "Pending");
-      if (quickReportFilter === "rejected") return filtered.filter((item) => item.status === "Rejected");
-      return filtered.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique");
-    }, [filtered, quickReportFilter]);
-    const exportQuery = buildExportQuery(filters, quickReportFilter);
+  const mappedCount = filtered.filter((item) => hasVerifiedGps(item)).length;
+  const reportFiltered = useMemo(() => {
+    if (quickReportFilter === "all") return filtered;
+    if (quickReportFilter === "approved") return filtered.filter((item) => item.status === "Approved");
+    if (quickReportFilter === "pending") return filtered.filter((item) => item.status === "Pending");
+    if (quickReportFilter === "rejected") return filtered.filter((item) => item.status === "Rejected");
+    if (quickReportFilter === "gps_verified") return filtered.filter((item) => hasVerifiedGps(item));
+    return filtered.filter((item) => !hasVerifiedGps(item));
+  }, [filtered, quickReportFilter]);
+  const exportQuery = buildExportQuery(filters, quickReportFilter);
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
   const clientTrendSeries = useMemo(() => {
@@ -264,10 +269,10 @@ export function ClientDashboard({
   const approvedCount = filtered.filter((item) => item.status === "Approved").length;
   const pendingCount = filtered.filter((item) => item.status === "Pending").length;
   const rejectedCount = filtered.filter((item) => item.status === "Rejected").length;
-  const duplicateCount = filtered.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique").length;
+  const gpsVerifiedCount = filtered.filter((item) => hasVerifiedGps(item)).length;
+  const gpsMissingCount = filtered.length - gpsVerifiedCount;
   const rejectionRows = filtered.filter((item) => item.status === "Rejected");
-  const duplicateRows = filtered.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique");
-  const insightRows = insightView === "rejections" ? rejectionRows : insightView === "duplicates" ? duplicateRows : [];
+  const insightRows = insightView === "rejections" ? rejectionRows : [];
 
   function setFilter(key: keyof Filters, value: string) {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -356,11 +361,12 @@ export function ClientDashboard({
           </div>
         </div>
 
-        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
+        <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-5 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-5`}>
           <SummaryCard label="Approved" value={approvedCount} />
           <SummaryCard label="Pending" value={pendingCount} />
           <SummaryActionCard label="Rejected" value={rejectedCount} onClick={() => setInsightView("rejections")} />
-          <SummaryActionCard label="Possible Duplicates" value={duplicateCount} onClick={() => setInsightView("duplicates")} />
+          <SummaryCard label="GPS Verified" value={gpsVerifiedCount} />
+          <SummaryCard label="GPS Missing" value={gpsMissingCount} />
         </div>
 
         <div className={`${activeView === "overview" ? "grid" : "hidden"} mt-4 min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4`}>
@@ -377,13 +383,6 @@ export function ClientDashboard({
             onClick={() => setInsightView("rejections")}
           >
             View Rejections
-          </button>
-          <button
-            type="button"
-            className="inline-flex min-h-10 items-center rounded-lg border border-orange-200 bg-orange-50 px-4 text-sm font-semibold text-orange-800 transition hover:bg-orange-100"
-            onClick={() => setInsightView("duplicates")}
-          >
-            View Possible Duplicates
           </button>
         </div>
 
@@ -546,7 +545,7 @@ export function ClientDashboard({
             <h2 className="min-w-0 break-words text-base font-bold leading-snug">Latest installations</h2>
             <div className="text-right">
               <span className="text-sm text-slate-500">{reportFiltered.length} shown</span>
-              <p className="text-xs text-slate-500">Includes rejected and duplicate records.</p>
+              <p className="text-xs text-slate-500">Includes all status categories and GPS verification states.</p>
             </div>
           </div>
           <div className="border-b border-slate-200 px-4 py-3">
@@ -555,7 +554,8 @@ export function ClientDashboard({
               <QuickFilterChip label="Approved" active={quickReportFilter === "approved"} onClick={() => setQuickReportFilter("approved")} />
               <QuickFilterChip label="Pending" active={quickReportFilter === "pending"} onClick={() => setQuickReportFilter("pending")} />
               <QuickFilterChip label="Rejected" active={quickReportFilter === "rejected"} onClick={() => setQuickReportFilter("rejected")} />
-              <QuickFilterChip label="Duplicates" active={quickReportFilter === "duplicates"} onClick={() => setQuickReportFilter("duplicates")} />
+              <QuickFilterChip label="GPS Verified" active={quickReportFilter === "gps_verified"} onClick={() => setQuickReportFilter("gps_verified")} />
+              <QuickFilterChip label="GPS Missing" active={quickReportFilter === "gps_missing"} onClick={() => setQuickReportFilter("gps_missing")} />
             </div>
           </div>
           <div className="divide-y divide-slate-100">
@@ -637,7 +637,7 @@ export function ClientDashboard({
           <div className="mx-auto mt-4 w-[min(1180px,calc(100%-8px))] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
             <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
               <div>
-                <h2 className="text-base font-bold text-slate-950">{insightView === "rejections" ? "Rejected Deployments" : "Possible Duplicates"}</h2>
+                <h2 className="text-base font-bold text-slate-950">Rejected Deployments</h2>
                 <p className="text-xs text-slate-500">{insightRows.length} record{insightRows.length === 1 ? "" : "s"} shown</p>
               </div>
               <button

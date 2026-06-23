@@ -37,6 +37,8 @@ function addCoverSheet(workbook: XLSX.WorkBook, metadata: Array<[string, string]
 }
 
 function toExportRow(item: Submission) {
+  const hasGps = item.gps_latitude !== null && item.gps_longitude !== null;
+  const googleMapsUrl = hasGps ? `https://www.google.com/maps?q=${item.gps_latitude},${item.gps_longitude}` : "";
   return {
     "Project Name": displayProjectName(item.project_name),
     "Brand Name": item.brand_name ?? "",
@@ -48,6 +50,11 @@ function toExportRow(item: Submission) {
     Address: item.address ?? "",
     "GPS Latitude": item.gps_latitude ?? "",
     "GPS Longitude": item.gps_longitude ?? "",
+    "GPS Accuracy (meters)": "",
+    "GPS Captured": hasGps ? "Yes" : "No",
+    "Captured Address": item.resolved_address ?? item.address ?? "",
+    "GPS Status": hasGps ? "GPS Verified" : "GPS Missing",
+    "Google Maps URL": googleMapsUrl,
     "Installer Selected State": item.installer_state ?? "",
     "Installer Selected Region": item.installer_region ?? "",
     "Installer Selected LGA": item.installer_lga ?? "",
@@ -78,6 +85,11 @@ function styleSheet(sheet: XLSX.WorkSheet, rows: Array<Record<string, unknown>>)
       Address: "",
       "GPS Latitude": "",
       "GPS Longitude": "",
+      "GPS Accuracy (meters)": "",
+      "GPS Captured": "",
+      "Captured Address": "",
+      "GPS Status": "",
+      "Google Maps URL": "",
       "Installer Selected State": "",
       "Installer Selected Region": "",
       "Installer Selected LGA": "",
@@ -135,7 +147,7 @@ export async function GET(request: Request) {
   const startDate = searchParams.get("startDate")?.trim();
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
-  const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected" | "duplicates";
+  const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected" | "gps_verified" | "gps_missing";
   const supabase = createAdminSupabase();
   const scoped = await loadClientSubmissionScope(supabase, client, clientId);
   const searchText = search?.toLowerCase() ?? "";
@@ -174,7 +186,8 @@ export async function GET(request: Request) {
   if (quickFilter === "approved") filteredData = data.filter((item) => item.status === "Approved");
   if (quickFilter === "pending") filteredData = data.filter((item) => item.status === "Pending");
   if (quickFilter === "rejected") filteredData = data.filter((item) => item.status === "Rejected");
-  if (quickFilter === "duplicates") filteredData = data.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique");
+  if (quickFilter === "gps_verified") filteredData = data.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null);
+  if (quickFilter === "gps_missing") filteredData = data.filter((item) => item.gps_latitude === null || item.gps_longitude === null);
 
   const projectTitle = project || "All projects";
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-XLS-FLT" : "DPIQ-CLT-XLS");
@@ -182,7 +195,6 @@ export async function GET(request: Request) {
   const baseSubmissions = ((filteredData ?? []) as Submission[]).filter((submission) => !submission.archived_at);
   const rows = baseSubmissions.map((item) => toExportRow(item));
   const rejectedRows = baseSubmissions.filter((item) => item.status === "Rejected").map((item) => toExportRow(item));
-  const duplicateRows = baseSubmissions.filter((item) => item.duplicate_status && item.duplicate_status !== "Unique").map((item) => toExportRow(item));
 
   const workbook = XLSX.utils.book_new();
   addCoverSheet(workbook, [
@@ -199,10 +211,6 @@ export async function GET(request: Request) {
   const rejectedSheet = XLSX.utils.json_to_sheet(rejectedRows);
   styleSheet(rejectedSheet, rejectedRows);
   XLSX.utils.book_append_sheet(workbook, rejectedSheet, "Rejected Deployments");
-
-  const duplicateSheet = XLSX.utils.json_to_sheet(duplicateRows);
-  styleSheet(duplicateSheet, duplicateRows);
-  XLSX.utils.book_append_sheet(workbook, duplicateSheet, "Possible Duplicates");
   workbook.Props = {
     Title: "Client Deployment Installation Report",
     Company: process.env.COMPANY_NAME || "Deployment Reporting",
