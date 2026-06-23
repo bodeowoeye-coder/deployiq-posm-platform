@@ -1128,6 +1128,13 @@ export function AdminDashboard({
                 ))}
               </select>
             </FilterField>
+            <FilterField label="GPS Status">
+              <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.gps} onChange={(event) => setFilter("gps", event.target.value as Filters["gps"])}>
+                <option value="all">All GPS</option>
+                <option value="verified">GPS Verified</option>
+                <option value="missing">GPS Missing</option>
+              </select>
+            </FilterField>
             <FilterField label="LGA">
               <input className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.lga} onChange={(event) => setFilter("lga", event.target.value)} placeholder="All LGAs" />
             </FilterField>
@@ -1168,13 +1175,6 @@ export function AdminDashboard({
                     {status}
                   </option>
                 ))}
-              </select>
-            </FilterField>
-            <FilterField label="GPS">
-              <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.gps} onChange={(event) => setFilter("gps", event.target.value as Filters["gps"])}>
-                <option value="all">All GPS</option>
-                <option value="verified">GPS Verified</option>
-                <option value="missing">GPS Missing</option>
               </select>
             </FilterField>
           </div>

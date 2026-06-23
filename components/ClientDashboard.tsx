@@ -39,9 +39,9 @@ type Filters = {
   project: string;
   campaign: string;
   brand: string;
+  gpsStatus: "all_gps" | "gps_verified" | "gps_missing";
 };
 type ReportStatusFilter = "all" | "approved" | "pending" | "rejected";
-type ReportGpsFilter = "all_gps" | "gps_verified" | "gps_missing";
 
 type InsightView = "rejections";
 
@@ -54,16 +54,21 @@ const blankFilters: Filters = {
   lga: "",
   project: "",
   campaign: "",
-  brand: ""
+  brand: "",
+  gpsStatus: "all_gps"
 };
 
-function buildExportQuery(filters: Filters, statusFilter: ReportStatusFilter = "all", gpsFilter: ReportGpsFilter = "all_gps") {
+function buildExportQuery(filters: Filters, statusFilter: ReportStatusFilter = "all") {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
+    if (key === "gpsStatus") {
+      const gpsValue = String(value).trim();
+      if (gpsValue && gpsValue !== "all_gps") params.set("gpsFilter", gpsValue);
+      return;
+    }
     if (value.trim()) params.set(key, value.trim());
   });
   if (statusFilter !== "all") params.set("quickFilter", statusFilter);
-  if (gpsFilter !== "all_gps") params.set("gpsFilter", gpsFilter);
   const query = params.toString();
   return query ? `?${query}` : "";
 }
@@ -133,7 +138,6 @@ export function ClientDashboard({
   const [lastUpdated, setLastUpdated] = useState("");
   const [activeView, setActiveView] = useState<DashboardView>(initialView ?? "overview");
   const [reportStatusFilter, setReportStatusFilter] = useState<ReportStatusFilter>("all");
-  const [reportGpsFilter, setReportGpsFilter] = useState<ReportGpsFilter>("all_gps");
   const [insightView, setInsightView] = useState<InsightView | null>(null);
   const contentTopRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
@@ -196,7 +200,8 @@ export function ClientDashboard({
         (!filters.project || displayProjectName(item.project_name) === filters.project) &&
         (!filters.campaign ||
           projects.find((project) => project.id === item.project_id || project.project_name === item.project_name)?.campaign_name === filters.campaign) &&
-        (!filters.brand || item.brand_name === filters.brand)
+        (!filters.brand || item.brand_name === filters.brand) &&
+        (filters.gpsStatus === "all_gps" || (filters.gpsStatus === "gps_verified" ? hasVerifiedGps(item) : !hasVerifiedGps(item)))
       );
     });
   }, [filters, submissions]);
@@ -217,11 +222,9 @@ export function ClientDashboard({
         ? filtered.filter((item) => item.status === "Pending")
         : filtered.filter((item) => item.status === "Rejected");
 
-    if (reportGpsFilter === "all_gps") return byStatus;
-    if (reportGpsFilter === "gps_verified") return byStatus.filter((item) => hasVerifiedGps(item));
-    return byStatus.filter((item) => !hasVerifiedGps(item));
-  }, [filtered, reportStatusFilter, reportGpsFilter]);
-  const exportQuery = buildExportQuery(filters, reportStatusFilter, reportGpsFilter);
+    return byStatus;
+  }, [filtered, reportStatusFilter]);
+  const exportQuery = buildExportQuery(filters, reportStatusFilter);
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
   const clientTrendSeries = useMemo(() => {
@@ -452,6 +455,13 @@ export function ClientDashboard({
                 ))}
               </select>
             </FilterField>
+            <FilterField label="GPS Status">
+              <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.gpsStatus} onChange={(event) => setFilter("gpsStatus", event.target.value as Filters["gpsStatus"])}>
+                <option value="all_gps">All GPS</option>
+                <option value="gps_verified">GPS Verified</option>
+                <option value="gps_missing">GPS Missing</option>
+              </select>
+            </FilterField>
             <FilterField label="Brand">
               <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.brand} onChange={(event) => setFilter("brand", event.target.value)}>
                 <option value="">All brands</option>
@@ -567,11 +577,6 @@ export function ClientDashboard({
               <QuickFilterChip label="Approved" active={reportStatusFilter === "approved"} onClick={() => setReportStatusFilter("approved")} />
               <QuickFilterChip label="Pending" active={reportStatusFilter === "pending"} onClick={() => setReportStatusFilter("pending")} />
               <QuickFilterChip label="Rejected" active={reportStatusFilter === "rejected"} onClick={() => setReportStatusFilter("rejected")} />
-            </div>
-            <div className="mt-2 flex min-w-0 flex-wrap gap-2">
-              <QuickFilterChip label="All GPS" active={reportGpsFilter === "all_gps"} onClick={() => setReportGpsFilter("all_gps")} />
-              <QuickFilterChip label="GPS Verified" active={reportGpsFilter === "gps_verified"} onClick={() => setReportGpsFilter("gps_verified")} />
-              <QuickFilterChip label="GPS Missing" active={reportGpsFilter === "gps_missing"} onClick={() => setReportGpsFilter("gps_missing")} />
             </div>
           </div>
           <div className="divide-y divide-slate-100">
