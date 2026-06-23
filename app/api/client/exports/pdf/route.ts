@@ -239,10 +239,6 @@ export async function GET(request: Request) {
   doc.roundedRect(margin, y, progressBarWidth, 5, 1.5, 1.5, "FD");
   doc.setFillColor(11, 124, 89);
   doc.roundedRect(margin, y, (progressBarWidth * progressPct) / 100, 5, 1.5, 1.5, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.5);
-  doc.setTextColor(15, 23, 42);
-  doc.text(`${progressPct}%`, margin + progressBarWidth + 4, y + 3.8);
   y += 8;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
@@ -269,12 +265,12 @@ export async function GET(request: Request) {
   doc.setFontSize(7.6);
   doc.setTextColor(51, 65, 85);
   keyInsights.forEach((insight) => {
-    const lines = wrappedLines(doc, `• ${insight}`, 80);
+    const lines = wrappedLines(doc, `• ${insight}`, 74);
     doc.text(lines, insightsX, insightsY);
-    insightsY += lines.length * 3.9 + 0.8;
+    insightsY += lines.length * 4.2 + 1;
   });
 
-  y = 132;
+  y = 146;
   doc.setFillColor(248, 250, 252);
   doc.roundedRect(margin, y, 88, 28, 2, 2, "F");
   doc.setFont("helvetica", "bold");
@@ -313,10 +309,17 @@ export async function GET(request: Request) {
   let riskY = y + 11.5;
   const risks: string[] = [];
   if (portfolio.completion < 50) risks.push("Deployment still early-stage / below target.");
+  const hasMissingOrInvalidPhone = submissions.some((item) => {
+    const phone = item.phone?.trim() ?? "";
+    return !phone || phone.length < 7 || !/^\+?[0-9\s()\-]{7,}$/.test(phone);
+  });
+  const hasMissingAddress = submissions.some((item) => !(item.address || item.selected_outlet_address || item.resolved_address));
+  const hasPotentialLocationRisk = submissions.some((item) => !item.resolved_address && !(item.address || item.selected_outlet_address));
+  if (hasPotentialLocationRisk) risks.push("Some salons/outlets may be displaced or no longer operating at recorded locations.");
+  if (hasMissingOrInvalidPhone) risks.push("Some outlet phone numbers appear invalid, unreachable, or unavailable.");
+  if (hasMissingAddress) risks.push("Some outlet addresses are incomplete or inaccurate.");
   if (gpsMissingCount > 0) risks.push("Some records require GPS review.");
-  if (rejectedCount > 0) risks.push("Rejected deployments require attention.");
-  if (pendingCount > 0) risks.push("Pending approvals awaiting review.");
-  if (portfolio.outstanding > 0) risks.push(`Outstanding deployment count: ${portfolio.outstanding}.`);
+  risks.push("Some outlets may need directory validation to confirm they are easy to locate.");
   if (risks.length === 0) risks.push("No immediate operational risks detected.");
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.4);
@@ -324,10 +327,10 @@ export async function GET(request: Request) {
   risks.slice(0, 5).forEach((risk) => {
     const lines = wrappedLines(doc, `• ${risk}`, 78);
     doc.text(lines, 115, riskY);
-    riskY += lines.length * 3.8 + 0.5;
+    riskY += lines.length * 4 + 0.7;
   });
 
-  y = 164;
+  y = 190;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
@@ -375,52 +378,6 @@ export async function GET(request: Request) {
   y += 7;
 
   doc.addPage();
-  drawReportHeader(doc, pageWidth, `${isFiltered ? "Filtered" : "Full"} Client Deployment Report`, headerRows);
-  y = headerContentStart;
-  y = ensurePageSpace(doc, 12, y, headerRows);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("Detailed Rejected Deployments", margin, y);
-  y += 6;
-  if (rejectedRows.length === 0) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text("No rejected deployments in this dataset.", margin, y);
-    y += 8;
-  } else {
-    for (const item of rejectedRows) {
-      const detailRows = [
-        `Outlet: ${item.salon_name || "Name not visible"}`,
-        `State: ${item.installer_state || "Unknown"} | LGA: ${item.installer_lga || "n/a"}`,
-        `Reason: ${item.rejection_reason || "Not specified"}`,
-        `Comment: ${item.approval_comments || "None"}`,
-        `Submitted by: ${item.installer_name || "Unknown installer"}`,
-        `Submission date: ${(item.installation_date || item.submitted_at || "").slice(0, 10) || "Not available"}`
-      ];
-      const wrappedDetailRows = detailRows.map((detail) => wrappedLines(doc, detail, pageWidth - margin * 2 - 8));
-      const detailHeight = wrappedDetailRows.reduce((total, lines) => total + lines.length * 4.2, 0);
-      const cardHeight = Math.max(20, detailHeight + 6);
-
-      y = ensurePageSpace(doc, cardHeight + 3, y, headerRows);
-      doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.setTextColor(30, 41, 59);
-      let detailY = y + 4.8;
-      wrappedDetailRows.forEach((lines) => {
-        doc.text(lines, margin + 3, detailY);
-        detailY += lines.length * 4.2;
-      });
-
-      y += cardHeight + 3;
-    }
-  }
-
-  doc.addPage();
   drawReportHeader(doc, pageWidth, "Client Deployment Evidence", headerRows);
   y = headerContentStart;
 
@@ -447,7 +404,7 @@ export async function GET(request: Request) {
     if (y + cardHeight > contentBottom) {
       doc.addPage();
       drawReportHeader(doc, pageWidth, "Client Deployment Evidence", headerRows);
-      y = 66;
+      y = headerContentStart;
     }
 
     doc.setDrawColor(226, 232, 240);
