@@ -67,7 +67,11 @@ function buildExportQuery(filters: Filters, quickFilter: QuickReportFilter = "al
 }
 
 function hasVerifiedGps(item: Submission) {
-  return item.gps_latitude !== null && item.gps_longitude !== null;
+  if (item.gps_latitude === null || item.gps_longitude === null) return false;
+  const lat = Number(item.gps_latitude);
+  const lng = Number(item.gps_longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 function clientViewTitle(view: DashboardView) {
@@ -218,7 +222,7 @@ export function ClientDashboard({
       const date = new Date(item.submitted_at).toISOString().slice(0, 10);
       const current = buckets.get(date) ?? { date, deployments: 0, gpsVerified: 0, photoEvidence: 0 };
       current.deployments += 1;
-      if (item.gps_latitude !== null && item.gps_longitude !== null) current.gpsVerified += 1;
+      if (hasVerifiedGps(item)) current.gpsVerified += 1;
       if (item.image_url) current.photoEvidence += 1;
       buckets.set(date, current);
     });

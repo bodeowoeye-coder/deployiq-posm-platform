@@ -18,6 +18,14 @@ const margin = 14;
 const contentBottom = 280;
 const rowLineHeight = 4.5;
 
+function hasValidGps(item: Submission) {
+  if (item.gps_latitude === null || item.gps_longitude === null) return false;
+  const lat = Number(item.gps_latitude);
+  const lng = Number(item.gps_longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
 function ensurePageSpace(doc: jsPDF, requiredHeight: number, y: number, header: Array<[string, string]>) {
   if (y + requiredHeight <= contentBottom) return y;
   doc.addPage();
@@ -100,8 +108,8 @@ export async function GET(request: Request) {
   if (quickFilter === "approved") submissions = submissions.filter((item) => item.status === "Approved");
   if (quickFilter === "pending") submissions = submissions.filter((item) => item.status === "Pending");
   if (quickFilter === "rejected") submissions = submissions.filter((item) => item.status === "Rejected");
-  if (quickFilter === "gps_verified") submissions = submissions.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null);
-  if (quickFilter === "gps_missing") submissions = submissions.filter((item) => item.gps_latitude === null || item.gps_longitude === null);
+  if (quickFilter === "gps_verified") submissions = submissions.filter((item) => hasValidGps(item));
+  if (quickFilter === "gps_missing") submissions = submissions.filter((item) => !hasValidGps(item));
 
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
@@ -126,8 +134,9 @@ export async function GET(request: Request) {
   const approvedCount = submissions.filter((item) => item.status === "Approved").length;
   const pendingCount = submissions.filter((item) => item.status === "Pending").length;
   const rejectedRows = submissions.filter((item) => item.status === "Rejected");
-  const gpsVerifiedCount = submissions.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null).length;
+  const gpsVerifiedCount = submissions.filter((item) => hasValidGps(item)).length;
   const gpsMissingCount = submissions.length - gpsVerifiedCount;
+  const gpsCoverage = submissions.length === 0 ? 0 : Math.round((gpsVerifiedCount / submissions.length) * 100);
   const headerRows: Array<[string, string]> = [
     ["Client Name", clientDisplayName],
     ["Project Name", projectTitle],
@@ -200,6 +209,22 @@ export async function GET(request: Request) {
     breakdownY += 7;
   });
   y += 56;
+
+  y = ensurePageSpace(doc, 24, y, headerRows);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("GPS Evidence Summary", margin, y);
+  y += 6;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(51, 65, 85);
+  doc.text(`Records with coordinates: ${gpsVerifiedCount}`, margin, y);
+  y += 4.5;
+  doc.text(`Records without coordinates: ${gpsMissingCount}`, margin, y);
+  y += 4.5;
+  doc.text(`GPS coverage: ${gpsCoverage}%`, margin, y);
+  y += 7;
 
   y = ensurePageSpace(doc, 34, y, headerRows);
   doc.setFont("helvetica", "bold");

@@ -10,6 +10,14 @@ import { createReportId, reportFooter, reportSubtitle } from "@/lib/reportBrandi
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function hasValidGps(item: Submission) {
+  if (item.gps_latitude === null || item.gps_longitude === null) return false;
+  const lat = Number(item.gps_latitude);
+  const lng = Number(item.gps_longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
 function addCoverSheet(workbook: XLSX.WorkBook, metadata: Array<[string, string]>) {
   const rows = [
     ["DeployIQ"],
@@ -37,7 +45,8 @@ function addCoverSheet(workbook: XLSX.WorkBook, metadata: Array<[string, string]
 }
 
 function toExportRow(item: Submission) {
-  const hasGps = item.gps_latitude !== null && item.gps_longitude !== null;
+  const hasGps = hasValidGps(item);
+  const gpsAccuracy = (item as Submission & { gps_accuracy?: number | string | null }).gps_accuracy;
   const googleMapsUrl = hasGps ? `https://www.google.com/maps?q=${item.gps_latitude},${item.gps_longitude}` : "";
   return {
     "Project Name": displayProjectName(item.project_name),
@@ -50,7 +59,7 @@ function toExportRow(item: Submission) {
     Address: item.address ?? "",
     "GPS Latitude": item.gps_latitude ?? "",
     "GPS Longitude": item.gps_longitude ?? "",
-    "GPS Accuracy (meters)": "",
+    "GPS Accuracy (meters)": gpsAccuracy ?? "",
     "GPS Captured": hasGps ? "Yes" : "No",
     "Captured Address": item.resolved_address ?? item.address ?? "",
     "GPS Status": hasGps ? "GPS Verified" : "GPS Missing",
@@ -186,8 +195,8 @@ export async function GET(request: Request) {
   if (quickFilter === "approved") filteredData = data.filter((item) => item.status === "Approved");
   if (quickFilter === "pending") filteredData = data.filter((item) => item.status === "Pending");
   if (quickFilter === "rejected") filteredData = data.filter((item) => item.status === "Rejected");
-  if (quickFilter === "gps_verified") filteredData = data.filter((item) => item.gps_latitude !== null && item.gps_longitude !== null);
-  if (quickFilter === "gps_missing") filteredData = data.filter((item) => item.gps_latitude === null || item.gps_longitude === null);
+  if (quickFilter === "gps_verified") filteredData = data.filter((item) => hasValidGps(item));
+  if (quickFilter === "gps_missing") filteredData = data.filter((item) => !hasValidGps(item));
 
   const projectTitle = project || "All projects";
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-XLS-FLT" : "DPIQ-CLT-XLS");
