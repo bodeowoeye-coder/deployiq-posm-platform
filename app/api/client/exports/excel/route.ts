@@ -10,6 +10,25 @@ import { createReportId, reportFooter, reportSubtitle } from "@/lib/reportBrandi
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type ClientEvidenceRow = {
+  "Outlet Name": string;
+  "Outlet Code": string;
+  Address: string;
+  State: string;
+  Installer: string;
+  Status: string;
+  "GPS Latitude": number | string;
+  "GPS Longitude": number | string;
+  "GPS Accuracy (meters)": number | string;
+  "GPS Captured": string;
+  "GPS Status": string;
+  "Captured Address": string;
+  "Evidence Photo": string;
+  "Rejection Reason": string;
+  "Admin Comment": string;
+  "Duplicate Status": string;
+};
+
 function hasValidGps(item: Submission) {
   if (item.gps_latitude === null || item.gps_longitude === null) return false;
   const lat = Number(item.gps_latitude);
@@ -44,75 +63,49 @@ function addCoverSheet(workbook: XLSX.WorkBook, metadata: Array<[string, string]
   XLSX.utils.book_append_sheet(workbook, cover, "Cover");
 }
 
-function toExportRow(item: Submission) {
+function toExportRow(item: Submission): ClientEvidenceRow {
   const hasGps = hasValidGps(item);
+  const outletCode = (item as Submission & { outlet_code?: string | null }).outlet_code;
   const gpsAccuracy = (item as Submission & { gps_accuracy?: number | string | null }).gps_accuracy;
-  const googleMapsUrl = hasGps ? `https://www.google.com/maps?q=${item.gps_latitude},${item.gps_longitude}` : "";
   return {
-    "Project Name": displayProjectName(item.project_name),
-    "Brand Name": item.brand_name ?? "",
-    Status: item.status,
-    "Duplicate Status": item.duplicate_status ?? "Unique",
-    "Rejection Reason": item.rejection_reason ?? "",
-    "Admin Comment": item.approval_comments ?? "",
-    "Salon/Store Name": item.salon_name ?? "",
+    "Outlet Name": item.salon_name ?? "",
+    "Outlet Code": outletCode ?? "",
     Address: item.address ?? "",
+    State: item.installer_state ?? "",
+    Installer: item.installer_name ?? "",
+    Status: item.status,
     "GPS Latitude": item.gps_latitude ?? "",
     "GPS Longitude": item.gps_longitude ?? "",
     "GPS Accuracy (meters)": gpsAccuracy ?? "",
     "GPS Captured": hasGps ? "Yes" : "No",
-    "Captured Address": item.resolved_address ?? item.address ?? "",
     "GPS Status": hasGps ? "GPS Verified" : "GPS Missing",
-    "Google Maps URL": googleMapsUrl,
-    "Installer Selected State": item.installer_state ?? "",
-    "Installer Selected Region": item.installer_region ?? "",
-    "Installer Selected LGA": item.installer_lga ?? "",
-    "Resolved Address": item.resolved_address ?? "",
-    "Resolved Street": item.resolved_street ?? "",
-    "Resolved LGA": item.resolved_lga ?? "",
-    "Resolved City": item.resolved_city ?? "",
-    "Resolved State": item.resolved_state ?? "",
-    "Installation Date": item.installation_date ?? item.submitted_at.slice(0, 10),
-    "Installation Time": item.installation_time ?? "",
-    "OCR Extracted Text": item.ocr_text ?? item.ai_raw_text ?? "",
-    "Image URL": item.image_url,
-    "OCR State/Region": item.state_region ?? "",
-    "Created Timestamp": item.submitted_at
+    "Captured Address": item.resolved_address ?? item.address ?? "",
+    "Evidence Photo": item.image_url ? "View Photo" : "No Photo",
+    "Rejection Reason": item.rejection_reason ?? "",
+    "Admin Comment": item.approval_comments ?? "",
+    "Duplicate Status": item.duplicate_status ?? "Unique"
   };
 }
 
-function styleSheet(sheet: XLSX.WorkSheet, rows: Array<Record<string, unknown>>) {
+function styleSheet(sheet: XLSX.WorkSheet, rows: Array<ClientEvidenceRow>) {
   const headers = Object.keys(
     rows[0] ?? {
-      "Project Name": "",
-      "Brand Name": "",
-      Status: "",
-      "Duplicate Status": "",
-      "Rejection Reason": "",
-      "Admin Comment": "",
-      "Salon/Store Name": "",
+      "Outlet Name": "",
+      "Outlet Code": "",
       Address: "",
+      State: "",
+      Installer: "",
+      Status: "",
       "GPS Latitude": "",
       "GPS Longitude": "",
       "GPS Accuracy (meters)": "",
       "GPS Captured": "",
       "Captured Address": "",
       "GPS Status": "",
-      "Google Maps URL": "",
-      "Installer Selected State": "",
-      "Installer Selected Region": "",
-      "Installer Selected LGA": "",
-      "Resolved Address": "",
-      "Resolved Street": "",
-      "Resolved LGA": "",
-      "Resolved City": "",
-      "Resolved State": "",
-      "Installation Date": "",
-      "Installation Time": "",
-      "OCR Extracted Text": "",
-      "Image URL": "",
-      "OCR State/Region": "",
-      "Created Timestamp": ""
+      "Evidence Photo": "",
+      "Rejection Reason": "",
+      "Admin Comment": "",
+      "Duplicate Status": ""
     }
   );
 
@@ -134,6 +127,27 @@ function styleSheet(sheet: XLSX.WorkSheet, rows: Array<Record<string, unknown>>)
         alignment: { horizontal: "center" }
       };
     }
+  });
+}
+
+function addEvidenceHyperlinks(sheet: XLSX.WorkSheet, submissions: Submission[], rows: ClientEvidenceRow[]) {
+  if (rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const evidenceColumn = headers.indexOf("Evidence Photo");
+  if (evidenceColumn < 0) return;
+
+  submissions.forEach((item, index) => {
+    if (!item.image_url) return;
+    const cellAddress = XLSX.utils.encode_cell({ r: index + 1, c: evidenceColumn });
+    const cell = sheet[cellAddress];
+    if (!cell) return;
+    cell.v = "View Photo";
+    cell.t = "s";
+    cell.l = { Target: item.image_url, Tooltip: "Open evidence photo" };
+    cell.s = {
+      ...(cell.s ?? {}),
+      font: { color: { rgb: "2563EB" }, underline: true }
+    };
   });
 }
 
@@ -225,6 +239,7 @@ export async function GET(request: Request) {
   ]);
   const sheet = XLSX.utils.json_to_sheet(rows);
   styleSheet(sheet, rows);
+  addEvidenceHyperlinks(sheet, baseSubmissions, rows);
   XLSX.utils.book_append_sheet(workbook, sheet, "Installations");
   const rejectedSheet = XLSX.utils.json_to_sheet(rejectedRows);
   styleSheet(rejectedSheet, rejectedRows);

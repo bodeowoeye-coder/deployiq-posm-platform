@@ -280,7 +280,8 @@ export async function GET(request: Request) {
       `Admin comment: ${item.approval_comments || "None"}`
     ].map((row) => wrappedLines(doc, row, textWidth));
     const titleLines = wrappedLines(doc, item.salon_name || "Name not visible", textWidth);
-    const textHeight = titleLines.length * 5 + rows.reduce((total, lines) => total + lines.length * rowLineHeight + 1.6, 0);
+    const evidenceLineHeight = rowLineHeight + 1.6;
+    const textHeight = titleLines.length * 5 + rows.reduce((total, lines) => total + lines.length * rowLineHeight + 1.6, 0) + evidenceLineHeight;
     const cardHeight = Math.max(34, textHeight + 10);
 
     if (y + cardHeight > contentBottom) {
@@ -296,6 +297,9 @@ export async function GET(request: Request) {
     if (preview) {
       try {
         doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
+        if (item.image_url) {
+          doc.link(margin + 2, y + 4, 24, 24, { url: item.image_url });
+        }
       } catch {
         doc.setFontSize(7);
         doc.text("Preview unavailable", margin + 3, y + 16);
@@ -313,6 +317,17 @@ export async function GET(request: Request) {
       doc.text(lines, textX, textY);
       textY += lines.length * rowLineHeight + 1.6;
     });
+
+    if (item.image_url) {
+      doc.setTextColor(37, 99, 235);
+      const evidenceLabel = "Evidence Photo: View";
+      doc.text(evidenceLabel, textX, textY);
+      doc.link(textX, textY - 3.5, 28, 4.5, { url: item.image_url });
+      doc.setTextColor(15, 23, 42);
+    } else {
+      doc.text("Evidence Photo: Not available", textX, textY);
+    }
+
     y += cardHeight + 5;
   }
 
