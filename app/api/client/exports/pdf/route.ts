@@ -200,8 +200,9 @@ export async function GET(request: Request) {
   doc.text("Executive Deployment Summary", margin, y);
   y += 5;
 
+  const campaignHealthBoxHeight = 32;
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, y, pageWidth - margin * 2, 36, 2, 2, "F");
+  doc.roundedRect(margin, y, pageWidth - margin * 2, campaignHealthBoxHeight, 2, 2, "F");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
@@ -216,25 +217,27 @@ export async function GET(request: Request) {
   ];
   const healthColumns = 3;
   const healthCellWidth = (pageWidth - margin * 2 - 8) / healthColumns;
+  const healthGridTop = y + 11.5;
+  const healthRowHeight = 10.5;
   healthSummary.forEach(([label, value], index) => {
     const column = index % healthColumns;
     const row = Math.floor(index / healthColumns);
     const x = margin + 4 + column * healthCellWidth;
-    const cellTop = y + 11 + row * 12;
-    const labelLines = wrappedLines(doc, String(label), healthCellWidth - 2);
+    const cellTop = healthGridTop + row * healthRowHeight;
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
+    doc.setFontSize(6.8);
     doc.setTextColor(100, 116, 139);
-    doc.text(labelLines, x, cellTop);
+    doc.text(String(label), x, cellTop);
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
+    doc.setFontSize(9.8);
     doc.setTextColor(15, 23, 42);
-    doc.text(String(value), x, cellTop + labelLines.length * 3 + 3.4);
+    doc.text(String(value), x, cellTop + 4.9);
   });
-  y += 42;
+  y += campaignHealthBoxHeight + 5;
 
+  const progressStartY = y;
   const progressPct = Math.max(0, Math.min(100, portfolio.completion));
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
@@ -255,7 +258,7 @@ export async function GET(request: Request) {
   doc.text(`${portfolio.outstanding} outstanding`, margin + 44, y);
 
   const insightsX = 112;
-  let insightsY = 113;
+  let insightsY = progressStartY;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
@@ -278,7 +281,7 @@ export async function GET(request: Request) {
     insightsY += lines.length * 4.2 + 1;
   });
 
-  y = 156;
+  y = Math.max(156, insightsY + 4);
   const sectionBoxHeight = 38;
   doc.setFillColor(248, 250, 252);
   doc.roundedRect(margin, y, 88, sectionBoxHeight, 2, 2, "F");
@@ -331,7 +334,7 @@ export async function GET(request: Request) {
     riskY += lines.length * 3.7 + 0.6;
   });
 
-  y = 198;
+  y += sectionBoxHeight + 8;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
