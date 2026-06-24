@@ -21,7 +21,8 @@ const thumbnailWidth = 24;
 const thumbnailHeight = 24;
 const thumbnailFetchTimeoutMs = 12000;
 const storageBucket = "installation-images";
-const imageDebugNeedles = ["ABUKKYA STORE", "MAC-DAVIS VENTURES", "MECHE"];
+const maxImageLoadAttempts = 2;
+const imageDebugNeedles = ["ABUKKYA STORE", "MAC-DAVIS VENTURES", "MECHE", "CHINEMEREM SALONS"];
 
 function hasValidGps(item: Submission) {
   if (item.gps_latitude === null || item.gps_longitude === null) return false;
@@ -90,9 +91,9 @@ async function imageToThumbnailData(url: string) {
       imageBuffer = Buffer.from(arrayBuffer);
     }
 
-    const format = contentType.includes("png") ? "PNG" : "JPEG";
+    const format = contentType.includes("png") ? "PNG" : contentType.includes("webp") ? "WEBP" : "JPEG";
     return {
-      data: { dataUrl: `data:${contentType};base64,${imageBuffer.toString("base64")}`, format },
+      data: { dataUrl: `data:${contentType};base64,${imageBuffer.toString("base64")}`, format, imageBuffer, contentType },
       reason: "ok"
     };
   } catch (error) {
@@ -100,6 +101,33 @@ async function imageToThumbnailData(url: string) {
     return { data: null, reason };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+function tryEmbedPdfImage(doc: jsPDF, dataUrl: string, format: string, x: number, y: number, width: number, height: number) {
+  try {
+    doc.addImage(dataUrl, format, x, y, width, height, undefined, "MEDIUM");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function convertImageForPdf(
+  imageBuffer: Buffer,
+  maxWidthPx = 960
+): Promise<{ dataUrl: string; format: "JPEG" } | null> {
+  try {
+    const sharpModule = await import("sharp");
+    const sharp = sharpModule.default;
+    const converted = await sharp(imageBuffer, { failOn: "none" })
+      .rotate()
+      .resize({ width: maxWidthPx, height: maxWidthPx, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 76, mozjpeg: true })
+      .toBuffer();
+    return { dataUrl: `data:image/jpeg;base64,${converted.toString("base64")}`, format: "JPEG" };
+  } catch {
+    return null;
   }
 }
 
@@ -596,37 +624,56 @@ export async function GET(request: Request) {
 
     if (resolvedImage.url) {
       imagesAttempted += 1;
-      let preview = thumbnailCache.get(resolvedImage.url);
-      if (!thumbnailCache.has(resolvedImage.url)) {
-        preview = await imageToThumbnailData(resolvedImage.url);
-        thumbnailCache.set(resolvedImage.url, preview);
-      }
+      let finalFailureReason = "thumbnail_fetch_failed";
 
-      if (preview?.data) {
-        try {
-          doc.addImage(preview.data.dataUrl, preview.data.format, margin + 2, y + 4, thumbnailWidth, thumbnailHeight, undefined, "MEDIUM");
+      for (let attempt = 1; attempt <= maxImageLoadAttempts && !hasEmbeddedThumbnail; attempt += 1) {
+        let preview =
+          attempt === 1
+            ? thumbnailCache.get(resolvedImage.url)
+            : undefined;
+
+        if (!preview) {
+          preview = await imageToThumbnailData(resolvedImage.url);
+          if (attempt === 1) {
+            thumbnailCache.set(resolvedImage.url, preview);
+          }
+        }
+
+        if (!preview?.data) {
+          finalFailureReason = preview?.reason || "thumbnail_fetch_failed";
+          continue;
+        }
+
+        const embeddedOriginal = tryEmbedPdfImage(doc, preview.data.dataUrl, preview.data.format, margin + 2, y + 4, thumbnailWidth, thumbnailHeight);
+        if (embeddedOriginal) {
           doc.link(margin + 2, y + 4, thumbnailWidth, thumbnailHeight, { url: resolvedImage.url });
           hasEmbeddedThumbnail = true;
           imagesEmbeddedSuccessfully += 1;
-        } catch (error) {
-          hasEmbeddedThumbnail = false;
-          imageLoadFailed = true;
-          imagesFailed += 1;
-          console.warn("[client-pdf-image-failed]", {
-            submissionId: item.id,
-            outletName: item.salon_name || "Name not visible",
-            imageFieldUsed: resolvedImage.field,
-            failureReason: error instanceof Error ? error.message : "add_image_failed"
-          });
+          break;
         }
-      } else {
+
+        const converted = await convertImageForPdf(preview.data.imageBuffer);
+        if (converted) {
+          const embeddedConverted = tryEmbedPdfImage(doc, converted.dataUrl, converted.format, margin + 2, y + 4, thumbnailWidth, thumbnailHeight);
+          if (embeddedConverted) {
+            doc.link(margin + 2, y + 4, thumbnailWidth, thumbnailHeight, { url: resolvedImage.url });
+            hasEmbeddedThumbnail = true;
+            imagesEmbeddedSuccessfully += 1;
+            break;
+          }
+        }
+
+        finalFailureReason = `embed_failed_after_conversion_attempt_${attempt}`;
+      }
+
+      if (!hasEmbeddedThumbnail) {
         imageLoadFailed = true;
         imagesFailed += 1;
         console.warn("[client-pdf-image-failed]", {
           submissionId: item.id,
           outletName: item.salon_name || "Name not visible",
           imageFieldUsed: resolvedImage.field,
-          failureReason: preview?.reason || "thumbnail_fetch_failed"
+          failureReason: finalFailureReason
         });
       }
     } else {
