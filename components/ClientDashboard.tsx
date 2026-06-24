@@ -21,7 +21,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { NIGERIA_REGIONS } from "@/lib/geography";
-import { campaignMatches, displayProjectName, FALLBACK_PROJECT_NAME, resolveSubmissionCampaignName } from "@/lib/projects";
+import { campaignMatches, displayProjectName, FALLBACK_PROJECT_NAME, projectCampaignName, resolveSubmissionCampaignName, resolveSubmissionProject } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { SignOutButton } from "@/components/SignOutButton";
 import { getPortfolioOperations, getProjectOperations, getStageTotals } from "@/lib/operations";
@@ -141,6 +141,7 @@ export function ClientDashboard({
   const [insightView, setInsightView] = useState<InsightView | null>(null);
   const contentTopRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
+  const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
 
   const dateTimeFormatOptions: Intl.DateTimeFormatOptions = {
     day: "2-digit",
@@ -203,7 +204,35 @@ export function ClientDashboard({
         (filters.gpsStatus === "all_gps" || (filters.gpsStatus === "gps_verified" ? hasVerifiedGps(item) : !hasVerifiedGps(item)))
       );
     });
-  }, [filters, submissions]);
+  }, [filters, submissions, projects, campaignDebugEnabled]);
+
+  useEffect(() => {
+    if (!campaignDebugEnabled || (!filters.project && !filters.campaign)) return;
+    const sample = submissions.slice(0, 3).map((item) => {
+      const resolvedProject = resolveSubmissionProject(projects, item);
+      return {
+        submissionId: item.id,
+        project_id: item.project_id,
+        project_name: item.project_name,
+        resolvedProject: resolvedProject
+          ? {
+              id: resolvedProject.id,
+              project_name: resolvedProject.project_name,
+              campaign_name: resolvedProject.campaign_name,
+              campaign: (resolvedProject as Record<string, unknown>).campaign ?? null
+            }
+          : null,
+        resolvedCampaignName: resolveSubmissionCampaignName(projects, item)
+      };
+    });
+    console.info("[client-campaign-filter-debug]", {
+      selectedProjectFilter: filters.project || null,
+      selectedCampaignFilter: filters.campaign || null,
+      submissionsBeforeFilter: submissions.length,
+      submissionsAfterFilter: filtered.length,
+      firstSubmissions: sample
+    });
+  }, [campaignDebugEnabled, filters.campaign, filters.project, filtered.length, projects, submissions]);
 
   const dailyCounts = getDailyCounts(filtered);
   const regionCounts = getRegionCounts(filtered);
@@ -275,7 +304,7 @@ export function ClientDashboard({
       submissionCount: submissions.length
     });
   }, [selectedProjectId, selectedProjectName, filters.project, activeProjectName, projectOptions.length, projects.length, submissions.length]);
-  const campaignOptions = Array.from(new Set(projects.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
+  const campaignOptions = Array.from(new Set(projects.map((project) => projectCampaignName(project)).filter(Boolean) as string[])).sort();
   const clientDisplayName = client.name;
   const statesCovered = stateCounts.filter((item) => item.state !== "Unknown").length;
   const regionsCovered = regionCounts.filter((item) => item.region !== "Unknown").length;

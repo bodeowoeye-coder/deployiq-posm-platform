@@ -115,7 +115,21 @@ export async function GET(request: Request) {
     if (projectId) projectQuery = projectQuery.eq("id", projectId);
     const { data: projectRows } = await projectQuery;
     const normalizedProjects = normalizeProjectRecords(projectRows ?? []);
+    console.info("[admin-excel-campaign-filter-debug]", {
+      selectedCampaignFilter: campaign,
+      selectedProjectFilter: project || null,
+      submissionsBeforeFilter: filteredSubmissions.length,
+      projectSamples: filteredSubmissions.slice(0, 3).map((item) => ({
+        submissionId: item.id,
+        project_id: item.project_id,
+        project_name: item.project_name,
+        resolvedCampaignName: resolveSubmissionCampaignName(normalizedProjects, item)
+      }))
+    });
     filteredSubmissions = filteredSubmissions.filter((item) => campaignMatches(campaign, resolveSubmissionCampaignName(normalizedProjects, item)));
+    console.info("[admin-excel-campaign-filter-debug]", {
+      submissionsAfterFilter: filteredSubmissions.length
+    });
   }
   if (gps === "verified") filteredSubmissions = filteredSubmissions.filter((item) => hasValidGps(item));
   if (gps === "missing") filteredSubmissions = filteredSubmissions.filter((item) => !hasValidGps(item));

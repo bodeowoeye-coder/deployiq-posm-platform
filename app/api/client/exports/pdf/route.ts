@@ -52,20 +52,6 @@ function toSentenceCase(text: string) {
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
-async function imageToDataUrl(url: string) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const contentType = response.headers.get("content-type") || "image/jpeg";
-    const arrayBuffer = await response.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const format = contentType.includes("png") ? "PNG" : "JPEG";
-    return { dataUrl: `data:${contentType};base64,${base64}`, format };
-  } catch {
-    return null;
-  }
-}
-
 export async function GET(request: Request) {
   const context = await getCurrentUserContext();
   if (!context || context.role.role !== "client" || !context.role.client_id || !context.client) {
@@ -87,6 +73,7 @@ export async function GET(request: Request) {
   const search = searchParams.get("query")?.trim();
   const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected";
   const gpsFilter = (searchParams.get("gpsFilter")?.trim().toLowerCase() ?? "") as "" | "all_gps" | "gps_verified" | "gps_missing";
+  const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
   const supabase = createAdminSupabase();
   const scoped = await loadClientSubmissionScope(supabase, client, clientId);
   const searchText = search?.toLowerCase() ?? "";
@@ -120,6 +107,21 @@ export async function GET(request: Request) {
       (!searchText || searchable.includes(searchText))
     );
   }).filter((submission) => !submission.archived_at) as Submission[];
+
+  if (campaignDebugEnabled && (project || campaign)) {
+    console.info("[client-pdf-campaign-filter-debug]", {
+      selectedCampaignFilter: campaign || null,
+      selectedProjectFilter: project || null,
+      submissionsBeforeFilter: scoped.submissions.length,
+      firstSubmissions: scoped.submissions.slice(0, 3).map((item) => ({
+        submissionId: item.id,
+        project_id: item.project_id,
+        project_name: item.project_name,
+        resolvedCampaignName: resolveSubmissionCampaignName(scoped.projects, item)
+      })),
+      submissionsAfterCampaignFilter: submissions.length
+    });
+  }
 
   if (quickFilter === "approved") submissions = submissions.filter((item) => item.status === "Approved");
   if (quickFilter === "pending") submissions = submissions.filter((item) => item.status === "Pending");
@@ -180,6 +182,7 @@ export async function GET(request: Request) {
     .sort((a, b) => b[1] - a[1])
     .map(([reason, count]) => ({ reason, count }));
   const mainRejectionReason = rejectionReasonRows[0] ?? { reason: "None", count: 0 };
+  const projectById = new Map(scoped.projects.map((project) => [project.id, project]));
 
   const headerRows: Array<[string, string]> = [
     ["Client Name", clientDisplayName],
@@ -389,8 +392,10 @@ export async function GET(request: Request) {
     doc.setFontSize(8);
     const textX = margin + 30;
     const textWidth = pageWidth - margin - textX - 4;
+    const projectRecord = item.project_id ? projectById.get(item.project_id) : undefined;
+    const resolvedProjectName = projectRecord ? displayProjectName(projectRecord.project_name) : displayProjectName(item.project_name);
     const rows = [
-      `Project: ${displayProjectName(item.project_name)}`,
+      `Project: ${resolvedProjectName}`,
       `Brand: ${item.brand_name || "Unassigned"}`,
       `Status: ${item.status} | Duplicate: ${item.duplicate_status || "Unique"}`,
       `Region: ${item.installer_region || item.state_region || "Unknown"} | State: ${item.installer_state || "Unknown"} | LGA: ${item.installer_lga || "n/a"}`,
@@ -414,18 +419,10 @@ export async function GET(request: Request) {
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
 
-    const preview = await imageToDataUrl(item.image_url);
-    if (preview) {
-      try {
-        doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
-        if (item.image_url) {
-          doc.link(margin + 2, y + 4, 24, 24, { url: item.image_url });
-        }
-      } catch {
-        doc.setFontSize(7);
-        doc.text("Preview unavailable", margin + 3, y + 16);
-      }
-    }
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text(item.image_url ? "Evidence Photo: View link below" : "Evidence Photo: Not available", margin + 3, y + 16);
 
     let textY = y + 7;
     doc.setFont("helvetica", "bold");

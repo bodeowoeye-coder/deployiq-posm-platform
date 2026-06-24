@@ -24,7 +24,7 @@ import { BrandMark } from "@/components/BrandMark";
 import { EmptyState } from "@/components/EmptyState";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
-import { campaignMatches, displayProjectName, resolveSubmissionCampaignName } from "@/lib/projects";
+import { campaignMatches, displayProjectName, projectCampaignName, resolveSubmissionCampaignName, resolveSubmissionProject } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, getStageTotals, getTargetAllocationRows } from "@/lib/operations";
 import { StateCombobox } from "@/components/StateCombobox";
@@ -296,6 +296,7 @@ export function AdminDashboard({
   const [scopeProjectId, setScopeProjectId] = useState("");
   const [pendingRejection, setPendingRejection] = useState<PendingRejectionState | null>(null);
   const contentTopRef = useRef<HTMLDivElement>(null);
+    const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
   const { showToast } = useToast();
   const currentUser =
     userRecords.find((user) => user.user_id === currentUserId) ??
@@ -446,6 +447,33 @@ export function AdminDashboard({
       );
     });
   }, [activeView, filters, scopedRecords, scopedProjectRecords]);
+  useEffect(() => {
+    if (!campaignDebugEnabled || (!filters.project && !filters.campaign)) return;
+    const sample = scopedRecords.slice(0, 3).map((item) => {
+      const resolvedProject = resolveSubmissionProject(scopedProjectRecords, item);
+      return {
+        submissionId: item.id,
+        project_id: item.project_id,
+        project_name: item.project_name,
+        resolvedProject: resolvedProject
+          ? {
+              id: resolvedProject.id,
+              project_name: resolvedProject.project_name,
+              campaign_name: resolvedProject.campaign_name,
+              campaign: (resolvedProject as Record<string, unknown>).campaign ?? null
+            }
+          : null,
+        resolvedCampaignName: resolveSubmissionCampaignName(scopedProjectRecords, item)
+      };
+    });
+    console.info("[admin-campaign-filter-debug]", {
+      selectedCampaignFilter: filters.campaign || null,
+      selectedProjectFilter: filters.project || null,
+      submissionsBeforeFilter: scopedRecords.length,
+      submissionsAfterFilter: filtered.length,
+      firstSubmissions: sample
+    });
+  }, [campaignDebugEnabled, filtered.length, filters.campaign, filters.project, scopedProjectRecords, scopedRecords]);
 
   const dailyCounts = getDailyCounts(filtered);
   const regionCounts = getRegionCounts(filtered);
@@ -467,7 +495,7 @@ export function AdminDashboard({
   const regionPerformance = getRegionPerformanceRanking(filtered);
   const brandCompliance = getBrandComplianceScores(filtered);
   const projectOptions = Array.from(new Set(scopedRecords.map((item) => displayProjectName(item.project_name)))).sort();
-  const campaignOptions = Array.from(new Set(scopedProjectRecords.map((project) => project.campaign_name).filter(Boolean) as string[])).sort();
+  const campaignOptions = Array.from(new Set(scopedProjectRecords.map((project) => projectCampaignName(project)).filter(Boolean) as string[])).sort();
   const projectOperations = getProjectOperations(scopedProjectRecords, scopedTargetRecords, filtered, scopedDeploymentProgress);
   const portfolio = getPortfolioOperations(projectOperations);
   const gpsCoveragePercent = portfolio.actual > 0 ? Number(((gpsVerifiedCount / portfolio.actual) * 100).toFixed(1)) : 0;

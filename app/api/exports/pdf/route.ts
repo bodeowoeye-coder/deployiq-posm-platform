@@ -151,7 +151,21 @@ export async function GET(request: Request) {
     if (projectId) projectQuery = projectQuery.eq("id", projectId);
     const { data: projectRows } = await projectQuery;
     const normalizedProjects = normalizeProjectRecords(projectRows ?? []);
+    console.info("[admin-pdf-campaign-filter-debug]", {
+      selectedCampaignFilter: campaign,
+      selectedProjectFilter: project || null,
+      submissionsBeforeFilter: submissions.length,
+      projectSamples: submissions.slice(0, 3).map((item) => ({
+        submissionId: item.id,
+        project_id: item.project_id,
+        project_name: item.project_name,
+        resolvedCampaignName: resolveSubmissionCampaignName(normalizedProjects, item)
+      }))
+    });
     submissions = submissions.filter((item) => campaignMatches(campaign, resolveSubmissionCampaignName(normalizedProjects, item)));
+    console.info("[admin-pdf-campaign-filter-debug]", {
+      submissionsAfterFilter: submissions.length
+    });
   }
   if (gps === "verified") submissions = submissions.filter((item) => hasValidGps(item));
   if (gps === "missing") submissions = submissions.filter((item) => !hasValidGps(item));
