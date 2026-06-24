@@ -21,7 +21,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import { NIGERIA_REGIONS } from "@/lib/geography";
-import { displayProjectName, FALLBACK_PROJECT_NAME } from "@/lib/projects";
+import { campaignMatches, displayProjectName, FALLBACK_PROJECT_NAME, resolveSubmissionCampaignName } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { SignOutButton } from "@/components/SignOutButton";
 import { getPortfolioOperations, getProjectOperations, getStageTotals } from "@/lib/operations";
@@ -198,8 +198,7 @@ export function ClientDashboard({
         (!filters.region || item.installer_region === filters.region) &&
         (!filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
         (!filters.project || displayProjectName(item.project_name) === filters.project) &&
-        (!filters.campaign ||
-          projects.find((project) => project.id === item.project_id || project.project_name === item.project_name)?.campaign_name === filters.campaign) &&
+        (!filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(projects, item))) &&
         (!filters.brand || item.brand_name === filters.brand) &&
         (filters.gpsStatus === "all_gps" || (filters.gpsStatus === "gps_verified" ? hasVerifiedGps(item) : !hasVerifiedGps(item)))
       );

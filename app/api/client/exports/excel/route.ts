@@ -4,7 +4,7 @@ import { getCurrentUserContext } from "@/lib/auth";
 import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Submission } from "@/lib/types";
-import { displayProjectName } from "@/lib/projects";
+import { campaignMatches, displayProjectName, resolveSubmissionCampaignName } from "@/lib/projects";
 import { createReportId, reportFooter, reportSubtitle } from "@/lib/reportBranding";
 
 export const runtime = "nodejs";
@@ -177,7 +177,7 @@ export async function GET(request: Request) {
   const searchText = search?.toLowerCase() ?? "";
   const data = scoped.submissions.filter((item) => {
     const date = item.installation_date ?? item.submitted_at.slice(0, 10);
-    const campaignName = scoped.projects.find((projectRow) => projectRow.id === item.project_id || projectRow.project_name === item.project_name)?.campaign_name ?? "";
+    const campaignName = resolveSubmissionCampaignName(scoped.projects, item);
     const searchable = [
       item.installer_name,
       item.project_name,
@@ -198,7 +198,7 @@ export async function GET(request: Request) {
       (!region || item.installer_region === region) &&
       (!lga || (item.installer_lga ?? "").toLowerCase().includes(lga.toLowerCase())) &&
       (!project || displayProjectName(item.project_name) === project) &&
-      (!campaign || campaignName === campaign) &&
+      campaignMatches(campaign, campaignName) &&
       (!brand || item.brand_name === brand) &&
       (!startDate || date >= startDate) &&
       (!endDate || date <= endDate) &&

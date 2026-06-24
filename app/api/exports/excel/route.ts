@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getCurrentUserContext } from "@/lib/auth";
 import type { Submission } from "@/lib/types";
-import { displayProjectName } from "@/lib/projects";
+import { campaignMatches, displayProjectName, normalizeProjectRecords, resolveSubmissionCampaignName } from "@/lib/projects";
 import { createReportId, reportFooter, reportSubtitle } from "@/lib/reportBranding";
 
 export const runtime = "nodejs";
@@ -71,12 +71,6 @@ export async function GET(request: Request) {
   const search = searchParams.get("query")?.trim();
   const supabase = createAdminSupabase();
   let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
-  if (campaign) {
-    let projectQuery = supabase.from("projects").select("id").eq("campaign_name", campaign);
-    if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
-    const { data: matchingProjects } = await projectQuery;
-    query = matchingProjects?.length ? query.in("project_id", matchingProjects.map((item) => item.id)) : query.eq("project_id", "00000000-0000-0000-0000-000000000000");
-  }
 
   if (clientId) query = query.eq("client_id", clientId);
   if (projectId) query = query.eq("project_id", projectId);
@@ -115,6 +109,14 @@ export async function GET(request: Request) {
   const reportId = createReportId(isFiltered ? "DPIQ-XLS-FLT" : "DPIQ-XLS");
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
   let filteredSubmissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
+  if (campaign) {
+    let projectQuery = supabase.from("projects").select("id, project_name, campaign_name, campaign");
+    if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
+    if (projectId) projectQuery = projectQuery.eq("id", projectId);
+    const { data: projectRows } = await projectQuery;
+    const normalizedProjects = normalizeProjectRecords(projectRows ?? []);
+    filteredSubmissions = filteredSubmissions.filter((item) => campaignMatches(campaign, resolveSubmissionCampaignName(normalizedProjects, item)));
+  }
   if (gps === "verified") filteredSubmissions = filteredSubmissions.filter((item) => hasValidGps(item));
   if (gps === "missing") filteredSubmissions = filteredSubmissions.filter((item) => !hasValidGps(item));
 

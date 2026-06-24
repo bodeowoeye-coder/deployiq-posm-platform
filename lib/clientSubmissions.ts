@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { clientCanSeeSubmission, getClientVisibilityScope } from "@/lib/clientVisibility";
 import type { Brand, Client, Project, Submission } from "@/lib/types";
+import { normalizeProjectRecords } from "@/lib/projects";
 
 function hierarchyKey(value: string | null | undefined) {
   return (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -57,7 +58,7 @@ export async function loadClientSubmissionScope(supabase: SupabaseClient, client
       .order("created_at", { ascending: false })
   ]);
   const brandRows = (brands ?? []) as Array<Pick<Brand, "id" | "brand_name">>;
-  const projectRows = (projects ?? []) as Project[];
+  const projectRows = normalizeProjectRecords((projects ?? []) as Project[]) as Project[];
   const visibilityScope = getClientVisibilityScope(effectiveClient, brandRows, projectRows);
   const submissionQueries = [
     supabase.from("submissions").select("*").eq("client_id", effectiveClientId).order("submitted_at", { ascending: false })

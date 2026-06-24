@@ -24,7 +24,7 @@ import { BrandMark } from "@/components/BrandMark";
 import { EmptyState } from "@/components/EmptyState";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
-import { displayProjectName } from "@/lib/projects";
+import { campaignMatches, displayProjectName, resolveSubmissionCampaignName } from "@/lib/projects";
 import { DashboardSidebar, type DashboardView } from "@/components/DashboardSidebar";
 import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, getStageTotals, getTargetAllocationRows } from "@/lib/operations";
 import { StateCombobox } from "@/components/StateCombobox";
@@ -439,8 +439,7 @@ export function AdminDashboard({
         (isSubmissionsView || !filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
         (isSubmissionsView || !installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
         (isSubmissionsView || !filters.project || displayProjectName(item.project_name) === filters.project) &&
-        (isSubmissionsView || !filters.campaign ||
-          scopedProjectRecords.find((project) => project.id === item.project_id || project.project_name === item.project_name)?.campaign_name === filters.campaign) &&
+        (isSubmissionsView || !filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
         (isSubmissionsView || !filters.brand || item.brand_name === filters.brand) &&
         (!filters.status || item.status === filters.status) &&
         (filters.gps === "all" || (filters.gps === "verified" ? hasValidGps(item) : !hasValidGps(item)))
