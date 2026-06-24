@@ -438,9 +438,9 @@ export function AdminDashboard({
         (isSubmissionsView || !filters.region || item.installer_region === filters.region) &&
         (isSubmissionsView || !filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
         (isSubmissionsView || !installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
-        (isSubmissionsView || !filters.project || displayProjectName(item.project_name) === filters.project) &&
-        (isSubmissionsView || !filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
-        (isSubmissionsView || !filters.brand || item.brand_name === filters.brand) &&
+        (!filters.project || displayProjectName(item.project_name) === filters.project) &&
+        (!filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
+        (!filters.brand || item.brand_name === filters.brand) &&
         (!filters.status || item.status === filters.status) &&
         (filters.gps === "all" || (filters.gps === "verified" ? hasValidGps(item) : !hasValidGps(item)))
       );
