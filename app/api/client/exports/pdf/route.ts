@@ -201,12 +201,13 @@ export async function GET(request: Request) {
   y += 5;
 
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, y, pageWidth - margin * 2, 27, 2, 2, "F");
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 36, 2, 2, "F");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
   doc.text("Campaign Health", margin + 3, y + 6.5);
   const healthSummary = [
+    ["Expected Deployment", portfolio.expected],
     ["Completion %", `${portfolio.completion}%`],
     ["GPS Compliance %", `${gpsCoverage}%`],
     ["Approval Rate %", `${approvalRate}%`],
@@ -214,18 +215,26 @@ export async function GET(request: Request) {
     ["Actual Deployment", portfolio.actual],
     ["Outstanding Deployment", portfolio.outstanding]
   ];
+  const healthColumns = 4;
+  const healthCellWidth = (pageWidth - margin * 2 - 8) / healthColumns;
   healthSummary.forEach(([label, value], index) => {
-    const x = margin + 4 + index * 31;
+    const column = index % healthColumns;
+    const row = Math.floor(index / healthColumns);
+    const x = margin + 4 + column * healthCellWidth;
+    const cellTop = y + 11 + row * 12;
+    const labelLines = wrappedLines(doc, String(label), healthCellWidth - 2);
+
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
-    doc.text(String(label), x, y + 13);
+    doc.text(labelLines, x, cellTop);
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(15, 23, 42);
-    doc.text(String(value), x, y + 20);
+    doc.text(String(value), x, cellTop + labelLines.length * 3 + 3.4);
   });
-  y += 34;
+  y += 42;
 
   const progressPct = Math.max(0, Math.min(100, portfolio.completion));
   doc.setFont("helvetica", "bold");
