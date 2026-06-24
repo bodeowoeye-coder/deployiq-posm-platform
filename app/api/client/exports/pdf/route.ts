@@ -19,10 +19,9 @@ const contentBottom = 280;
 const rowLineHeight = 4.5;
 const thumbnailWidth = 24;
 const thumbnailHeight = 24;
-const thumbnailFetchTimeoutMs = 1800;
-const maxThumbnailBytes = 320 * 1024;
-const maxEmbeddedThumbnailsFull = 40;
-const maxEmbeddedThumbnailsFiltered = 120;
+const thumbnailFetchTimeoutMs = 12000;
+const storageBucket = "installation-images";
+const imageDebugNeedles = ["ABUKKYA STORE", "MAC-DAVIS VENTURES", "MECHE"];
 
 function hasValidGps(item: Submission) {
   if (item.gps_latitude === null || item.gps_longitude === null) return false;
@@ -64,45 +63,116 @@ async function imageToThumbnailData(url: string) {
 
   try {
     const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      return { data: null, reason: `http_${response.status}` };
+    }
     const contentType = response.headers.get("content-type") || "image/jpeg";
     if (!contentType.includes("jpeg") && !contentType.includes("jpg") && !contentType.includes("png") && !contentType.includes("webp")) {
-      return null;
+      return { data: null, reason: `unsupported_content_type:${contentType}` };
     }
 
     let imageBuffer: Buffer;
     if (response.body) {
       const reader = response.body.getReader();
       const chunks: Buffer[] = [];
-      let received = 0;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
 
-        received += value.byteLength;
-        if (received > maxThumbnailBytes) {
-          return null;
-        }
-
         chunks.push(Buffer.from(value));
       }
 
-      imageBuffer = Buffer.concat(chunks, received);
+      imageBuffer = Buffer.concat(chunks);
     } else {
       const arrayBuffer = await response.arrayBuffer();
-      if (arrayBuffer.byteLength > maxThumbnailBytes) return null;
       imageBuffer = Buffer.from(arrayBuffer);
     }
 
     const format = contentType.includes("png") ? "PNG" : "JPEG";
-    return { dataUrl: `data:${contentType};base64,${imageBuffer.toString("base64")}`, format };
-  } catch {
-    return null;
+    return {
+      data: { dataUrl: `data:${contentType};base64,${imageBuffer.toString("base64")}`, format },
+      reason: "ok"
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown_error";
+    return { data: null, reason };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function sanitizeImageUrlForLog(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return raw.split("?")[0].slice(0, 220);
+  }
+}
+
+function resolvePathImageUrl(path: string, supabase: ReturnType<typeof createAdminSupabase>) {
+  const normalizedPath = path.replace(/^\/+/, "").trim();
+  if (!normalizedPath) return null;
+  const { data } = supabase.storage.from(storageBucket).getPublicUrl(normalizedPath);
+  return data?.publicUrl ?? null;
+}
+
+function isImageDebugTarget(submission: Submission) {
+  const haystack = [submission.salon_name, submission.address, submission.project_name, submission.installer_name]
+    .filter(Boolean)
+    .join(" ")
+    .toUpperCase();
+  return imageDebugNeedles.some((needle) => haystack.includes(needle));
+}
+
+function resolveClientDashboardImageSource(
+  item: Submission,
+  supabase: ReturnType<typeof createAdminSupabase>
+): {
+  url: string | null;
+  field: "image_url" | "image_path" | "photo_url" | "evidence_photo_url" | "photo_path" | "none";
+  reason?: string;
+} {
+  // Preserve dashboard parity by prioritizing the raw image_url value exactly as-is when present.
+  const rawImageUrl = String((item as Submission & { image_url?: unknown }).image_url ?? "").trim();
+  if (rawImageUrl) {
+    return { url: rawImageUrl, field: "image_url" };
+  }
+
+  const rawPhotoUrl = String((item as Submission & { photo_url?: unknown }).photo_url ?? "").trim();
+  if (rawPhotoUrl) {
+    return { url: rawPhotoUrl, field: "photo_url" };
+  }
+
+  const rawEvidencePhotoUrl = String((item as Submission & { evidence_photo_url?: unknown }).evidence_photo_url ?? "").trim();
+  if (rawEvidencePhotoUrl) {
+    return { url: rawEvidencePhotoUrl, field: "evidence_photo_url" };
+  }
+
+  const rawImagePath = String((item as Submission & { image_path?: unknown }).image_path ?? "").trim();
+  if (rawImagePath) {
+    const imagePathUrl = resolvePathImageUrl(rawImagePath, supabase);
+    if (imagePathUrl) {
+      return { url: imagePathUrl, field: "image_path" };
+    }
+    return { url: null, field: "image_path", reason: "could_not_resolve_public_url" };
+  }
+
+  const rawPhotoPath = String((item as Submission & { photo_path?: unknown }).photo_path ?? "").trim();
+  if (rawPhotoPath) {
+    const photoPathUrl = resolvePathImageUrl(rawPhotoPath, supabase);
+    if (photoPathUrl) {
+      return { url: photoPathUrl, field: "photo_path" };
+    }
+    return { url: null, field: "photo_path", reason: "could_not_resolve_public_url" };
+  }
+
+  return { url: null, field: "none", reason: "missing_image_fields" };
 }
 
 export async function GET(request: Request) {
@@ -129,6 +199,42 @@ export async function GET(request: Request) {
   const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
   const supabase = createAdminSupabase();
   const scoped = await loadClientSubmissionScope(supabase, client, clientId);
+  console.info("[client-pdf-source-shape]", {
+    submissionCount: scoped.submissions.length,
+    selectStrategy: 'loadClientSubmissionScope uses submissions.select("*")',
+    sampleSubmissionShape: scoped.submissions[0]
+      ? {
+          submissionId: scoped.submissions[0].id,
+          salonName: scoped.submissions[0].salon_name || null,
+          hasImageUrl: Boolean((scoped.submissions[0] as Submission & { image_url?: unknown }).image_url),
+          hasImagePath: Boolean((scoped.submissions[0] as Submission & { image_path?: unknown }).image_path),
+          hasPhotoUrl: Boolean((scoped.submissions[0] as Submission & { photo_url?: unknown }).photo_url),
+          hasEvidencePhotoUrl: Boolean((scoped.submissions[0] as Submission & { evidence_photo_url?: unknown }).evidence_photo_url),
+          hasPhotoPath: Boolean((scoped.submissions[0] as Submission & { photo_path?: unknown }).photo_path)
+        }
+      : null
+  });
+  const sourceDebugTarget = scoped.submissions.find((item) => isImageDebugTarget(item));
+  if (sourceDebugTarget) {
+    console.info("[client-pdf-source-debug-record]", {
+      stage: "before-image-resolution",
+      submissionId: sourceDebugTarget.id,
+      salonName: sourceDebugTarget.salon_name || null,
+      projectName: sourceDebugTarget.project_name || null,
+      installerName: sourceDebugTarget.installer_name || null,
+      image_url: sanitizeImageUrlForLog((sourceDebugTarget as Submission & { image_url?: unknown }).image_url),
+      image_path: sanitizeImageUrlForLog((sourceDebugTarget as Submission & { image_path?: unknown }).image_path),
+      photo_url: sanitizeImageUrlForLog((sourceDebugTarget as Submission & { photo_url?: unknown }).photo_url),
+      evidence_photo_url: sanitizeImageUrlForLog((sourceDebugTarget as Submission & { evidence_photo_url?: unknown }).evidence_photo_url),
+      photo_path: sanitizeImageUrlForLog((sourceDebugTarget as Submission & { photo_path?: unknown }).photo_path)
+    });
+  } else {
+    console.info("[client-pdf-source-debug-record]", {
+      stage: "before-image-resolution",
+      note: "No named debug record matched in current client scope",
+      needles: imageDebugNeedles
+    });
+  }
   const searchText = search?.toLowerCase() ?? "";
   let submissions = scoped.submissions.filter((item) => {
     const date = item.installation_date ?? item.submitted_at.slice(0, 10);
@@ -440,9 +546,12 @@ export async function GET(request: Request) {
   doc.addPage();
   drawReportHeader(doc, pageWidth, "Client Deployment Evidence", headerRows);
   y = headerContentStart;
-  const maxEmbeddedThumbnails = isFiltered ? maxEmbeddedThumbnailsFiltered : maxEmbeddedThumbnailsFull;
   const thumbnailCache = new Map<string, Awaited<ReturnType<typeof imageToThumbnailData>>>();
-  let embeddedThumbnailCount = 0;
+  let submissionsWithImageSource = 0;
+  let imagesAttempted = 0;
+  let imagesEmbeddedSuccessfully = 0;
+  let imagesFailed = 0;
+  let submissionsWithNoImageSource = 0;
 
   for (const item of submissions) {
     doc.setFontSize(8);
@@ -475,24 +584,58 @@ export async function GET(request: Request) {
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
 
+    const resolvedImage = resolveClientDashboardImageSource(item, supabase);
     let hasEmbeddedThumbnail = false;
-    if (item.image_url && embeddedThumbnailCount < maxEmbeddedThumbnails) {
-      let preview = thumbnailCache.get(item.image_url);
-      if (!thumbnailCache.has(item.image_url)) {
-        preview = await imageToThumbnailData(item.image_url);
-        thumbnailCache.set(item.image_url, preview);
+    let imageLoadFailed = false;
+
+    if (resolvedImage.url) {
+      submissionsWithImageSource += 1;
+    } else {
+      submissionsWithNoImageSource += 1;
+    }
+
+    if (resolvedImage.url) {
+      imagesAttempted += 1;
+      let preview = thumbnailCache.get(resolvedImage.url);
+      if (!thumbnailCache.has(resolvedImage.url)) {
+        preview = await imageToThumbnailData(resolvedImage.url);
+        thumbnailCache.set(resolvedImage.url, preview);
       }
 
-      if (preview) {
+      if (preview?.data) {
         try {
-          doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, thumbnailWidth, thumbnailHeight, undefined, "MEDIUM");
-          doc.link(margin + 2, y + 4, thumbnailWidth, thumbnailHeight, { url: item.image_url });
+          doc.addImage(preview.data.dataUrl, preview.data.format, margin + 2, y + 4, thumbnailWidth, thumbnailHeight, undefined, "MEDIUM");
+          doc.link(margin + 2, y + 4, thumbnailWidth, thumbnailHeight, { url: resolvedImage.url });
           hasEmbeddedThumbnail = true;
-          embeddedThumbnailCount += 1;
-        } catch {
+          imagesEmbeddedSuccessfully += 1;
+        } catch (error) {
           hasEmbeddedThumbnail = false;
+          imageLoadFailed = true;
+          imagesFailed += 1;
+          console.warn("[client-pdf-image-failed]", {
+            submissionId: item.id,
+            outletName: item.salon_name || "Name not visible",
+            imageFieldUsed: resolvedImage.field,
+            failureReason: error instanceof Error ? error.message : "add_image_failed"
+          });
         }
+      } else {
+        imageLoadFailed = true;
+        imagesFailed += 1;
+        console.warn("[client-pdf-image-failed]", {
+          submissionId: item.id,
+          outletName: item.salon_name || "Name not visible",
+          imageFieldUsed: resolvedImage.field,
+          failureReason: preview?.reason || "thumbnail_fetch_failed"
+        });
       }
+    } else {
+      console.warn("[client-pdf-image-failed]", {
+        submissionId: item.id,
+        outletName: item.salon_name || "Name not visible",
+        imageFieldUsed: resolvedImage.field,
+        failureReason: resolvedImage.reason || "no_valid_image_source"
+      });
     }
 
     if (!hasEmbeddedThumbnail) {
@@ -501,7 +644,7 @@ export async function GET(request: Request) {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6.8);
       doc.setTextColor(100, 116, 139);
-      const fallbackLabel = item.image_url ? "Evidence Photo Unavailable" : "Evidence Photo Unavailable";
+      const fallbackLabel = imageLoadFailed ? "Evidence Photo Could Not Be Loaded" : "Evidence Photo Unavailable";
       doc.text(wrappedLines(doc, fallbackLabel, thumbnailWidth - 2), margin + 3, y + 14);
     }
 
@@ -517,11 +660,11 @@ export async function GET(request: Request) {
       textY += lines.length * rowLineHeight + 1.6;
     });
 
-    if (item.image_url) {
+    if (resolvedImage.url) {
       doc.setTextColor(37, 99, 235);
       const evidenceLabel = "Evidence Photo: View";
       doc.text(evidenceLabel, textX, textY);
-      doc.link(textX, textY - 3.5, 28, 4.5, { url: item.image_url });
+      doc.link(textX, textY - 3.5, 28, 4.5, { url: resolvedImage.url });
       doc.setTextColor(15, 23, 42);
     } else {
       doc.text("Evidence Photo: Not available", textX, textY);
@@ -531,6 +674,14 @@ export async function GET(request: Request) {
   }
 
   drawReportFooter(doc, pageWidth, 297, margin);
+  console.info("[client-pdf-export-summary]", {
+    totalSubmissionsInReport: submissions.length,
+    submissionsWithImageSource,
+    imagesAttempted,
+    imagesEmbeddedSuccessfully,
+    imagesFailed,
+    submissionsWithNoImageSource
+  });
   const buffer = Buffer.from(doc.output("arraybuffer"));
   const filename = `${isFiltered ? "filtered" : "full"}-client-deployment-report-${new Date().toISOString().slice(0, 10)}.pdf`;
   return new NextResponse(buffer, {

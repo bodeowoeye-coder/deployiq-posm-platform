@@ -8,6 +8,28 @@ import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { DeploymentProgress, Project, ProjectTarget, Submission } from "@/lib/types";
 import { normalizeProjectRecords } from "@/lib/projects";
 
+const imageDebugNeedles = ["ABUKKYA STORE", "MAC-DAVIS VENTURES", "MECHE"];
+
+function sanitizeImageUrlForLog(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return raw.split("?")[0].slice(0, 220);
+  }
+}
+
+function isImageDebugTarget(submission: Submission) {
+  const haystack = [submission.salon_name, submission.address, submission.project_name, submission.installer_name]
+    .filter(Boolean)
+    .join(" ")
+    .toUpperCase();
+  return imageDebugNeedles.some((needle) => haystack.includes(needle));
+}
+
 export async function ClientRoutePage({ initialView = "overview" }: { initialView?: DashboardView }) {
   console.info("[client-route] entered", { initialView });
   const context = await requireRole(["client"], "/client");
@@ -60,6 +82,7 @@ export async function ClientRoutePage({ initialView = "overview" }: { initialVie
     brandNames: visibilityScope.brandNames,
     brandIdsCount: visibilityScope.brandIds.length,
     projectIdsCount: visibilityScope.projectIds.length,
+    selectStrategy: 'loadClientSubmissionScope uses submissions.select("*")',
     sampleSubmissionShape: submissions[0]
       ? {
           id: submissions[0].id,
@@ -71,10 +94,33 @@ export async function ClientRoutePage({ initialView = "overview" }: { initialVie
           status: submissions[0].status,
           submitted_at: submissions[0].submitted_at,
           installation_date: submissions[0].installation_date,
-          hasImageUrl: Boolean(submissions[0].image_url)
+          hasImageUrl: Boolean(submissions[0].image_url),
+          hasImagePath: Boolean((submissions[0] as Submission & { image_path?: unknown }).image_path),
+          hasPhotoUrl: Boolean((submissions[0] as Submission & { photo_url?: unknown }).photo_url),
+          hasEvidencePhotoUrl: Boolean((submissions[0] as Submission & { evidence_photo_url?: unknown }).evidence_photo_url),
+          hasPhotoPath: Boolean((submissions[0] as Submission & { photo_path?: unknown }).photo_path)
         }
       : null
   });
+  const debugTarget = submissions.find((item) => isImageDebugTarget(item));
+  if (debugTarget) {
+    console.info("[client-route-image-debug]", {
+      submissionId: debugTarget.id,
+      salonName: debugTarget.salon_name || null,
+      projectName: debugTarget.project_name || null,
+      installerName: debugTarget.installer_name || null,
+      image_url: sanitizeImageUrlForLog((debugTarget as Submission & { image_url?: unknown }).image_url),
+      image_path: sanitizeImageUrlForLog((debugTarget as Submission & { image_path?: unknown }).image_path),
+      photo_url: sanitizeImageUrlForLog((debugTarget as Submission & { photo_url?: unknown }).photo_url),
+      evidence_photo_url: sanitizeImageUrlForLog((debugTarget as Submission & { evidence_photo_url?: unknown }).evidence_photo_url),
+      photo_path: sanitizeImageUrlForLog((debugTarget as Submission & { photo_path?: unknown }).photo_path)
+    });
+  } else {
+    console.info("[client-route-image-debug]", {
+      note: "No named debug record matched in current client scope",
+      needles: imageDebugNeedles
+    });
+  }
   const { brandNames: clientBrandNames, projectIds } = visibilityScope;
   const assignedProjectIds = Array.isArray((context as any).profile?.assigned_project_ids) ? ((context as any).profile.assigned_project_ids as string[]) : [];
   const initialAssignedProject = (projects ?? []).find((p) => assignedProjectIds.includes(p.id));
