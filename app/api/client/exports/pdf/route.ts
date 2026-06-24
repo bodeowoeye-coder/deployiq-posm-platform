@@ -270,9 +270,10 @@ export async function GET(request: Request) {
     insightsY += lines.length * 4.2 + 1;
   });
 
-  y = 146;
+  y = 156;
+  const sectionBoxHeight = 38;
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, y, 88, 28, 2, 2, "F");
+  doc.roundedRect(margin, y, 88, sectionBoxHeight, 2, 2, "F");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
@@ -293,7 +294,7 @@ export async function GET(request: Request) {
     doc.setFontSize(7.5);
     doc.setTextColor(51, 65, 85);
     exceptionRows.forEach((entry) => {
-      if (exceptionY > y + 26.5) return;
+      if (exceptionY > y + sectionBoxHeight - 2) return;
       doc.text(entry.reason.slice(0, 46), margin + 3, exceptionY);
       doc.text(String(entry.count), margin + 75, exceptionY, { align: "right" });
       exceptionY += 4.6;
@@ -301,36 +302,28 @@ export async function GET(request: Request) {
   }
 
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(112, y, 84, 28, 2, 2, "F");
+  doc.roundedRect(112, y, 84, sectionBoxHeight, 2, 2, "F");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
   doc.text("Risks / Attention Required", 115, y + 6.5);
   let riskY = y + 11.5;
-  const risks: string[] = [];
-  if (portfolio.completion < 50) risks.push("Deployment still early-stage / below target.");
-  const hasMissingOrInvalidPhone = submissions.some((item) => {
-    const phone = item.phone?.trim() ?? "";
-    return !phone || phone.length < 7 || !/^\+?[0-9\s()\-]{7,}$/.test(phone);
-  });
-  const hasMissingAddress = submissions.some((item) => !(item.address || item.selected_outlet_address || item.resolved_address));
-  const hasPotentialLocationRisk = submissions.some((item) => !item.resolved_address && !(item.address || item.selected_outlet_address));
-  if (hasPotentialLocationRisk) risks.push("Some salons/outlets may be displaced or no longer operating at recorded locations.");
-  if (hasMissingOrInvalidPhone) risks.push("Some outlet phone numbers appear invalid, unreachable, or unavailable.");
-  if (hasMissingAddress) risks.push("Some outlet addresses are incomplete or inaccurate.");
-  if (gpsMissingCount > 0) risks.push("Some records require GPS review.");
-  risks.push("Some outlets may need directory validation to confirm they are easy to locate.");
-  if (risks.length === 0) risks.push("No immediate operational risks detected.");
+  const risks = [
+    "Salons/outlets displaced or no longer operating at recorded locations",
+    "Incorrect or invalid outlet phone numbers",
+    "Phone numbers unreachable or unavailable",
+    "Incomplete or inaccurate outlet addresses"
+  ];
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.4);
   doc.setTextColor(51, 65, 85);
-  risks.slice(0, 5).forEach((risk) => {
-    const lines = wrappedLines(doc, `• ${risk}`, 78);
+  risks.forEach((risk) => {
+    const lines = wrappedLines(doc, `• ${risk}`, 74);
     doc.text(lines, 115, riskY);
-    riskY += lines.length * 4 + 0.7;
+    riskY += lines.length * 3.7 + 0.6;
   });
 
-  y = 190;
+  y = 198;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
@@ -347,7 +340,7 @@ export async function GET(request: Request) {
     doc.setFillColor(11, 124, 89);
     doc.rect(margin + 34, breakdownY - 4, Math.max(4, (item.count / maxRegion) * 42), 4, "F");
     doc.text(String(item.count), margin + 80, breakdownY);
-    breakdownY += 7;
+    breakdownY += 6;
   });
   breakdownY = y + 8;
   brandCounts.slice(0, 6).forEach((item) => {
@@ -357,9 +350,9 @@ export async function GET(request: Request) {
     doc.setFillColor(124, 58, 237);
     doc.rect(146, breakdownY - 4, Math.max(4, (item.count / maxBrand) * 34), 4, "F");
     doc.text(String(item.count), 184, breakdownY);
-    breakdownY += 7;
+    breakdownY += 6;
   });
-  y += 56;
+  y += 46;
 
   y = ensurePageSpace(doc, 24, y, headerRows);
   doc.setFont("helvetica", "bold");
