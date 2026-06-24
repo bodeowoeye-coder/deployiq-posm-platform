@@ -17,6 +17,12 @@ const pageWidth = 210;
 const margin = 14;
 const contentBottom = 280;
 const rowLineHeight = 4.5;
+const thumbnailWidth = 24;
+const thumbnailHeight = 24;
+const thumbnailFetchTimeoutMs = 1800;
+const maxThumbnailBytes = 320 * 1024;
+const maxEmbeddedThumbnailsFull = 40;
+const maxEmbeddedThumbnailsFiltered = 120;
 
 function hasValidGps(item: Submission) {
   if (item.gps_latitude === null || item.gps_longitude === null) return false;
@@ -50,6 +56,53 @@ function toSentenceCase(text: string) {
   if (!text.trim()) return "Not specified";
   const trimmed = text.trim();
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+async function imageToThumbnailData(url: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), thumbnailFetchTimeoutMs);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    if (!contentType.includes("jpeg") && !contentType.includes("jpg") && !contentType.includes("png") && !contentType.includes("webp")) {
+      return null;
+    }
+
+    let imageBuffer: Buffer;
+    if (response.body) {
+      const reader = response.body.getReader();
+      const chunks: Buffer[] = [];
+      let received = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+
+        received += value.byteLength;
+        if (received > maxThumbnailBytes) {
+          return null;
+        }
+
+        chunks.push(Buffer.from(value));
+      }
+
+      imageBuffer = Buffer.concat(chunks, received);
+    } else {
+      const arrayBuffer = await response.arrayBuffer();
+      if (arrayBuffer.byteLength > maxThumbnailBytes) return null;
+      imageBuffer = Buffer.from(arrayBuffer);
+    }
+
+    const format = contentType.includes("png") ? "PNG" : "JPEG";
+    return { dataUrl: `data:${contentType};base64,${imageBuffer.toString("base64")}`, format };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function GET(request: Request) {
@@ -387,6 +440,9 @@ export async function GET(request: Request) {
   doc.addPage();
   drawReportHeader(doc, pageWidth, "Client Deployment Evidence", headerRows);
   y = headerContentStart;
+  const maxEmbeddedThumbnails = isFiltered ? maxEmbeddedThumbnailsFiltered : maxEmbeddedThumbnailsFull;
+  const thumbnailCache = new Map<string, Awaited<ReturnType<typeof imageToThumbnailData>>>();
+  let embeddedThumbnailCount = 0;
 
   for (const item of submissions) {
     doc.setFontSize(8);
@@ -419,10 +475,35 @@ export async function GET(request: Request) {
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(100, 116, 139);
-    doc.text(item.image_url ? "Evidence Photo: View link below" : "Evidence Photo: Not available", margin + 3, y + 16);
+    let hasEmbeddedThumbnail = false;
+    if (item.image_url && embeddedThumbnailCount < maxEmbeddedThumbnails) {
+      let preview = thumbnailCache.get(item.image_url);
+      if (!thumbnailCache.has(item.image_url)) {
+        preview = await imageToThumbnailData(item.image_url);
+        thumbnailCache.set(item.image_url, preview);
+      }
+
+      if (preview) {
+        try {
+          doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, thumbnailWidth, thumbnailHeight, undefined, "MEDIUM");
+          doc.link(margin + 2, y + 4, thumbnailWidth, thumbnailHeight, { url: item.image_url });
+          hasEmbeddedThumbnail = true;
+          embeddedThumbnailCount += 1;
+        } catch {
+          hasEmbeddedThumbnail = false;
+        }
+      }
+    }
+
+    if (!hasEmbeddedThumbnail) {
+      doc.setDrawColor(203, 213, 225);
+      doc.rect(margin + 2, y + 4, thumbnailWidth, thumbnailHeight);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.8);
+      doc.setTextColor(100, 116, 139);
+      const fallbackLabel = item.image_url ? "Evidence Photo Unavailable" : "Evidence Photo Unavailable";
+      doc.text(wrappedLines(doc, fallbackLabel, thumbnailWidth - 2), margin + 3, y + 14);
+    }
 
     let textY = y + 7;
     doc.setFont("helvetica", "bold");
