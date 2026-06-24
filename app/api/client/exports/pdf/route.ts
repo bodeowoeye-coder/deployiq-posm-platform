@@ -211,11 +211,10 @@ export async function GET(request: Request) {
     ["Completion %", `${portfolio.completion}%`],
     ["GPS Compliance %", `${gpsCoverage}%`],
     ["Approval Rate %", `${approvalRate}%`],
-    ["Rejection Rate %", `${rejectionRate}%`],
     ["Actual Deployment", portfolio.actual],
     ["Outstanding Deployment", portfolio.outstanding]
   ];
-  const healthColumns = 4;
+  const healthColumns = 3;
   const healthCellWidth = (pageWidth - margin * 2 - 8) / healthColumns;
   healthSummary.forEach(([label, value], index) => {
     const column = index % healthColumns;
