@@ -62,6 +62,14 @@ type PendingRejectionState = {
   comment: string;
 };
 
+type PendingPermanentDeleteState = {
+  id: string;
+  title: string;
+  confirmText: string;
+};
+
+type SubmissionArchiveView = "active" | "archived" | "all";
+
 const blankFilters: Filters = {
   query: "",
   startDate: "",
@@ -76,6 +84,15 @@ const blankFilters: Filters = {
   status: "",
   gps: "all"
 };
+
+const SUBMISSION_ARCHIVE_REASONS = [
+  "Duplicate upload",
+  "Poor photo quality",
+  "Wrong outlet selected",
+  "Wrong photo uploaded",
+  "Test upload",
+  "Other"
+] as const;
 
 const adminAccountSettingsItems: Array<{ view: DashboardView; label: string; status?: "ready" | "coming-soon" }> = [
   { view: "profile", label: "Profile" },
@@ -272,7 +289,7 @@ export function AdminDashboard({
   initialView?: DashboardView;
   notificationsEnabled?: boolean;
 }) {
-  const [records, setRecords] = useState(submissions.filter((item) => !item.archived_at));
+  const [records, setRecords] = useState(submissions);
   const [projectRecords, setProjectRecords] = useState(projects);
   const [targetRecords, setTargetRecords] = useState(projectTargets);
   const [userRecords, setUserRecords] = useState(managedUsers);
@@ -295,6 +312,8 @@ export function AdminDashboard({
   const [scopeClientId, setScopeClientId] = useState("");
   const [scopeProjectId, setScopeProjectId] = useState("");
   const [pendingRejection, setPendingRejection] = useState<PendingRejectionState | null>(null);
+  const [pendingPermanentDelete, setPendingPermanentDelete] = useState<PendingPermanentDeleteState | null>(null);
+  const [submissionArchiveView, setSubmissionArchiveView] = useState<SubmissionArchiveView>("active");
   const contentTopRef = useRef<HTMLDivElement>(null);
     const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
   const { showToast } = useToast();
@@ -370,7 +389,17 @@ export function AdminDashboard({
     () => projectRecords.filter((project) => !scopeClientId || project.client_id === scopeClientId),
     [projectRecords, scopeClientId]
   );
+  const activeRecords = useMemo(() => records.filter((item) => !item.archived_at), [records]);
   const scopedRecords = useMemo(
+    () =>
+      activeRecords.filter(
+        (item) =>
+          (!scopeClientId || item.client_id === scopeClientId) &&
+          (!scopeProjectId || item.project_id === scopeProjectId)
+      ),
+    [activeRecords, scopeClientId, scopeProjectId]
+  );
+  const scopedSubmissionRecords = useMemo(
     () =>
       records.filter(
         (item) =>
@@ -409,8 +438,6 @@ export function AdminDashboard({
   const filtered = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     const installer = filters.installer.trim().toLowerCase();
-    const isSubmissionsView = activeView === "submissions";
-
     return scopedRecords.filter((item) => {
       const date = item.installation_date ?? item.submitted_at.slice(0, 10);
       const searchable = [
@@ -433,12 +460,12 @@ export function AdminDashboard({
 
       return (
         (!query || searchable.includes(query)) &&
-        (isSubmissionsView || !filters.startDate || date >= filters.startDate) &&
-        (isSubmissionsView || !filters.endDate || date <= filters.endDate) &&
-        (isSubmissionsView || !filters.state || item.installer_state === filters.state) &&
-        (isSubmissionsView || !filters.region || item.installer_region === filters.region) &&
-        (isSubmissionsView || !filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
-        (isSubmissionsView || !installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
+        (!filters.startDate || date >= filters.startDate) &&
+        (!filters.endDate || date <= filters.endDate) &&
+        (!filters.state || item.installer_state === filters.state) &&
+        (!filters.region || item.installer_region === filters.region) &&
+        (!filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
+        (!installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
         (!filters.project || displayProjectName(item.project_name) === filters.project) &&
         (!filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
         (!filters.brand || item.brand_name === filters.brand) &&
@@ -446,7 +473,49 @@ export function AdminDashboard({
         (filters.gps === "all" || (filters.gps === "verified" ? hasValidGps(item) : !hasValidGps(item)))
       );
     });
-  }, [activeView, filters, scopedRecords, scopedProjectRecords]);
+  }, [filters, scopedRecords, scopedProjectRecords]);
+
+  const submissionViewRecords = useMemo(() => {
+    const query = filters.query.trim().toLowerCase();
+    const installer = filters.installer.trim().toLowerCase();
+
+    return scopedSubmissionRecords.filter((item) => {
+      const date = item.installation_date ?? item.submitted_at.slice(0, 10);
+      const searchable = [
+        item.installer_name,
+        item.project_name,
+        item.brand_name,
+        item.salon_name,
+        item.address,
+        item.installer_state,
+        item.installer_region,
+        item.installer_lga,
+        item.state_region,
+        item.status,
+        item.ocr_text,
+        item.ai_raw_text
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return (
+        (!query || searchable.includes(query)) &&
+        (!filters.startDate || date >= filters.startDate) &&
+        (!filters.endDate || date <= filters.endDate) &&
+        (!filters.state || item.installer_state === filters.state) &&
+        (!filters.region || item.installer_region === filters.region) &&
+        (!filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
+        (!installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
+        (!filters.project || displayProjectName(item.project_name) === filters.project) &&
+        (!filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
+        (!filters.brand || item.brand_name === filters.brand) &&
+        (!filters.status || item.status === filters.status) &&
+        (filters.gps === "all" || (filters.gps === "verified" ? hasValidGps(item) : !hasValidGps(item))) &&
+        (submissionArchiveView === "active" ? !item.archived_at : submissionArchiveView === "archived" ? Boolean(item.archived_at) : true)
+      );
+    });
+  }, [filters, scopedProjectRecords, scopedSubmissionRecords, submissionArchiveView]);
   useEffect(() => {
     if (!campaignDebugEnabled || (!filters.project && !filters.campaign)) return;
     const sample = scopedRecords.slice(0, 3).map((item) => {
@@ -538,7 +607,8 @@ export function AdminDashboard({
     });
 
     if (!response.ok) {
-      showToast("Could not save update.", "error");
+      const body = await response.json().catch(() => ({}));
+      showToast(body.error || "Could not save update.", "error");
       return false;
     }
 
@@ -547,6 +617,67 @@ export function AdminDashboard({
     setLastUpdated(formatDateTime(new Date()));
     showToast(changes.status ? `Status updated to ${changes.status}.` : "Update saved.");
     return true;
+  }
+
+  async function applySubmissionAdminAction(
+    id: string,
+    action: "archive" | "restore" | "permanent_delete",
+    payload: Record<string, unknown> = {}
+  ) {
+    const response = await fetch("/api/submissions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action, ...payload })
+    });
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      showToast(body.error || "Could not apply submission action.", "error");
+      return false;
+    }
+
+    if (action === "permanent_delete") {
+      setRecords((current) => current.filter((item) => item.id !== id));
+      showToast("Submission permanently deleted.");
+      return true;
+    }
+
+    setRecords((current) => current.map((item) => (item.id === id ? body.submission : item)));
+    showToast(action === "archive" ? "Submission archived." : "Submission restored.");
+    return true;
+  }
+
+  async function promptArchiveSubmission(id: string) {
+    const selected = window.prompt(
+      `Select archive reason (enter exactly one):\n${SUBMISSION_ARCHIVE_REASONS.join("\n")}`,
+      "Duplicate upload"
+    );
+    if (!selected) return;
+    if (!SUBMISSION_ARCHIVE_REASONS.includes(selected as (typeof SUBMISSION_ARCHIVE_REASONS)[number])) {
+      showToast("Invalid archive reason selected.", "error");
+      return;
+    }
+
+    let archiveReason = selected;
+    if (selected === "Other") {
+      const detail = window.prompt("Enter archive reason details:", "");
+      if (!detail || !detail.trim()) {
+        showToast("Archive reason details are required for Other.", "error");
+        return;
+      }
+      archiveReason = `Other: ${detail.trim()}`;
+    }
+
+    await applySubmissionAdminAction(id, "archive", { archiveReason });
+  }
+
+  async function promptPermanentDeleteSubmission(id: string) {
+    const target = submissionViewRecords.find((item) => item.id === id);
+    setPendingPermanentDelete({
+      id,
+      title: target?.salon_name || "Archived submission",
+      confirmText: ""
+    });
   }
 
   async function downloadExport(href: string, label: string) {
@@ -1244,6 +1375,13 @@ export function AdminDashboard({
                 <option value="missing">GPS Missing</option>
               </select>
             </FilterField>
+            <FilterField label="Submission View">
+              <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={submissionArchiveView} onChange={(event) => setSubmissionArchiveView(event.target.value as SubmissionArchiveView)}>
+                <option value="active">Active submissions</option>
+                <option value="archived">Archived submissions</option>
+                <option value="all">All submissions</option>
+              </select>
+            </FilterField>
           </div>
 
           <div className="mt-4 flex min-w-0 flex-wrap gap-3">
@@ -1317,21 +1455,21 @@ export function AdminDashboard({
         <div className={`${activeView === "submissions" ? "block" : "hidden"} mt-5 min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900`}>
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
             <h2 className="min-w-0 break-words text-base font-bold leading-snug">Submissions</h2>
-            <span className="text-sm text-slate-500">{filtered.length} shown</span>
+            <span className="text-sm text-slate-500">{submissionViewRecords.length} shown</span>
           </div>
           <div className="divide-y divide-slate-100 dark:divide-slate-700">
-            {filtered.length === 0 ? (
+            {submissionViewRecords.length === 0 ? (
               <div className="p-4">
                 <EmptyState
-                  title={records.length === 0 ? "No submissions yet" : "No filtered results"}
-                  message={records.length === 0 ? "New installer uploads will appear here once submitted." : "Try widening the current filters to see more installations."}
+                  title={scopedSubmissionRecords.length === 0 ? "No submissions yet" : "No filtered results"}
+                  message={scopedSubmissionRecords.length === 0 ? "New installer uploads will appear here once submitted." : "Try widening the current filters to see more installations."}
                   icon={<Inbox aria-hidden size={22} />}
                 />
               </div>
             ) : null}
-            {filtered.map((item) => (
+            {submissionViewRecords.map((item) => (
               <article className={`grid min-w-0 gap-3 overflow-hidden p-4 sm:grid-cols-[96px_minmax(0,1fr)] xl:grid-cols-[96px_minmax(0,1fr)_minmax(220px,260px)] ${item.brand_match_status === "Mismatch" ? "bg-rose-50/70 dark:bg-rose-950/30" : item.duplicate_status && item.duplicate_status !== "Unique" ? "bg-orange-50/70 dark:bg-orange-950/30" : "dark:bg-slate-900"}`} key={item.id}>
-                <button className="h-24 w-24 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" onClick={() => setLightboxIndex(filtered.findIndex((record) => record.id === item.id))}>
+                <button className="h-24 w-24 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700" onClick={() => setLightboxIndex(submissionViewRecords.findIndex((record) => record.id === item.id))}>
                   <img className="h-full w-full object-cover" src={item.image_url} alt={item.salon_name || "Uploaded board"} />
                 </button>
                 <div className="min-w-0">
@@ -1385,6 +1523,32 @@ export function AdminDashboard({
                   ) : null}
                 </div>
                 <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                  <select
+                    className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    defaultValue=""
+                    onChange={async (event) => {
+                      const action = event.target.value;
+                      event.target.value = "";
+                      if (!action) return;
+
+                      if (action === "archive") {
+                        await promptArchiveSubmission(item.id);
+                        return;
+                      }
+                      if (action === "restore") {
+                        await applySubmissionAdminAction(item.id, "restore");
+                        return;
+                      }
+                      if (action === "delete" && submissionArchiveView === "archived") {
+                        await promptPermanentDeleteSubmission(item.id);
+                      }
+                    }}
+                  >
+                    <option value="">Actions</option>
+                    {!item.archived_at ? <option value="archive">Archive Submission</option> : null}
+                    {item.archived_at ? <option value="restore">Restore Submission</option> : null}
+                    {item.archived_at && submissionArchiveView === "archived" ? <option value="delete">Delete Permanently</option> : null}
+                  </select>
                   <select className="min-h-10 min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500" value={item.brand_name ?? ""} onChange={(event) => updateSubmission(item.id, { brandName: event.target.value })}>
                     <option value="">Assign brand</option>
                     {BRANDS.map((brand) => (
@@ -1564,19 +1728,60 @@ export function AdminDashboard({
         ) : null}
         {activeView === "outlet-directory" ? <OutletDirectoryPanel outlets={outletRecords} isLoading={outletsLoading} onImport={importOutletRows} onClear={clearOutletDirectory} /> : null}
         {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
-        {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={records} projects={projectRecords} onCreate={createClient} onSave={updateClientProfile} onArchive={archiveClient} onDelete={deleteClient} /> : null}
-        {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords.filter((client) => client.status !== "Inactive")} agencies={agencyRecords} projects={projectRecords} submissions={records} onCreate={createUser} onUpdate={updateUser} /> : null}
+        {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={activeRecords} projects={projectRecords} onCreate={createClient} onSave={updateClientProfile} onArchive={archiveClient} onDelete={deleteClient} /> : null}
+        {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords.filter((client) => client.status !== "Inactive")} agencies={agencyRecords} projects={projectRecords} submissions={activeRecords} onCreate={createUser} onUpdate={updateUser} /> : null}
         {activeView === "installers" ? (
-          <InstallerManagementPanel installers={installerRecords} submissions={records} projects={projectRecords} agencies={agencyRecords} users={userRecords} />
+          <InstallerManagementPanel installers={installerRecords} submissions={activeRecords} projects={projectRecords} agencies={agencyRecords} users={userRecords} />
         ) : null}
-        {activeView === "agencies" ? <AgencyManagementPanel agencies={agencyRecords} installers={installerRecords} submissions={records} projects={projectRecords} onCreate={createAgency} /> : null}
+        {activeView === "agencies" ? <AgencyManagementPanel agencies={agencyRecords} installers={installerRecords} submissions={activeRecords} projects={projectRecords} onCreate={createAgency} /> : null}
         {activeView === "regions" ? <AdminPlaceholder title="Regions & Territories" message="Coming soon: territory rules and coverage configuration." /> : null}
         {activeView === "preferences" ? <AdminPlaceholder title="System Preferences" message="Coming soon: operational defaults and platform preferences." /> : null}
         {activeView === "demo-data" ? <DemoDataManagementPanel /> : null}
         {activeView === "audit-logs" ? <AuditLogPanel logs={auditLogRecords} users={userRecords} /> : null}
       </section>
       </div>
-      <PhotoLightbox submissions={filtered} activeIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} onNavigate={setLightboxIndex} />
+      <PhotoLightbox submissions={activeView === "submissions" ? submissionViewRecords : filtered} activeIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} onNavigate={setLightboxIndex} />
+      {pendingPermanentDelete ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Permanent delete archived submission">
+          <div className="w-full max-w-lg rounded-2xl border border-rose-200 bg-white p-5 shadow-2xl dark:border-rose-900 dark:bg-slate-950">
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-rose-600">Permanent Delete</div>
+            <h3 className="mt-2 text-lg font-bold text-slate-950 dark:text-white">{pendingPermanentDelete.title}</h3>
+            <p className="mt-3 text-sm leading-6 text-slate-700 dark:text-slate-300">
+              This will permanently delete this archived submission and its audit record. This cannot be undone.
+            </p>
+            <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+              Type DELETE to confirm.
+            </p>
+            <input
+              className="mt-3 min-h-11 w-full rounded-lg border border-slate-200 px-3 text-sm focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              value={pendingPermanentDelete.confirmText}
+              onChange={(event) => setPendingPermanentDelete((current) => (current ? { ...current, confirmText: event.target.value } : current))}
+              placeholder="DELETE"
+            />
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                className="inline-flex min-h-10 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                onClick={() => setPendingPermanentDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="inline-flex min-h-10 items-center rounded-lg border border-rose-300 bg-rose-600 px-4 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"
+                disabled={pendingPermanentDelete.confirmText !== "DELETE"}
+                onClick={async () => {
+                  const targetId = pendingPermanentDelete.id;
+                  setPendingPermanentDelete(null);
+                  await applySubmissionAdminAction(targetId, "permanent_delete");
+                }}
+              >
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

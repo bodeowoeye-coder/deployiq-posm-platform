@@ -321,6 +321,8 @@ alter table public.submissions add column if not exists selected_outlet_state te
 alter table public.submissions add column if not exists outlet_match_status text;
 alter table public.submissions add column if not exists outlet_match_notes text;
 alter table public.submissions add column if not exists archived_at timestamptz;
+alter table public.submissions add column if not exists archived_by uuid references auth.users(id) on delete set null;
+alter table public.submissions add column if not exists archive_reason text;
 alter table public.submissions add column if not exists salon_name text;
 alter table public.submissions add column if not exists address text;
 alter table public.submissions add column if not exists phone text;

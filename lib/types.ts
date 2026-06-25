@@ -54,6 +54,7 @@ export type Submission = {
   state_region: string | null;
   status: SubmissionStatus;
   image_url: string;
+  image_path: string | null;
   ocr_text: string | null;
   ocr_salon_name: string | null;
   ocr_address: string | null;
@@ -72,6 +73,8 @@ export type Submission = {
   installation_time: string | null;
   submitted_at: string;
   archived_at?: string | null;
+  archived_by?: string | null;
+  archive_reason?: string | null;
 };
 
 export type UserRole = "admin" | "client" | "installer";

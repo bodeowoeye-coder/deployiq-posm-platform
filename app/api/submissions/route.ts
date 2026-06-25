@@ -746,6 +746,7 @@ export async function PATCH(request: Request) {
 
     const body = await request.json();
     const id = typeof body.id === "string" ? body.id : "";
+    const action = typeof body.action === "string" ? body.action.trim() : "";
     const brandName = typeof body.brandName === "string" ? body.brandName.trim() : "";
     const status = typeof body.status === "string" ? body.status.trim() : "";
     const salonName = typeof body.salonName === "string" ? body.salonName.trim() : "";
@@ -754,14 +755,101 @@ export async function PATCH(request: Request) {
     const approvalComments = typeof body.approvalComments === "string" ? body.approvalComments.trim() : "";
     const rejectionReason = typeof body.rejectionReason === "string" ? body.rejectionReason.trim() : "";
     const deploymentStageCode = typeof body.deploymentStageCode === "string" ? body.deploymentStageCode.trim() : "";
+    const archiveReason = typeof body.archiveReason === "string" ? body.archiveReason.trim() : "";
 
     if (!id) {
       return NextResponse.json({ error: "Missing submission id." }, { status: 400 });
     }
 
+    const supabase = createAdminSupabase();
+
+    if (action === "archive" || action === "restore" || action === "permanent_delete") {
+      const { data: existingSubmission, error: existingSubmissionError } = await supabase
+        .from("submissions")
+        .select("id, archived_at, image_path, image_url")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (existingSubmissionError) {
+        return NextResponse.json({ error: existingSubmissionError.message }, { status: 500 });
+      }
+      if (!existingSubmission) {
+        return NextResponse.json({ error: "Submission not found." }, { status: 404 });
+      }
+
+      if (action === "archive") {
+        if (!archiveReason) {
+          return NextResponse.json({ error: "Archive reason is required." }, { status: 400 });
+        }
+        const archivedAt = new Date().toISOString();
+        const { data, error } = await supabase
+          .from("submissions")
+          .update({ archived_at: archivedAt, archived_by: context.user.id, archive_reason: archiveReason })
+          .eq("id", id)
+          .select()
+          .single();
+
+        if (error) {
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        await supabase.from("submission_status_history").insert({
+          submission_id: id,
+          previous_status: null,
+          new_status: data.status,
+          changed_by: context.user.id,
+          comment: `Archived: ${archiveReason}`
+        });
+
+        return NextResponse.json({ submission: data });
+      }
+
+      if (action === "restore") {
+        const { data, error } = await supabase
+          .from("submissions")
+          .update({ archived_at: null, archived_by: null, archive_reason: null })
+          .eq("id", id)
+          .select()
+          .single();
+
+        if (error) {
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        await supabase.from("submission_status_history").insert({
+          submission_id: id,
+          previous_status: null,
+          new_status: data.status,
+          changed_by: context.user.id,
+          comment: "Submission restored from archive"
+        });
+
+        return NextResponse.json({ submission: data });
+      }
+
+      if (!existingSubmission.archived_at) {
+        return NextResponse.json({ error: "Only archived submissions can be permanently deleted." }, { status: 400 });
+      }
+
+      const safeImagePath = typeof existingSubmission.image_path === "string" ? existingSubmission.image_path.trim() : "";
+      const imagePathIsSafe = safeImagePath.startsWith("installations/") && !safeImagePath.includes("..");
+      if (imagePathIsSafe) {
+        await supabase.storage.from(getStorageBucket()).remove([safeImagePath]);
+      }
+
+      await supabase.from("submission_status_history").delete().eq("submission_id", id);
+      await supabase.from("alert_events").delete().eq("submission_id", id);
+
+      const { error } = await supabase.from("submissions").delete().eq("id", id);
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ deleted: true });
+    }
+
     const updates: Record<string, string | null> = {};
     if (brandName) {
-      const supabase = createAdminSupabase();
       const { data: matchingBrand } = await supabase.from("brands").select("client_id, brand_name").eq("brand_name", brandName).maybeSingle();
       if (!matchingBrand) {
         return NextResponse.json({ error: "Unsupported brand." }, { status: 400 });
@@ -803,7 +891,6 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "No changes supplied." }, { status: 400 });
     }
 
-    const supabase = createAdminSupabase();
     const { data: existing } = await supabase.from("submissions").select("status").eq("id", id).maybeSingle();
     const { data, error } = await supabase.from("submissions").update(updates).eq("id", id).select().single();
 

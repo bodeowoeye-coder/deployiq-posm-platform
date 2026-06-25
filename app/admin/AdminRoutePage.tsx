@@ -129,7 +129,7 @@ export async function AdminRoutePage({ initialView, requestedPath }: { initialVi
   });
   return (
     <AdminDashboard
-      submissions={((data ?? []) as Submission[]).filter((submission) => !submission.archived_at)}
+      submissions={(data ?? []) as Submission[]}
       history={(history ?? []) as SubmissionStatusHistory[]}
       projects={normalizedProjects}
       projectTargets={projectTargets}
