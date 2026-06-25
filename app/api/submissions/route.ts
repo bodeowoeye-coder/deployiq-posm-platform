@@ -737,6 +737,33 @@ export async function POST(request: Request) {
   }
 }
 
+export async function GET(request: Request) {
+  try {
+    const context = await getCurrentUserContext();
+    if (!context || context.role.role !== "admin") {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const includeArchived = searchParams.get("includeArchived") === "true";
+    const supabase = createAdminSupabase();
+    const { data, error } = await supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const submissions = includeArchived
+      ? ((data ?? []) as Submission[])
+      : ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
+
+    return NextResponse.json({ submissions });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Something went wrong.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
 export async function PATCH(request: Request) {
   try {
     const context = await getCurrentUserContext();

@@ -315,6 +315,7 @@ export function AdminDashboard({
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState<PendingPermanentDeleteState | null>(null);
   const [submissionArchiveView, setSubmissionArchiveView] = useState<SubmissionArchiveView>("active");
   const contentTopRef = useRef<HTMLDivElement>(null);
+  const submissionsRefreshSeqRef = useRef(0);
     const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
   const { showToast } = useToast();
   const currentUser =
@@ -638,13 +639,50 @@ export function AdminDashboard({
 
     if (action === "permanent_delete") {
       setRecords((current) => current.filter((item) => item.id !== id));
+      setLastUpdated(formatDateTime(new Date()));
       showToast("Submission permanently deleted.");
+      void refreshSubmissionRecords("post-delete");
       return true;
     }
 
-    setRecords((current) => current.map((item) => (item.id === id ? body.submission : item)));
+    setRecords((current) => {
+      const exists = current.some((item) => item.id === id);
+      if (!exists) return [body.submission as Submission, ...current];
+      return current.map((item) => (item.id === id ? (body.submission as Submission) : item));
+    });
+    setLastUpdated(formatDateTime(new Date()));
     showToast(action === "archive" ? "Submission archived." : "Submission restored.");
+    void refreshSubmissionRecords(`post-${action}`);
     return true;
+  }
+
+  async function refreshSubmissionRecords(reason = "manual") {
+    const nextSeq = submissionsRefreshSeqRef.current + 1;
+    submissionsRefreshSeqRef.current = nextSeq;
+
+    const response = await fetch("/api/submissions?includeArchived=true", {
+      credentials: "include",
+      cache: "no-store"
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (submissionsRefreshSeqRef.current === nextSeq) {
+        showToast(body.error || "Could not refresh submissions.", "error");
+      }
+      return;
+    }
+
+    if (submissionsRefreshSeqRef.current !== nextSeq) {
+      return;
+    }
+
+    setRecords((body.submissions ?? []) as Submission[]);
+    setLastUpdated(formatDateTime(new Date()));
+    console.info("[admin-submissions-sync]", {
+      reason,
+      rows: Array.isArray(body.submissions) ? body.submissions.length : 0,
+      seq: nextSeq
+    });
   }
 
   async function promptArchiveSubmission(id: string) {
@@ -939,6 +977,12 @@ export function AdminDashboard({
       void refreshOutletRecords();
     }
   }, [activeView, auditLogRecords.length, clientRecords.length, outletRecords.length, userRecords.length]);
+
+  useEffect(() => {
+    if (activeView === "submissions") {
+      void refreshSubmissionRecords("submissions-view-enter");
+    }
+  }, [activeView]);
 
   async function createUser(formData: FormData) {
     const payload = {
@@ -1485,6 +1529,7 @@ export function AdminDashboard({
                     <span className={`max-w-full whitespace-normal break-words rounded-full border px-2 py-1 text-xs font-semibold leading-snug ${duplicateClass(item.duplicate_status)}`}>
                       {item.duplicate_status || "Unique"}
                     </span>
+                    {item.archived_at ? <span className="max-w-full whitespace-normal break-words rounded-full border border-slate-300 bg-slate-100 px-2 py-1 text-xs font-semibold leading-snug text-slate-700">Archived</span> : null}
                   </div>
                   <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-slate-700 dark:text-slate-200">{item.address || "Address not visible"}</p>
                   <p className="mt-1 whitespace-normal break-words text-xs leading-snug text-slate-600 dark:text-slate-300">
