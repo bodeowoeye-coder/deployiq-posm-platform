@@ -55,6 +55,7 @@ export async function loadClientSubmissionScope(supabase: SupabaseClient, client
       .from("projects")
       .select("*")
       .eq("client_id", effectiveClientId)
+      .is("archived_at", null)
       .order("created_at", { ascending: false })
   ]);
   const brandRows = (brands ?? []) as Array<Pick<Brand, "id" | "brand_name">>;
@@ -112,7 +113,7 @@ export async function loadClientSubmissionScope(supabase: SupabaseClient, client
         .flatMap((result) => result.data ?? [])
         .filter((item) => !(item as Submission).archived_at)
         .filter((item) => clientCanSeeSubmission(item as Submission, effectiveClientId, visibilityScope))
-        .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)))
+        .sort((a, b) => String((b as Submission).submitted_at).localeCompare(String((a as Submission).submitted_at)))
         .map((item) => [item.id, item])
     ).values()
   ) as Submission[];

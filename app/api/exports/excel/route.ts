@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
-import { getCurrentUserContext } from "@/lib/auth";
+import { accessControlErrorResponse, requireAdmin } from "@/lib/accessControl";
 import type { Submission } from "@/lib/types";
 import { campaignMatches, displayProjectName, normalizeProjectRecords, resolveSubmissionCampaignName } from "@/lib/projects";
 import { createReportId, reportFooter, reportSubtitle } from "@/lib/reportBranding";
@@ -48,29 +48,48 @@ function addCoverSheet(workbook: XLSX.WorkBook, metadata: Array<[string, string]
 }
 
 export async function GET(request: Request) {
-  const context = await getCurrentUserContext();
-  if (!context || context.role.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
+  try {
+    await requireAdmin(request);
 
-  const { searchParams } = new URL(request.url);
-  const isFiltered = Array.from(searchParams.keys()).length > 0;
-  const state = searchParams.get("state")?.trim();
-  const region = searchParams.get("region")?.trim();
-  const lga = searchParams.get("lga")?.trim();
-  const installer = searchParams.get("installer")?.trim();
-  const project = searchParams.get("project")?.trim();
-  const clientId = searchParams.get("clientId")?.trim();
-  const projectId = searchParams.get("projectId")?.trim();
-  const campaign = searchParams.get("campaign")?.trim();
-  const brand = searchParams.get("brand")?.trim();
-  const status = searchParams.get("status")?.trim();
-  const gps = searchParams.get("gps")?.trim().toLowerCase();
-  const startDate = searchParams.get("startDate")?.trim();
-  const endDate = searchParams.get("endDate")?.trim();
-  const search = searchParams.get("query")?.trim();
-  const supabase = createAdminSupabase();
-  let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
+    const { searchParams } = new URL(request.url);
+    const isFiltered = Array.from(searchParams.keys()).length > 0;
+    const state = searchParams.get("state")?.trim();
+    const region = searchParams.get("region")?.trim();
+    const lga = searchParams.get("lga")?.trim();
+    const installer = searchParams.get("installer")?.trim();
+    const project = searchParams.get("project")?.trim();
+    const clientId = searchParams.get("clientId")?.trim();
+    const projectId = searchParams.get("projectId")?.trim();
+    const campaign = searchParams.get("campaign")?.trim();
+    const brand = searchParams.get("brand")?.trim();
+    const status = searchParams.get("status")?.trim();
+    const gps = searchParams.get("gps")?.trim().toLowerCase();
+    const startDate = searchParams.get("startDate")?.trim();
+    const endDate = searchParams.get("endDate")?.trim();
+    const search = searchParams.get("query")?.trim();
+    const supabase = createAdminSupabase();
+
+    if (projectId) {
+      const { data: scopedProject, error: projectScopeError } = await supabase
+        .from("projects")
+        .select("id, client_id")
+        .eq("id", projectId)
+        .maybeSingle();
+
+      if (projectScopeError) {
+        return NextResponse.json({ error: projectScopeError.message }, { status: 500 });
+      }
+
+      if (!scopedProject) {
+        return NextResponse.json({ error: "Invalid project scope." }, { status: 400 });
+      }
+
+      if (clientId && scopedProject.client_id !== clientId) {
+        return NextResponse.json({ error: "Project does not belong to the selected client scope." }, { status: 400 });
+      }
+    }
+
+    let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
 
   if (clientId) query = query.eq("client_id", clientId);
   if (projectId) query = query.eq("project_id", projectId);
@@ -100,16 +119,16 @@ export async function GET(request: Request) {
     );
   }
 
-  const { data, error } = await query;
+    const { data, error } = await query;
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
-  const reportId = createReportId(isFiltered ? "DPIQ-XLS-FLT" : "DPIQ-XLS");
-  const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
-  let filteredSubmissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
-  if (campaign) {
+    const reportId = createReportId(isFiltered ? "DPIQ-XLS-FLT" : "DPIQ-XLS");
+    const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
+    let filteredSubmissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
+    if (campaign) {
     let projectQuery = supabase.from("projects").select("id, project_name, campaign_name, campaign");
     if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
     if (projectId) projectQuery = projectQuery.eq("id", projectId);
@@ -130,11 +149,11 @@ export async function GET(request: Request) {
     console.info("[admin-excel-campaign-filter-debug]", {
       submissionsAfterFilter: filteredSubmissions.length
     });
-  }
-  if (gps === "verified") filteredSubmissions = filteredSubmissions.filter((item) => hasValidGps(item));
-  if (gps === "missing") filteredSubmissions = filteredSubmissions.filter((item) => !hasValidGps(item));
+    }
+    if (gps === "verified") filteredSubmissions = filteredSubmissions.filter((item) => hasValidGps(item));
+    if (gps === "missing") filteredSubmissions = filteredSubmissions.filter((item) => !hasValidGps(item));
 
-  const rows = filteredSubmissions.map((item) => ({
+    const rows = filteredSubmissions.map((item) => ({
     "Installer Name": item.installer_name ?? "",
     "Project Name": displayProjectName(item.project_name),
     "Selected Brand": item.brand_name ?? "",
@@ -168,7 +187,7 @@ export async function GET(request: Request) {
     "Created Timestamp": item.submitted_at
   }));
 
-  const workbook = XLSX.utils.book_new();
+    const workbook = XLSX.utils.book_new();
   addCoverSheet(workbook, [
     ["Client", "All clients"],
     ["Project", project || "All projects"],
@@ -239,13 +258,17 @@ export async function GET(request: Request) {
     CreatedDate: new Date()
   };
 
-  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer", cellStyles: true });
-  const filename = `${isFiltered ? "filtered" : "full"}-deployment-report-${todayForFilename()}.xlsx`;
+    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer", cellStyles: true });
+    const filename = `${isFiltered ? "filtered" : "full"}-deployment-report-${todayForFilename()}.xlsx`;
 
-  return new NextResponse(buffer, {
-    headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename=${filename}`
-    }
-  });
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename=${filename}`
+      }
+    });
+  } catch (error) {
+    const { status, payload } = accessControlErrorResponse(error);
+    return NextResponse.json(payload, { status });
+  }
 }

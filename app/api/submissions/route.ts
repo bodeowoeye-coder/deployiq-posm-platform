@@ -3,6 +3,13 @@ import { extractBoardTextFromImage } from "@/lib/ai";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { STATUSES } from "@/lib/brands";
 import { getCurrentUserContext } from "@/lib/auth";
+import {
+  accessControlErrorResponse,
+  applyTenantProjectScope,
+  assertProjectAccess,
+  getAuthenticatedUserContext,
+  requireAdmin
+} from "@/lib/accessControl";
 import { reviewBrandMatch } from "@/lib/brandReview";
 import { scoreBrandVerification } from "@/lib/confidence";
 import { detectDuplicate, fingerprintImage } from "@/lib/duplicates";
@@ -144,22 +151,25 @@ function reviewOutletMatch({
 
 async function findActiveOutletSubmission({
   supabase,
+  clientId,
   projectId,
   selectedOutletId,
   outletCode
 }: {
   supabase: ReturnType<typeof createAdminSupabase>;
+  clientId: string | null | undefined;
   projectId: string | null | undefined;
   selectedOutletId: string;
   outletCode: string | null | undefined;
 }) {
-  if (!projectId || (!selectedOutletId && !outletCode)) return { duplicate: null, error: null };
+  if (!projectId || !clientId || (!selectedOutletId && !outletCode)) return { duplicate: null, error: null };
 
   const selectFields = "id,status,selected_outlet_id,selected_outlet_code";
   const queryBase = () =>
     supabase
       .from("submissions")
       .select(selectFields)
+      .eq("client_id", clientId)
       .eq("project_id", projectId)
       .in("status", ACTIVE_OUTLET_DUPLICATE_STATUSES)
       .limit(1);
@@ -212,6 +222,11 @@ function getLagosInstallationParts(value: string) {
 export async function POST(request: Request) {
   const totalStart = nowMs();
   try {
+    const scopedUser = await getAuthenticatedUserContext(request);
+    if (!scopedUser.is_admin && scopedUser.role !== "installer") {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
     const authStart = nowMs();
     const context = await getCurrentUserContext();
     console.info("[submit-server-timing]", { stage: "auth-context", durationMs: timingMs(authStart), role: context?.role.role ?? null });
@@ -247,6 +262,8 @@ export async function POST(request: Request) {
 
     const projectId = GCPL_PILOT_PROJECT_ID;
     const projectName = GCPL_PILOT_PROJECT_NAME;
+
+  assertProjectAccess(scopedUser, projectId, { allowWhenNoAssignments: true });
 
     const submittedResolvedAddress = cleanString(formData.get("resolvedAddress"));
     const manualLocationDescription = cleanString(formData.get("manualLocationDescription"));
@@ -391,6 +408,7 @@ export async function POST(request: Request) {
       const outletDuplicateStart = nowMs();
       const { duplicate: activeOutletSubmission, error: outletDuplicateError } = await findActiveOutletSubmission({
         supabase,
+        clientId: assignmentClientId,
         projectId: matchingProject?.id,
         selectedOutletId: selectedLocationId,
         outletCode
@@ -457,13 +475,22 @@ export async function POST(request: Request) {
 
     const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const recentLoadStart = nowMs();
-    const recentDataPromise = supabase
+    let recentDataQuery = supabase
       .from("submissions")
       .select("*")
+      .eq("client_id", assignmentClientId)
+      .eq("project_id", matchingProject.id)
       .gte("submitted_at", cutoff)
       .order("submitted_at", { ascending: false })
-      .limit(150)
-      .then((result) => {
+      .limit(150);
+
+    if (selectedLocationId) {
+      recentDataQuery = recentDataQuery.eq("selected_outlet_id", selectedLocationId);
+    } else if (outletCode) {
+      recentDataQuery = recentDataQuery.ilike("selected_outlet_code", outletCode);
+    }
+
+    const recentDataPromise = recentDataQuery.then((result) => {
         console.info("[submit-server-timing]", {
           stage: "recent-submissions-load",
           ok: !result.error,
@@ -739,15 +766,25 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    const context = await getCurrentUserContext();
-    if (!context || context.role.role !== "admin") {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-    }
+    const scopedUser = await getAuthenticatedUserContext(request);
 
     const { searchParams } = new URL(request.url);
     const includeArchived = searchParams.get("includeArchived") === "true";
+    const requestedClientId = searchParams.get("clientId")?.trim() || null;
+    const requestedProjectId = searchParams.get("projectId")?.trim() || null;
     const supabase = createAdminSupabase();
-    const { data, error } = await supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
+    let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
+    query = applyTenantProjectScope(query, scopedUser, {
+      requestedClientId,
+      requestedProjectId,
+      allowAdminUnscoped: true
+    });
+
+    if (scopedUser.role === "installer") {
+      query = query.eq("installer_user_id", scopedUser.user_id);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -759,17 +796,14 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ submissions });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Something went wrong.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { status, payload } = accessControlErrorResponse(error);
+    return NextResponse.json(payload, { status });
   }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const context = await getCurrentUserContext();
-    if (!context || context.role.role !== "admin") {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-    }
+    const context = await requireAdmin(request);
 
     const body = await request.json();
     const id = typeof body.id === "string" ? body.id : "";
@@ -811,7 +845,7 @@ export async function PATCH(request: Request) {
         const archivedAt = new Date().toISOString();
         const { data, error } = await supabase
           .from("submissions")
-          .update({ archived_at: archivedAt, archived_by: context.user.id, archive_reason: archiveReason })
+          .update({ archived_at: archivedAt, archived_by: context.user_id, archive_reason: archiveReason })
           .eq("id", id)
           .select()
           .single();
@@ -824,7 +858,7 @@ export async function PATCH(request: Request) {
           submission_id: id,
           previous_status: null,
           new_status: data.status,
-          changed_by: context.user.id,
+          changed_by: context.user_id,
           comment: `Archived: ${archiveReason}`
         });
 
@@ -847,7 +881,7 @@ export async function PATCH(request: Request) {
           submission_id: id,
           previous_status: null,
           new_status: data.status,
-          changed_by: context.user.id,
+          changed_by: context.user_id,
           comment: "Submission restored from archive"
         });
 
@@ -893,7 +927,7 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: "Rejection reason is required when rejecting a submission." }, { status: 400 });
       }
       updates.status = status;
-      updates.reviewed_by = context.user.id;
+      updates.reviewed_by = context.user_id;
       updates.reviewed_at = new Date().toISOString();
     }
 
@@ -930,7 +964,7 @@ export async function PATCH(request: Request) {
         submission_id: id,
         previous_status: existing?.status ?? null,
         new_status: status,
-        changed_by: context.user.id,
+        changed_by: context.user_id,
         comment: rejectionReason || approvalComments || null
       });
 
@@ -951,7 +985,7 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({ submission: data });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Something went wrong.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { status, payload } = accessControlErrorResponse(error);
+    return NextResponse.json(payload, { status });
   }
 }

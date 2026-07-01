@@ -31,7 +31,7 @@ export async function GET() {
   let query = supabase.from("projects").select("*").order("created_at", { ascending: false });
   if (context.role.role === "client") {
     if (!context.role.client_id) return NextResponse.json({ projects: [] });
-    query = query.eq("client_id", context.role.client_id);
+    query = query.eq("client_id", context.role.client_id).is("archived_at", null);
   }
 
   const { data, error } = await query;

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { accessControlErrorResponse, requireAdmin } from "@/lib/accessControl";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -6,6 +7,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    await requireAdmin();
+    // Intentionally uses service role for platform diagnostics after explicit admin auth check.
     const supabase = createAdminSupabase();
     const { count, error: countError } = await supabase
       .from("submissions")
@@ -45,13 +48,14 @@ export async function GET() {
       recentSubmissions: data ?? []
     });
   } catch (error) {
+    const { status, payload } = accessControlErrorResponse(error);
     return NextResponse.json(
       {
         ok: false,
         stage: "configuration",
-        error: error instanceof Error ? error.message : "Unknown diagnostics error."
+        error: payload.error
       },
-      { status: 500 }
+      { status }
     );
   }
 }

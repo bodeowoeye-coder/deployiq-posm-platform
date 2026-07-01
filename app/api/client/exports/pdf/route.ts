@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { jsPDF } from "jspdf";
-import { getCurrentUserContext } from "@/lib/auth";
+import { accessControlErrorResponse, requireClientUser } from "@/lib/accessControl";
 import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getBrandCounts, getRegionCounts } from "@/lib/reporting";
@@ -204,15 +204,32 @@ function resolveClientDashboardImageSource(
 }
 
 export async function GET(request: Request) {
-  const context = await getCurrentUserContext();
-  if (!context || context.role.role !== "client" || !context.role.client_id || !context.client) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  const client = context.client;
-  const clientId = context.role.client_id;
+  try {
+    const userContext = await requireClientUser(request);
+    const supabase = createAdminSupabase();
+    const { data: client, error: clientError } = await supabase
+      .from("clients")
+      .select("id, name")
+      .eq("id", userContext.client_id)
+      .maybeSingle();
 
-  const { searchParams } = new URL(request.url);
-  const isFiltered = Array.from(searchParams.keys()).length > 0;
+    if (clientError) {
+      return NextResponse.json({ error: clientError.message }, { status: 500 });
+    }
+
+    if (!client) {
+      return NextResponse.json({ error: "Client account is not linked." }, { status: 400 });
+    }
+
+    if (!userContext.client_id) {
+      return NextResponse.json({ error: "Client account is not linked." }, { status: 400 });
+    }
+
+    const clientId = userContext.client_id;
+
+    const { searchParams } = new URL(request.url);
+    const isFiltered = Array.from(searchParams.keys()).length > 0;
+    const projectId = searchParams.get("projectId")?.trim() || "";
   const state = searchParams.get("state")?.trim();
   const region = searchParams.get("region")?.trim();
   const lga = searchParams.get("lga")?.trim();
@@ -224,9 +241,12 @@ export async function GET(request: Request) {
   const search = searchParams.get("query")?.trim();
   const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected";
   const gpsFilter = (searchParams.get("gpsFilter")?.trim().toLowerCase() ?? "") as "" | "all_gps" | "gps_verified" | "gps_missing";
-  const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
-  const supabase = createAdminSupabase();
-  const scoped = await loadClientSubmissionScope(supabase, client, clientId);
+    const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
+    const scoped = await loadClientSubmissionScope(supabase, client, clientId);
+
+    if (projectId && !scoped.projects.some((project) => project.id === projectId)) {
+      return NextResponse.json({ error: "You do not have access to this project export scope." }, { status: 403 });
+    }
   console.info("[client-pdf-source-shape]", {
     submissionCount: scoped.submissions.length,
     selectStrategy: 'loadClientSubmissionScope uses submissions.select("*")',
@@ -264,7 +284,7 @@ export async function GET(request: Request) {
     });
   }
   const searchText = search?.toLowerCase() ?? "";
-  let submissions = scoped.submissions.filter((item) => {
+    let submissions = scoped.submissions.filter((item) => {
     const date = item.installation_date ?? item.submitted_at.slice(0, 10);
     const campaignName = resolveSubmissionCampaignName(scoped.projects, item);
     const searchable = [
@@ -287,6 +307,7 @@ export async function GET(request: Request) {
       (!region || item.installer_region === region) &&
       (!lga || (item.installer_lga ?? "").toLowerCase().includes(lga.toLowerCase())) &&
       (!project || displayProjectName(item.project_name) === project) &&
+      (!projectId || item.project_id === projectId) &&
       campaignMatches(campaign, campaignName) &&
       (!brand || item.brand_name === brand) &&
       (!startDate || date >= startDate) &&
@@ -295,7 +316,7 @@ export async function GET(request: Request) {
     );
   }).filter((submission) => !submission.archived_at) as Submission[];
 
-  if (campaignDebugEnabled && (project || campaign)) {
+    if (campaignDebugEnabled && (project || campaign)) {
     console.info("[client-pdf-campaign-filter-debug]", {
       selectedCampaignFilter: campaign || null,
       selectedProjectFilter: project || null,
@@ -308,11 +329,11 @@ export async function GET(request: Request) {
       })),
       submissionsAfterCampaignFilter: submissions.length
     });
-  }
+    }
 
-  if (quickFilter === "approved") submissions = submissions.filter((item) => item.status === "Approved");
-  if (quickFilter === "pending") submissions = submissions.filter((item) => item.status === "Pending");
-  if (quickFilter === "rejected") submissions = submissions.filter((item) => item.status === "Rejected");
+    if (quickFilter === "approved") submissions = submissions.filter((item) => item.status === "Approved");
+    if (quickFilter === "pending") submissions = submissions.filter((item) => item.status === "Pending");
+    if (quickFilter === "rejected") submissions = submissions.filter((item) => item.status === "Rejected");
   const effectiveGpsFilter =
     gpsFilter ||
     ((searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_verified"
@@ -320,10 +341,10 @@ export async function GET(request: Request) {
       : (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_missing"
       ? "gps_missing"
       : "");
-  if (effectiveGpsFilter === "gps_verified") submissions = submissions.filter((item) => hasValidGps(item));
-  if (effectiveGpsFilter === "gps_missing") submissions = submissions.filter((item) => !hasValidGps(item));
+    if (effectiveGpsFilter === "gps_verified") submissions = submissions.filter((item) => hasValidGps(item));
+    if (effectiveGpsFilter === "gps_missing") submissions = submissions.filter((item) => !hasValidGps(item));
 
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-FLT" : "DPIQ-CLT");
   let y = headerContentStart;
@@ -729,12 +750,16 @@ export async function GET(request: Request) {
     imagesFailed,
     submissionsWithNoImageSource
   });
-  const buffer = Buffer.from(doc.output("arraybuffer"));
+    const buffer = Buffer.from(doc.output("arraybuffer"));
   const filename = `${isFiltered ? "filtered" : "full"}-client-deployment-report-${new Date().toISOString().slice(0, 10)}.pdf`;
-  return new NextResponse(buffer, {
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename=${filename}`
-    }
-  });
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename=${filename}`
+      }
+    });
+  } catch (error) {
+    const { status, payload } = accessControlErrorResponse(error);
+    return NextResponse.json(payload, { status });
+  }
 }

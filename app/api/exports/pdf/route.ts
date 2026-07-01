@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { jsPDF } from "jspdf";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
-import { getCurrentUserContext } from "@/lib/auth";
+import { accessControlErrorResponse, requireAdmin } from "@/lib/accessControl";
 import { getBrandCounts, getInstallerCounts, getRegionCounts } from "@/lib/reporting";
 import type { Installer, ManagedUser, Submission } from "@/lib/types";
 import { campaignMatches, displayProjectName, normalizeProjectRecords, resolveSubmissionCampaignName } from "@/lib/projects";
@@ -67,48 +67,48 @@ function wrappedLines(doc: jsPDF, text: string, width: number) {
 }
 
 export async function GET(request: Request) {
-  const context = await getCurrentUserContext();
-  if (!context) {
-    console.error("[admin-pdf-export] unauthorized", {
-      reason: "missing_session_or_role_context"
-    });
-    return NextResponse.json(
-      { error: "Admin PDF export requires an active admin session. Please sign in again." },
-      { status: 401 }
-    );
-  }
+  try {
+    await requireAdmin(request);
 
-  if (context.role.role !== "admin") {
-    console.error("[admin-pdf-export] unauthorized", {
-      reason: "wrong_role",
-      userId: context.user.id,
-      email: context.user.email ?? null,
-      role: context.role.role
-    });
-    return NextResponse.json(
-      { error: `Admin PDF export requires admin access. Current role: ${context.role.role}.` },
-      { status: 403 }
-    );
-  }
+    const { searchParams } = new URL(request.url);
+    const isFiltered = Array.from(searchParams.keys()).length > 0;
+    const state = searchParams.get("state")?.trim();
+    const region = searchParams.get("region")?.trim();
+    const lga = searchParams.get("lga")?.trim();
+    const installer = searchParams.get("installer")?.trim();
+    const project = searchParams.get("project")?.trim();
+    const clientId = searchParams.get("clientId")?.trim();
+    const projectId = searchParams.get("projectId")?.trim();
+    const campaign = searchParams.get("campaign")?.trim();
+    const brand = searchParams.get("brand")?.trim();
+    const status = searchParams.get("status")?.trim();
+    const gps = searchParams.get("gps")?.trim().toLowerCase();
+    const startDate = searchParams.get("startDate")?.trim();
+    const endDate = searchParams.get("endDate")?.trim();
+    const search = searchParams.get("query")?.trim();
+    const supabase = createAdminSupabase();
 
-  const { searchParams } = new URL(request.url);
-  const isFiltered = Array.from(searchParams.keys()).length > 0;
-  const state = searchParams.get("state")?.trim();
-  const region = searchParams.get("region")?.trim();
-  const lga = searchParams.get("lga")?.trim();
-  const installer = searchParams.get("installer")?.trim();
-  const project = searchParams.get("project")?.trim();
-  const clientId = searchParams.get("clientId")?.trim();
-  const projectId = searchParams.get("projectId")?.trim();
-  const campaign = searchParams.get("campaign")?.trim();
-  const brand = searchParams.get("brand")?.trim();
-  const status = searchParams.get("status")?.trim();
-  const gps = searchParams.get("gps")?.trim().toLowerCase();
-  const startDate = searchParams.get("startDate")?.trim();
-  const endDate = searchParams.get("endDate")?.trim();
-  const search = searchParams.get("query")?.trim();
-  const supabase = createAdminSupabase();
-  let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
+    if (projectId) {
+      const { data: scopedProject, error: projectScopeError } = await supabase
+        .from("projects")
+        .select("id, client_id")
+        .eq("id", projectId)
+        .maybeSingle();
+
+      if (projectScopeError) {
+        return NextResponse.json({ error: projectScopeError.message }, { status: 500 });
+      }
+
+      if (!scopedProject) {
+        return NextResponse.json({ error: "Invalid project scope." }, { status: 400 });
+      }
+
+      if (clientId && scopedProject.client_id !== clientId) {
+        return NextResponse.json({ error: "Project does not belong to the selected client scope." }, { status: 400 });
+      }
+    }
+
+    let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
 
   if (clientId) query = query.eq("client_id", clientId);
   if (projectId) query = query.eq("project_id", projectId);
@@ -138,51 +138,51 @@ export async function GET(request: Request) {
     );
   }
 
-  const { data, error } = await query;
+    const { data, error } = await query;
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
-  let submissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
-  if (campaign) {
-    let projectQuery = supabase.from("projects").select("id, project_name, campaign_name, campaign");
-    if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
-    if (projectId) projectQuery = projectQuery.eq("id", projectId);
-    const { data: projectRows } = await projectQuery;
-    const normalizedProjects = normalizeProjectRecords(projectRows ?? []);
-    console.info("[admin-pdf-campaign-filter-debug]", {
-      selectedCampaignFilter: campaign,
-      selectedProjectFilter: project || null,
-      submissionsBeforeFilter: submissions.length,
-      projectSamples: submissions.slice(0, 3).map((item) => ({
-        submissionId: item.id,
-        project_id: item.project_id,
-        project_name: item.project_name,
-        resolvedCampaignName: resolveSubmissionCampaignName(normalizedProjects, item)
-      }))
-    });
-    submissions = submissions.filter((item) => campaignMatches(campaign, resolveSubmissionCampaignName(normalizedProjects, item)));
-    console.info("[admin-pdf-campaign-filter-debug]", {
-      submissionsAfterFilter: submissions.length
-    });
-  }
-  if (gps === "verified") submissions = submissions.filter((item) => hasValidGps(item));
-  if (gps === "missing") submissions = submissions.filter((item) => !hasValidGps(item));
-  const reportId = createReportId(isFiltered ? "DPIQ-FLT" : "DPIQ-FULL");
-  const installerUserIds = Array.from(new Set(submissions.map((item) => item.installer_user_id).filter((id): id is string => Boolean(id))));
-  const [{ data: installers }, { data: profiles }] =
-    installerUserIds.length > 0
-      ? await Promise.all([
-          supabase.from("installers").select("*").in("user_id", installerUserIds),
-          supabase.schema("public").from("user_profiles").select("user_id, full_name, email, phone, agency_id, assigned_project_ids, assigned_regions, assigned_states, status, created_at, updated_at").in("user_id", installerUserIds)
-        ])
-      : [{ data: [] }, { data: [] }];
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const generatedAt = new Date().toLocaleString();
-  const regionCounts = getRegionCounts(submissions);
-  const brandCounts = getBrandCounts(submissions);
-  const installerCounts = getInstallerCounts(submissions, {
+    let submissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
+    if (campaign) {
+      let projectQuery = supabase.from("projects").select("id, project_name, campaign_name, campaign");
+      if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
+      if (projectId) projectQuery = projectQuery.eq("id", projectId);
+      const { data: projectRows } = await projectQuery;
+      const normalizedProjects = normalizeProjectRecords(projectRows ?? []);
+      console.info("[admin-pdf-campaign-filter-debug]", {
+        selectedCampaignFilter: campaign,
+        selectedProjectFilter: project || null,
+        submissionsBeforeFilter: submissions.length,
+        projectSamples: submissions.slice(0, 3).map((item) => ({
+          submissionId: item.id,
+          project_id: item.project_id,
+          project_name: item.project_name,
+          resolvedCampaignName: resolveSubmissionCampaignName(normalizedProjects, item)
+        }))
+      });
+      submissions = submissions.filter((item) => campaignMatches(campaign, resolveSubmissionCampaignName(normalizedProjects, item)));
+      console.info("[admin-pdf-campaign-filter-debug]", {
+        submissionsAfterFilter: submissions.length
+      });
+    }
+    if (gps === "verified") submissions = submissions.filter((item) => hasValidGps(item));
+    if (gps === "missing") submissions = submissions.filter((item) => !hasValidGps(item));
+    const reportId = createReportId(isFiltered ? "DPIQ-FLT" : "DPIQ-FULL");
+    const installerUserIds = Array.from(new Set(submissions.map((item) => item.installer_user_id).filter((id): id is string => Boolean(id))));
+    const [{ data: installers }, { data: profiles }] =
+      installerUserIds.length > 0
+        ? await Promise.all([
+            supabase.from("installers").select("*").in("user_id", installerUserIds),
+            supabase.schema("public").from("user_profiles").select("user_id, full_name, email, phone, agency_id, assigned_project_ids, assigned_regions, assigned_states, status, created_at, updated_at").in("user_id", installerUserIds)
+          ])
+        : [{ data: [] }, { data: [] }];
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const generatedAt = new Date().toLocaleString();
+    const regionCounts = getRegionCounts(submissions);
+    const brandCounts = getBrandCounts(submissions);
+    const installerCounts = getInstallerCounts(submissions, {
     installers: (installers ?? []) as Installer[],
     users: ((profiles ?? []) as Array<{
       user_id: string;
@@ -211,18 +211,18 @@ export async function GET(request: Request) {
       last_sign_in_at: null
     }))
   });
-  const approvedCount = submissions.filter((item) => item.status === "Approved").length;
-  const pendingCount = submissions.filter((item) => item.status === "Pending").length;
-  const rejectedCount = submissions.filter((item) => item.status === "Rejected").length;
+    const approvedCount = submissions.filter((item) => item.status === "Approved").length;
+    const pendingCount = submissions.filter((item) => item.status === "Pending").length;
+    const rejectedCount = submissions.filter((item) => item.status === "Rejected").length;
 
-  drawReportHeader(doc, pageWidth, "Deployment Installation Report", [
+    drawReportHeader(doc, pageWidth, "Deployment Installation Report", [
     ["Client Name", "All clients"],
     ["Project Name", project || "All projects"],
     ["Generated Date/Time", generatedAt],
     ["Report ID", reportId]
   ]);
 
-  doc.setFillColor(248, 250, 252);
+    doc.setFillColor(248, 250, 252);
   doc.roundedRect(margin, 64, pageWidth - margin * 2, 28, 2, 2, "F");
   const summary = [
     ["Total", submissions.length],
@@ -319,13 +319,17 @@ export async function GET(request: Request) {
 
   drawReportFooter(doc, pageWidth, 297, margin);
 
-  const buffer = Buffer.from(doc.output("arraybuffer"));
-  const filename = `${isFiltered ? "filtered" : "full"}-deployment-report-${reportDate()}.pdf`;
+    const buffer = Buffer.from(doc.output("arraybuffer"));
+    const filename = `${isFiltered ? "filtered" : "full"}-deployment-report-${reportDate()}.pdf`;
 
-  return new NextResponse(buffer, {
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename=${filename}`
-    }
-  });
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename=${filename}`
+      }
+    });
+  } catch (error) {
+    const { status, payload } = accessControlErrorResponse(error);
+    return NextResponse.json(payload, { status });
+  }
 }

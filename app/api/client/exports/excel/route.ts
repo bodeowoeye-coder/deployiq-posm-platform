@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
-import { getCurrentUserContext } from "@/lib/auth";
+import { accessControlErrorResponse, requireClientUser } from "@/lib/accessControl";
 import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Submission } from "@/lib/types";
@@ -152,15 +152,32 @@ function addEvidenceHyperlinks(sheet: XLSX.WorkSheet, submissions: Submission[],
 }
 
 export async function GET(request: Request) {
-  const context = await getCurrentUserContext();
-  if (!context || context.role.role !== "client" || !context.role.client_id || !context.client) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  const client = context.client;
-  const clientId = context.role.client_id;
+  try {
+    const userContext = await requireClientUser(request);
+    const supabase = createAdminSupabase();
+    const { data: client, error: clientError } = await supabase
+      .from("clients")
+      .select("id, name")
+      .eq("id", userContext.client_id)
+      .maybeSingle();
 
-  const { searchParams } = new URL(request.url);
-  const isFiltered = Array.from(searchParams.keys()).length > 0;
+    if (clientError) {
+      return NextResponse.json({ error: clientError.message }, { status: 500 });
+    }
+
+    if (!client) {
+      return NextResponse.json({ error: "Client account is not linked." }, { status: 400 });
+    }
+
+    if (!userContext.client_id) {
+      return NextResponse.json({ error: "Client account is not linked." }, { status: 400 });
+    }
+
+    const clientId = userContext.client_id;
+
+    const { searchParams } = new URL(request.url);
+    const isFiltered = Array.from(searchParams.keys()).length > 0;
+    const projectId = searchParams.get("projectId")?.trim() || "";
   const state = searchParams.get("state")?.trim();
   const region = searchParams.get("region")?.trim();
   const lga = searchParams.get("lga")?.trim();
@@ -171,11 +188,14 @@ export async function GET(request: Request) {
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
   const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected";
-  const gpsFilter = (searchParams.get("gpsFilter")?.trim().toLowerCase() ?? "") as "" | "all_gps" | "gps_verified" | "gps_missing";
-  const supabase = createAdminSupabase();
-  const scoped = await loadClientSubmissionScope(supabase, client, clientId);
+    const gpsFilter = (searchParams.get("gpsFilter")?.trim().toLowerCase() ?? "") as "" | "all_gps" | "gps_verified" | "gps_missing";
+    const scoped = await loadClientSubmissionScope(supabase, client, clientId);
+
+    if (projectId && !scoped.projects.some((project) => project.id === projectId)) {
+      return NextResponse.json({ error: "You do not have access to this project export scope." }, { status: 403 });
+    }
   const searchText = search?.toLowerCase() ?? "";
-  const data = scoped.submissions.filter((item) => {
+    const data = scoped.submissions.filter((item) => {
     const date = item.installation_date ?? item.submitted_at.slice(0, 10);
     const campaignName = resolveSubmissionCampaignName(scoped.projects, item);
     const searchable = [
@@ -198,6 +218,7 @@ export async function GET(request: Request) {
       (!region || item.installer_region === region) &&
       (!lga || (item.installer_lga ?? "").toLowerCase().includes(lga.toLowerCase())) &&
       (!project || displayProjectName(item.project_name) === project) &&
+      (!projectId || item.project_id === projectId) &&
       campaignMatches(campaign, campaignName) &&
       (!brand || item.brand_name === brand) &&
       (!startDate || date >= startDate) &&
@@ -206,10 +227,10 @@ export async function GET(request: Request) {
     );
   });
 
-  let filteredData = data;
-  if (quickFilter === "approved") filteredData = data.filter((item) => item.status === "Approved");
-  if (quickFilter === "pending") filteredData = data.filter((item) => item.status === "Pending");
-  if (quickFilter === "rejected") filteredData = data.filter((item) => item.status === "Rejected");
+    let filteredData = data;
+    if (quickFilter === "approved") filteredData = data.filter((item) => item.status === "Approved");
+    if (quickFilter === "pending") filteredData = data.filter((item) => item.status === "Pending");
+    if (quickFilter === "rejected") filteredData = data.filter((item) => item.status === "Rejected");
   const effectiveGpsFilter =
     gpsFilter ||
     ((searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_verified"
@@ -217,17 +238,17 @@ export async function GET(request: Request) {
       : (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_missing"
       ? "gps_missing"
       : "");
-  if (effectiveGpsFilter === "gps_verified") filteredData = filteredData.filter((item) => hasValidGps(item));
-  if (effectiveGpsFilter === "gps_missing") filteredData = filteredData.filter((item) => !hasValidGps(item));
+    if (effectiveGpsFilter === "gps_verified") filteredData = filteredData.filter((item) => hasValidGps(item));
+    if (effectiveGpsFilter === "gps_missing") filteredData = filteredData.filter((item) => !hasValidGps(item));
 
-  const projectTitle = project || "All projects";
-  const reportId = createReportId(isFiltered ? "DPIQ-CLT-XLS-FLT" : "DPIQ-CLT-XLS");
-  const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
-  const baseSubmissions = ((filteredData ?? []) as Submission[]).filter((submission) => !submission.archived_at);
-  const rows = baseSubmissions.map((item) => toExportRow(item));
-  const rejectedRows = baseSubmissions.filter((item) => item.status === "Rejected").map((item) => toExportRow(item));
+    const projectTitle = project || "All projects";
+    const reportId = createReportId(isFiltered ? "DPIQ-CLT-XLS-FLT" : "DPIQ-CLT-XLS");
+    const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
+    const baseSubmissions = ((filteredData ?? []) as Submission[]).filter((submission) => !submission.archived_at);
+    const rows = baseSubmissions.map((item) => toExportRow(item));
+    const rejectedRows = baseSubmissions.filter((item) => item.status === "Rejected").map((item) => toExportRow(item));
 
-  const workbook = XLSX.utils.book_new();
+    const workbook = XLSX.utils.book_new();
   addCoverSheet(workbook, [
     ["Client", scoped.effectiveClient.name],
     ["Project", projectTitle],
@@ -249,13 +270,17 @@ export async function GET(request: Request) {
     Company: process.env.COMPANY_NAME || "Deployment Reporting",
     CreatedDate: new Date()
   };
-  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer", cellStyles: true });
-  const filename = `${isFiltered ? "filtered" : "full"}-client-deployment-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer", cellStyles: true });
+    const filename = `${isFiltered ? "filtered" : "full"}-client-deployment-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
 
-  return new NextResponse(buffer, {
-    headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename=${filename}`
-    }
-  });
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename=${filename}`
+      }
+    });
+  } catch (error) {
+    const { status, payload } = accessControlErrorResponse(error);
+    return NextResponse.json(payload, { status });
+  }
 }
