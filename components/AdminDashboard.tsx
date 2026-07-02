@@ -154,6 +154,20 @@ function buildExportQuery(filters: Filters, scope: { clientId?: string; projectI
   return query ? `?${query}` : "";
 }
 
+function normalizeText(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function brandMatchesFilter(item: Submission, selectedBrand: string) {
+  const selected = normalizeText(selectedBrand);
+  if (!selected) return true;
+
+  const submissionBrand = normalizeText(item.brand_name);
+  const outletBrandType = normalizeText((item as Submission & { selected_outlet_brand_type?: string | null }).selected_outlet_brand_type);
+
+  return submissionBrand === selected || outletBrandType === selected;
+}
+
 function hasValidGps(item: Submission) {
   if (item.gps_latitude === null || item.gps_longitude === null) return false;
   const lat = Number(item.gps_latitude);
@@ -441,6 +455,8 @@ export function AdminDashboard({
     const installer = filters.installer.trim().toLowerCase();
     return scopedRecords.filter((item) => {
       const date = item.installation_date ?? item.submitted_at.slice(0, 10);
+      const resolvedProject = resolveSubmissionProject(scopedProjectRecords, item);
+      const effectiveProjectName = displayProjectName(resolvedProject?.project_name ?? item.project_name);
       const searchable = [
         item.installer_name,
         item.project_name,
@@ -467,9 +483,9 @@ export function AdminDashboard({
         (!filters.region || item.installer_region === filters.region) &&
         (!filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
         (!installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
-        (!filters.project || displayProjectName(item.project_name) === filters.project) &&
+        (!filters.project || effectiveProjectName === filters.project) &&
         (!filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
-        (!filters.brand || item.brand_name === filters.brand) &&
+        brandMatchesFilter(item, filters.brand) &&
         (!filters.status || item.status === filters.status) &&
         (filters.gps === "all" || (filters.gps === "verified" ? hasValidGps(item) : !hasValidGps(item)))
       );
@@ -482,6 +498,8 @@ export function AdminDashboard({
 
     return scopedSubmissionRecords.filter((item) => {
       const date = item.installation_date ?? item.submitted_at.slice(0, 10);
+      const resolvedProject = resolveSubmissionProject(scopedProjectRecords, item);
+      const effectiveProjectName = displayProjectName(resolvedProject?.project_name ?? item.project_name);
       const searchable = [
         item.installer_name,
         item.project_name,
@@ -508,9 +526,9 @@ export function AdminDashboard({
         (!filters.region || item.installer_region === filters.region) &&
         (!filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
         (!installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
-        (!filters.project || displayProjectName(item.project_name) === filters.project) &&
+        (!filters.project || effectiveProjectName === filters.project) &&
         (!filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
-        (!filters.brand || item.brand_name === filters.brand) &&
+        brandMatchesFilter(item, filters.brand) &&
         (!filters.status || item.status === filters.status) &&
         (filters.gps === "all" || (filters.gps === "verified" ? hasValidGps(item) : !hasValidGps(item))) &&
         (submissionArchiveView === "active" ? !item.archived_at : submissionArchiveView === "archived" ? Boolean(item.archived_at) : true)
@@ -557,15 +575,33 @@ export function AdminDashboard({
   const rejectedCount = filtered.filter((item) => item.status === "Rejected").length;
   const gpsVerifiedCount = filtered.filter((item) => hasValidGps(item)).length;
   const gpsMissingCount = filtered.length - gpsVerifiedCount;
+  const selectedFilterProjectId =
+    scopedProjectRecords.find((project) => displayProjectName(project.project_name) === filters.project)?.id ?? "";
   const scopeExportQuery = buildExportQuery(blankFilters, { clientId: scopeClientId, projectId: scopeProjectId });
-  const exportQuery = buildExportQuery(filters, { clientId: scopeClientId, projectId: scopeProjectId });
+  const exportQuery = buildExportQuery(filters, {
+    clientId: scopeClientId,
+    projectId: scopeProjectId || selectedFilterProjectId
+  });
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
   const installerAccuracy = getInstallerAccuracyRanking(filtered, installerIdentitySource);
   const regionPerformance = getRegionPerformanceRanking(filtered);
   const brandCompliance = getBrandComplianceScores(filtered);
-  const projectOptions = Array.from(new Set(scopedRecords.map((item) => displayProjectName(item.project_name)))).sort();
+  const projectOptions = Array.from(
+    new Set([
+      ...scopedProjectRecords.map((project) => displayProjectName(project.project_name)),
+      ...scopedRecords.map((item) => displayProjectName(item.project_name))
+    ])
+  ).sort();
   const campaignOptions = Array.from(new Set(scopedProjectRecords.map((project) => projectCampaignName(project)).filter(Boolean) as string[])).sort();
+  const brandOptions = Array.from(
+    new Set([
+      ...BRANDS,
+      ...brands.map((item) => item.brand_name).filter(Boolean),
+      ...scopedRecords.map((item) => item.brand_name ?? "").filter(Boolean),
+      ...scopedRecords.map((item) => ((item as Submission & { selected_outlet_brand_type?: string | null }).selected_outlet_brand_type ?? "")).filter(Boolean)
+    ])
+  ).sort((left, right) => left.localeCompare(right));
   const projectOperations = getProjectOperations(scopedProjectRecords, scopedTargetRecords, filtered, scopedDeploymentProgress);
   const portfolio = getPortfolioOperations(projectOperations);
   const gpsCoveragePercent = portfolio.actual > 0 ? Number(((gpsVerifiedCount / portfolio.actual) * 100).toFixed(1)) : 0;
@@ -691,19 +727,23 @@ export function AdminDashboard({
       "Duplicate upload"
     );
     if (!selected) return;
-    if (!SUBMISSION_ARCHIVE_REASONS.includes(selected as (typeof SUBMISSION_ARCHIVE_REASONS)[number])) {
-      showToast("Invalid archive reason selected.", "error");
-      return;
-    }
+    const trimmedSelection = selected.trim();
+    const normalizedSelection = trimmedSelection.toLowerCase();
+    const matchedReason = SUBMISSION_ARCHIVE_REASONS.find((reason) => reason.toLowerCase() === normalizedSelection) ?? null;
 
-    let archiveReason = selected;
-    if (selected === "Other") {
+    let archiveReason = matchedReason ?? trimmedSelection;
+    if (normalizedSelection === "other" || normalizedSelection === "custom") {
       const detail = window.prompt("Enter archive reason details:", "");
       if (!detail || !detail.trim()) {
         showToast("Archive reason details are required for Other.", "error");
         return;
       }
       archiveReason = `Other: ${detail.trim()}`;
+    }
+
+    if (!archiveReason.trim()) {
+      showToast("Archive reason is required.", "error");
+      return;
     }
 
     await applySubmissionAdminAction(id, "archive", { archiveReason });
@@ -1363,7 +1403,7 @@ export function AdminDashboard({
             <FilterField label="Brand">
               <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.brand} onChange={(event) => setFilter("brand", event.target.value)}>
                 <option value="">All brands</option>
-                {BRANDS.map((brand) => (
+                {brandOptions.map((brand) => (
                   <option key={brand} value={brand}>
                     {brand}
                   </option>

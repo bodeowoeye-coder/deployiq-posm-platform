@@ -66,6 +66,22 @@ function wrappedLines(doc: jsPDF, text: string, width: number) {
   return doc.splitTextToSize(text, width) as string[];
 }
 
+function normalizeText(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function matchesBrand(submission: Submission, selectedBrand: string) {
+  const selected = normalizeText(selectedBrand);
+  if (!selected) return true;
+
+  const brandName = normalizeText(submission.brand_name);
+  const selectedOutletBrandType = normalizeText(
+    (submission as Submission & { selected_outlet_brand_type?: string | null }).selected_outlet_brand_type
+  );
+
+  return brandName === selected || selectedOutletBrandType === selected;
+}
+
 export async function GET(request: Request) {
   try {
     await requireAdmin(request);
@@ -116,8 +132,6 @@ export async function GET(request: Request) {
   if (region) query = query.eq("installer_region", region);
   if (lga) query = query.ilike("installer_lga", `%${lga}%`);
   if (installer) query = query.ilike("installer_name", `%${installer}%`);
-  if (project) query = project === "General Deployment" ? query.is("project_name", null) : query.eq("project_name", project);
-  if (brand) query = query.eq("brand_name", brand);
   if (status) query = query.eq("status", status);
   if (startDate) query = query.gte("installation_date", startDate);
   if (endDate) query = query.lte("installation_date", endDate);
@@ -145,12 +159,28 @@ export async function GET(request: Request) {
     }
 
     let submissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
-    if (campaign) {
+    let normalizedProjects: ReturnType<typeof normalizeProjectRecords> = [];
+    if (campaign || project) {
       let projectQuery = supabase.from("projects").select("id, project_name, campaign_name, campaign");
       if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
       if (projectId) projectQuery = projectQuery.eq("id", projectId);
       const { data: projectRows } = await projectQuery;
-      const normalizedProjects = normalizeProjectRecords(projectRows ?? []);
+      normalizedProjects = normalizeProjectRecords(projectRows ?? []);
+    }
+
+    if (project && !projectId) {
+      submissions = submissions.filter((item) => {
+        const resolvedProject = normalizedProjects.find((projectRow) => projectRow.id === item.project_id) ?? null;
+        const effectiveName = displayProjectName(resolvedProject?.project_name ?? item.project_name);
+        return effectiveName === project;
+      });
+    }
+
+    if (brand) {
+      submissions = submissions.filter((item) => matchesBrand(item, brand));
+    }
+
+    if (campaign) {
       console.info("[admin-pdf-campaign-filter-debug]", {
         selectedCampaignFilter: campaign,
         selectedProjectFilter: project || null,
@@ -257,6 +287,8 @@ export async function GET(request: Request) {
   ]);
 
   let y = 64;
+  const imagePreviewLimit = 25;
+  let previewCount = 0;
   for (const item of submissions) {
     const textX = margin + 30;
     const textWidth = pageWidth - margin - textX - 4;
@@ -292,14 +324,20 @@ export async function GET(request: Request) {
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
 
-    const preview = await imageToDataUrl(item.image_url);
-    if (preview) {
-      try {
-        doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
-      } catch {
-        doc.setFontSize(7);
-        doc.text("Preview unavailable", margin + 3, y + 16);
+    if (previewCount < imagePreviewLimit) {
+      const preview = await imageToDataUrl(item.image_url);
+      if (preview) {
+        try {
+          doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
+          previewCount += 1;
+        } catch {
+          doc.setFontSize(7);
+          doc.text("Preview unavailable", margin + 3, y + 16);
+        }
       }
+    } else {
+      doc.setFontSize(7);
+      doc.text("Preview omitted", margin + 3, y + 16);
     }
 
     let textY = y + 7;

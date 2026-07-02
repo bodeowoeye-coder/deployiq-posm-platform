@@ -47,6 +47,22 @@ function addCoverSheet(workbook: XLSX.WorkBook, metadata: Array<[string, string]
   XLSX.utils.book_append_sheet(workbook, cover, "Cover");
 }
 
+function normalizeText(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function matchesBrand(submission: Submission, selectedBrand: string) {
+  const selected = normalizeText(selectedBrand);
+  if (!selected) return true;
+
+  const brandName = normalizeText(submission.brand_name);
+  const selectedOutletBrandType = normalizeText(
+    (submission as Submission & { selected_outlet_brand_type?: string | null }).selected_outlet_brand_type
+  );
+
+  return brandName === selected || selectedOutletBrandType === selected;
+}
+
 export async function GET(request: Request) {
   try {
     await requireAdmin(request);
@@ -97,8 +113,6 @@ export async function GET(request: Request) {
   if (region) query = query.eq("installer_region", region);
   if (lga) query = query.ilike("installer_lga", `%${lga}%`);
   if (installer) query = query.ilike("installer_name", `%${installer}%`);
-  if (project) query = project === "General Deployment" ? query.is("project_name", null) : query.eq("project_name", project);
-  if (brand) query = query.eq("brand_name", brand);
   if (status) query = query.eq("status", status);
   if (startDate) query = query.gte("installation_date", startDate);
   if (endDate) query = query.lte("installation_date", endDate);
@@ -128,12 +142,28 @@ export async function GET(request: Request) {
     const reportId = createReportId(isFiltered ? "DPIQ-XLS-FLT" : "DPIQ-XLS");
     const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
     let filteredSubmissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
+    let normalizedProjects: ReturnType<typeof normalizeProjectRecords> = [];
+    if (campaign || project) {
+      let projectQuery = supabase.from("projects").select("id, project_name, campaign_name, campaign");
+      if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
+      if (projectId) projectQuery = projectQuery.eq("id", projectId);
+      const { data: projectRows } = await projectQuery;
+      normalizedProjects = normalizeProjectRecords(projectRows ?? []);
+    }
+
+    if (project && !projectId) {
+      filteredSubmissions = filteredSubmissions.filter((item) => {
+        const resolvedProject = normalizedProjects.find((projectRow) => projectRow.id === item.project_id) ?? null;
+        const effectiveName = displayProjectName(resolvedProject?.project_name ?? item.project_name);
+        return effectiveName === project;
+      });
+    }
+
+    if (brand) {
+      filteredSubmissions = filteredSubmissions.filter((item) => matchesBrand(item, brand));
+    }
+
     if (campaign) {
-    let projectQuery = supabase.from("projects").select("id, project_name, campaign_name, campaign");
-    if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
-    if (projectId) projectQuery = projectQuery.eq("id", projectId);
-    const { data: projectRows } = await projectQuery;
-    const normalizedProjects = normalizeProjectRecords(projectRows ?? []);
     console.info("[admin-excel-campaign-filter-debug]", {
       selectedCampaignFilter: campaign,
       selectedProjectFilter: project || null,
