@@ -89,7 +89,7 @@ export async function GET(request: Request) {
     if (projectId) {
       const { data: scopedProject, error: projectScopeError } = await supabase
         .from("projects")
-        .select("id, client_id, project_name")
+        .select("id, client_id, name")
         .eq("id", projectId)
         .maybeSingle();
 
@@ -105,7 +105,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "Project does not belong to the selected client scope." }, { status: 400 });
       }
 
-      selectedProjectName = displayProjectName(scopedProject.project_name);
+      selectedProjectName = displayProjectName((scopedProject as { name?: string | null }).name);
     }
 
     let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
@@ -146,7 +146,7 @@ export async function GET(request: Request) {
     let filteredSubmissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
     let normalizedProjects: ReturnType<typeof normalizeProjectRecords> = [];
     if (campaign || project) {
-      let projectQuery = supabase.from("projects").select("id, project_name, campaign_name, campaign");
+      let projectQuery = supabase.from("projects").select("id, name, campaign_name, campaign");
       if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
       if (projectId) projectQuery = projectQuery.eq("id", projectId);
       const { data: projectRows } = await projectQuery;
