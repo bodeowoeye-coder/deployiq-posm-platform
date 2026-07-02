@@ -85,10 +85,11 @@ export async function GET(request: Request) {
     const search = searchParams.get("query")?.trim();
     const supabase = createAdminSupabase();
 
+    let selectedProjectName: string | null = null;
     if (projectId) {
       const { data: scopedProject, error: projectScopeError } = await supabase
         .from("projects")
-        .select("id, client_id")
+        .select("id, client_id, project_name")
         .eq("id", projectId)
         .maybeSingle();
 
@@ -103,12 +104,13 @@ export async function GET(request: Request) {
       if (clientId && scopedProject.client_id !== clientId) {
         return NextResponse.json({ error: "Project does not belong to the selected client scope." }, { status: 400 });
       }
+
+      selectedProjectName = displayProjectName(scopedProject.project_name);
     }
 
     let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
 
   if (clientId) query = query.eq("client_id", clientId);
-  if (projectId) query = query.eq("project_id", projectId);
   if (state) query = query.eq("installer_state", state);
   if (region) query = query.eq("installer_region", region);
   if (lga) query = query.ilike("installer_lga", `%${lga}%`);
@@ -151,11 +153,15 @@ export async function GET(request: Request) {
       normalizedProjects = normalizeProjectRecords(projectRows ?? []);
     }
 
-    if (project && !projectId) {
+    if (projectId) {
+      const normalizedSelectedProjectName = normalizeText(displayProjectName(selectedProjectName ?? project));
       filteredSubmissions = filteredSubmissions.filter((item) => {
-        const resolvedProject = normalizedProjects.find((projectRow) => projectRow.id === item.project_id) ?? null;
-        const effectiveName = displayProjectName(resolvedProject?.project_name ?? item.project_name);
-        return effectiveName === project;
+        if ((item.project_id ?? "") === projectId) return true;
+        return normalizeText(displayProjectName(item.project_name)) === normalizedSelectedProjectName;
+      });
+    } else if (project) {
+      filteredSubmissions = filteredSubmissions.filter((item) => {
+        return normalizeText(displayProjectName(item.project_name)) === normalizeText(displayProjectName(project));
       });
     }
 
@@ -164,21 +170,7 @@ export async function GET(request: Request) {
     }
 
     if (campaign) {
-    console.info("[admin-excel-campaign-filter-debug]", {
-      selectedCampaignFilter: campaign,
-      selectedProjectFilter: project || null,
-      submissionsBeforeFilter: filteredSubmissions.length,
-      projectSamples: filteredSubmissions.slice(0, 3).map((item) => ({
-        submissionId: item.id,
-        project_id: item.project_id,
-        project_name: item.project_name,
-        resolvedCampaignName: resolveSubmissionCampaignName(normalizedProjects, item)
-      }))
-    });
     filteredSubmissions = filteredSubmissions.filter((item) => campaignMatches(campaign, resolveSubmissionCampaignName(normalizedProjects, item)));
-    console.info("[admin-excel-campaign-filter-debug]", {
-      submissionsAfterFilter: filteredSubmissions.length
-    });
     }
     if (gps === "verified") filteredSubmissions = filteredSubmissions.filter((item) => hasValidGps(item));
     if (gps === "missing") filteredSubmissions = filteredSubmissions.filter((item) => !hasValidGps(item));
@@ -218,9 +210,11 @@ export async function GET(request: Request) {
   }));
 
     const workbook = XLSX.utils.book_new();
+  const reportProjectName = selectedProjectName ?? (project ? displayProjectName(project) : "All projects");
+
   addCoverSheet(workbook, [
     ["Client", "All clients"],
-    ["Project", project || "All projects"],
+    ["Project", reportProjectName],
     ["Generated Date", generatedAt],
     ["Report ID", reportId],
     ["Report Type", isFiltered ? "Filtered Excel Report" : "Full Excel Report"]

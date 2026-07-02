@@ -64,6 +64,17 @@ function isOptionalSubmissionColumnError(error: { message?: string; code?: strin
   );
 }
 
+function isArchiveColumnError(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return (
+    error?.code === "PGRST204" ||
+    error?.code === "42703" ||
+    message.includes("archived_by") ||
+    message.includes("archive_reason") ||
+    message.includes("archived_at")
+  );
+}
+
 function stripOptionalSubmissionColumns(payload: Record<string, unknown>) {
   const fallbackPayload = { ...payload };
   delete fallbackPayload.local_submission_id;
@@ -817,6 +828,8 @@ export async function PATCH(request: Request) {
     const rejectionReason = typeof body.rejectionReason === "string" ? body.rejectionReason.trim() : "";
     const deploymentStageCode = typeof body.deploymentStageCode === "string" ? body.deploymentStageCode.trim() : "";
     const archiveReason = typeof body.archiveReason === "string" ? body.archiveReason.trim() : "";
+    const requestedClientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
+    const requestedProjectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
 
     if (!id) {
       return NextResponse.json({ error: "Missing submission id." }, { status: 400 });
@@ -827,7 +840,7 @@ export async function PATCH(request: Request) {
     if (action === "archive" || action === "restore" || action === "permanent_delete") {
       const { data: existingSubmission, error: existingSubmissionError } = await supabase
         .from("submissions")
-        .select("id, archived_at, image_path, image_url")
+        .select("id, client_id, project_id, archived_at, image_path, image_url")
         .eq("id", id)
         .maybeSingle();
 
@@ -838,17 +851,36 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: "Submission not found." }, { status: 404 });
       }
 
+      if (requestedClientId && (existingSubmission.client_id ?? "") !== requestedClientId) {
+        return NextResponse.json({ error: "Submission client target does not match." }, { status: 400 });
+      }
+
+      if (requestedProjectId && (existingSubmission.project_id ?? "") !== requestedProjectId) {
+        return NextResponse.json({ error: "Submission project target does not match." }, { status: 400 });
+      }
+
       if (action === "archive") {
         if (!archiveReason) {
           return NextResponse.json({ error: "Archive reason is required." }, { status: 400 });
         }
         const archivedAt = new Date().toISOString();
-        const { data, error } = await supabase
+        let { data, error } = await supabase
           .from("submissions")
           .update({ archived_at: archivedAt, archived_by: context.user_id, archive_reason: archiveReason })
           .eq("id", id)
           .select()
           .single();
+
+        if (error && isArchiveColumnError(error)) {
+          const fallback = await supabase
+            .from("submissions")
+            .update({ archived_at: archivedAt })
+            .eq("id", id)
+            .select()
+            .single();
+          data = fallback.data;
+          error = fallback.error;
+        }
 
         if (error) {
           return NextResponse.json({ error: error.message }, { status: 500 });
@@ -866,12 +898,23 @@ export async function PATCH(request: Request) {
       }
 
       if (action === "restore") {
-        const { data, error } = await supabase
+        let { data, error } = await supabase
           .from("submissions")
           .update({ archived_at: null, archived_by: null, archive_reason: null })
           .eq("id", id)
           .select()
           .single();
+
+        if (error && isArchiveColumnError(error)) {
+          const fallback = await supabase
+            .from("submissions")
+            .update({ archived_at: null })
+            .eq("id", id)
+            .select()
+            .single();
+          data = fallback.data;
+          error = fallback.error;
+        }
 
         if (error) {
           return NextResponse.json({ error: error.message }, { status: 500 });

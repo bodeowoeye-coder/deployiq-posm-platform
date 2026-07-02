@@ -138,9 +138,12 @@ function formatDate(value: Date | string | null | undefined) {
   return date.toLocaleDateString("en-GB", dateOnlyFormatOptions);
 }
 
-function buildExportQuery(filters: Filters, scope: { clientId?: string; projectId?: string } = {}) {
+function buildExportQuery(filters: Filters, scope: { clientId?: string; projectId?: string; projectName?: string } = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
+    if (key === "project") {
+      return;
+    }
     if (key === "gps") {
       const gpsValue = String(value).trim();
       if (gpsValue && gpsValue !== "all") params.set(key, gpsValue);
@@ -149,7 +152,10 @@ function buildExportQuery(filters: Filters, scope: { clientId?: string; projectI
     if (value.trim()) params.set(key, value.trim());
   });
   if (scope.clientId?.trim()) params.set("clientId", scope.clientId.trim());
-  if (scope.projectId?.trim()) params.set("projectId", scope.projectId.trim());
+  const projectId = scope.projectId?.trim() || filters.project.trim();
+  if (projectId) params.set("projectId", projectId);
+  const projectName = scope.projectName?.trim();
+  if (projectName) params.set("project", projectName);
   const query = params.toString();
   return query ? `?${query}` : "";
 }
@@ -166,6 +172,17 @@ function brandMatchesFilter(item: Submission, selectedBrand: string) {
   const outletBrandType = normalizeText((item as Submission & { selected_outlet_brand_type?: string | null }).selected_outlet_brand_type);
 
   return submissionBrand === selected || outletBrandType === selected;
+}
+
+function matchesProjectFilter(item: Submission, selectedProjectId: string, selectedProjectName: string | null) {
+  const projectId = selectedProjectId.trim();
+  if (!projectId) return true;
+
+  if ((item.project_id ?? "") === projectId) return true;
+
+  const fallbackName = normalizeText(displayProjectName(selectedProjectName));
+  if (!fallbackName) return false;
+  return normalizeText(displayProjectName(item.project_name)) === fallbackName;
 }
 
 function hasValidGps(item: Submission) {
@@ -453,10 +470,10 @@ export function AdminDashboard({
   const filtered = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     const installer = filters.installer.trim().toLowerCase();
+    const selectedProject = scopedProjectRecords.find((project) => project.id === filters.project) ?? null;
+    const selectedProjectName = selectedProject ? displayProjectName(selectedProject.project_name) : null;
     return scopedRecords.filter((item) => {
       const date = item.installation_date ?? item.submitted_at.slice(0, 10);
-      const resolvedProject = resolveSubmissionProject(scopedProjectRecords, item);
-      const effectiveProjectName = displayProjectName(resolvedProject?.project_name ?? item.project_name);
       const searchable = [
         item.installer_name,
         item.project_name,
@@ -483,7 +500,7 @@ export function AdminDashboard({
         (!filters.region || item.installer_region === filters.region) &&
         (!filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
         (!installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
-        (!filters.project || effectiveProjectName === filters.project) &&
+        matchesProjectFilter(item, filters.project, selectedProjectName) &&
         (!filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
         brandMatchesFilter(item, filters.brand) &&
         (!filters.status || item.status === filters.status) &&
@@ -495,11 +512,11 @@ export function AdminDashboard({
   const submissionViewRecords = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     const installer = filters.installer.trim().toLowerCase();
+    const selectedProject = scopedProjectRecords.find((project) => project.id === filters.project) ?? null;
+    const selectedProjectName = selectedProject ? displayProjectName(selectedProject.project_name) : null;
 
     return scopedSubmissionRecords.filter((item) => {
       const date = item.installation_date ?? item.submitted_at.slice(0, 10);
-      const resolvedProject = resolveSubmissionProject(scopedProjectRecords, item);
-      const effectiveProjectName = displayProjectName(resolvedProject?.project_name ?? item.project_name);
       const searchable = [
         item.installer_name,
         item.project_name,
@@ -526,7 +543,7 @@ export function AdminDashboard({
         (!filters.region || item.installer_region === filters.region) &&
         (!filters.lga || (item.installer_lga ?? "").toLowerCase().includes(filters.lga.trim().toLowerCase())) &&
         (!installer || (item.installer_name ?? "").toLowerCase().includes(installer)) &&
-        (!filters.project || effectiveProjectName === filters.project) &&
+        matchesProjectFilter(item, filters.project, selectedProjectName) &&
         (!filters.campaign || campaignMatches(filters.campaign, resolveSubmissionCampaignName(scopedProjectRecords, item))) &&
         brandMatchesFilter(item, filters.brand) &&
         (!filters.status || item.status === filters.status) &&
@@ -575,24 +592,28 @@ export function AdminDashboard({
   const rejectedCount = filtered.filter((item) => item.status === "Rejected").length;
   const gpsVerifiedCount = filtered.filter((item) => hasValidGps(item)).length;
   const gpsMissingCount = filtered.length - gpsVerifiedCount;
-  const selectedFilterProjectId =
-    scopedProjectRecords.find((project) => displayProjectName(project.project_name) === filters.project)?.id ?? "";
-  const scopeExportQuery = buildExportQuery(blankFilters, { clientId: scopeClientId, projectId: scopeProjectId });
+  const selectedFilterProject = scopedProjectRecords.find((project) => project.id === filters.project) ?? null;
+  const selectedFilterProjectName = selectedFilterProject ? displayProjectName(selectedFilterProject.project_name) : "";
+  const scopedProject = scopeProjectOptions.find((project) => project.id === scopeProjectId) ?? null;
+  const scopedProjectNameForExport = scopedProject ? displayProjectName(scopedProject.project_name) : "";
+  const scopeExportQuery = buildExportQuery(blankFilters, {
+    clientId: scopeClientId,
+    projectId: scopeProjectId,
+    projectName: scopedProjectNameForExport
+  });
   const exportQuery = buildExportQuery(filters, {
     clientId: scopeClientId,
-    projectId: scopeProjectId || selectedFilterProjectId
+    projectId: scopeProjectId || filters.project,
+    projectName: selectedFilterProjectName
   });
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
   const installerAccuracy = getInstallerAccuracyRanking(filtered, installerIdentitySource);
   const regionPerformance = getRegionPerformanceRanking(filtered);
   const brandCompliance = getBrandComplianceScores(filtered);
-  const projectOptions = Array.from(
-    new Set([
-      ...scopedProjectRecords.map((project) => displayProjectName(project.project_name)),
-      ...scopedRecords.map((item) => displayProjectName(item.project_name))
-    ])
-  ).sort();
+  const projectOptions = scopedProjectRecords
+    .map((project) => ({ id: project.id, name: displayProjectName(project.project_name) }))
+    .sort((left, right) => left.name.localeCompare(right.name));
   const campaignOptions = Array.from(new Set(scopedProjectRecords.map((project) => projectCampaignName(project)).filter(Boolean) as string[])).sort();
   const brandOptions = Array.from(
     new Set([
@@ -722,6 +743,7 @@ export function AdminDashboard({
   }
 
   async function promptArchiveSubmission(id: string) {
+    const targetSubmission = submissionViewRecords.find((item) => item.id === id) ?? null;
     const selected = window.prompt(
       `Select archive reason (enter exactly one):\n${SUBMISSION_ARCHIVE_REASONS.join("\n")}`,
       "Duplicate upload"
@@ -746,7 +768,11 @@ export function AdminDashboard({
       return;
     }
 
-    await applySubmissionAdminAction(id, "archive", { archiveReason });
+    await applySubmissionAdminAction(id, "archive", {
+      archiveReason,
+      clientId: targetSubmission?.client_id ?? null,
+      projectId: targetSubmission?.project_id ?? null
+    });
   }
 
   async function promptPermanentDeleteSubmission(id: string) {
@@ -1388,7 +1414,7 @@ export function AdminDashboard({
               <select className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm" value={filters.project} onChange={(event) => setFilter("project", event.target.value)}>
                 <option value="">All projects</option>
                 {projectOptions.map((project) => (
-                  <option key={project} value={project}>{project}</option>
+                  <option key={project.id} value={project.id}>{project.name}</option>
                 ))}
               </select>
             </FilterField>
