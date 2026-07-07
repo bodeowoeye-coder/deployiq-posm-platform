@@ -180,6 +180,9 @@ function matchesProjectFilter(item: Submission, selectedProjectId: string, selec
 
   if ((item.project_id ?? "") === projectId) return true;
 
+  // Only use name fallback for legacy submissions without project_id.
+  if (item.project_id) return false;
+
   const fallbackName = normalizeText(displayProjectName(selectedProjectName));
   if (!fallbackName) return false;
   return normalizeText(displayProjectName(item.project_name)) === fallbackName;

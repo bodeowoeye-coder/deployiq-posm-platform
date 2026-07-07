@@ -146,7 +146,7 @@ export async function GET(request: Request) {
     let filteredSubmissions = ((data ?? []) as Submission[]).filter((submission) => !submission.archived_at);
     let normalizedProjects: ReturnType<typeof normalizeProjectRecords> = [];
     if (campaign || project) {
-      let projectQuery = supabase.from("projects").select("id, name, campaign_name, campaign");
+      let projectQuery = supabase.from("projects").select("id, name, campaign");
       if (clientId) projectQuery = projectQuery.eq("client_id", clientId);
       if (projectId) projectQuery = projectQuery.eq("id", projectId);
       const { data: projectRows } = await projectQuery;
@@ -157,6 +157,7 @@ export async function GET(request: Request) {
       const normalizedSelectedProjectName = normalizeText(displayProjectName(selectedProjectName ?? project));
       filteredSubmissions = filteredSubmissions.filter((item) => {
         if ((item.project_id ?? "") === projectId) return true;
+        if (item.project_id) return false;
         return normalizeText(displayProjectName(item.project_name)) === normalizedSelectedProjectName;
       });
     } else if (project) {
