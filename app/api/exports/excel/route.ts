@@ -63,6 +63,25 @@ function matchesBrand(submission: Submission, selectedBrand: string) {
   return brandName === selected || selectedOutletBrandType === selected;
 }
 
+function displayFilterValue(value: string | null | undefined, fallback: string) {
+  const text = (value ?? "").trim();
+  return text || fallback;
+}
+
+function gpsFilterLabel(gps: string | null | undefined) {
+  const value = (gps ?? "").trim().toLowerCase();
+  if (value === "verified") return "GPS Verified";
+  if (value === "missing") return "GPS Missing";
+  return "All GPS";
+}
+
+function dateRangeLabel(startDate: string | null | undefined, endDate: string | null | undefined) {
+  const start = (startDate ?? "").trim();
+  const end = (endDate ?? "").trim();
+  if (!start && !end) return "All dates";
+  return `${start || "Any"} to ${end || "Any"}`;
+}
+
 export async function GET(request: Request) {
   try {
     await requireAdmin(request);
@@ -74,6 +93,7 @@ export async function GET(request: Request) {
     const lga = searchParams.get("lga")?.trim();
     const installer = searchParams.get("installer")?.trim();
     const project = searchParams.get("project")?.trim();
+    const clientName = searchParams.get("clientName")?.trim();
     const clientId = searchParams.get("clientId")?.trim();
     const projectId = searchParams.get("projectId")?.trim();
     const campaign = searchParams.get("campaign")?.trim();
@@ -86,10 +106,11 @@ export async function GET(request: Request) {
     const supabase = createAdminSupabase();
 
     let selectedProjectName: string | null = null;
+    let selectedProjectCampaign: string | null = null;
     if (projectId) {
       const { data: scopedProject, error: projectScopeError } = await supabase
         .from("projects")
-        .select("id, client_id, name")
+        .select("id, client_id, name, campaign")
         .eq("id", projectId)
         .maybeSingle();
 
@@ -106,6 +127,15 @@ export async function GET(request: Request) {
       }
 
       selectedProjectName = displayProjectName((scopedProject as { name?: string | null }).name);
+      selectedProjectCampaign = typeof (scopedProject as { campaign?: string | null }).campaign === "string"
+        ? ((scopedProject as { campaign?: string | null }).campaign ?? null)
+        : null;
+    }
+
+    let selectedClientName = clientName || null;
+    if (!selectedClientName && clientId) {
+      const { data: scopedClient } = await supabase.from("clients").select("id, name").eq("id", clientId).maybeSingle();
+      selectedClientName = typeof scopedClient?.name === "string" ? scopedClient.name : null;
     }
 
     let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
@@ -212,14 +242,29 @@ export async function GET(request: Request) {
 
     const workbook = XLSX.utils.book_new();
   const reportProjectName = selectedProjectName ?? (project ? displayProjectName(project) : "All projects");
-
-  addCoverSheet(workbook, [
-    ["Client", "All clients"],
-    ["Project", reportProjectName],
-    ["Generated Date", generatedAt],
+  const reportCampaignName = campaign || selectedProjectCampaign || "All campaigns";
+  const coverMetadata: Array<[string, string]> = [
+    ["Client Name", displayFilterValue(selectedClientName, "All clients")],
+    ["Project Name", displayFilterValue(reportProjectName, "All projects")],
+    ["Campaign Name", displayFilterValue(reportCampaignName, "All campaigns")],
+    ["Brand", displayFilterValue(brand, "All brands")],
+    ["Status", displayFilterValue(status, "All statuses")],
+    ["GPS Status", gpsFilterLabel(gps)],
+    ["State", displayFilterValue(state, "All states")],
+    ["Region", displayFilterValue(region, "All regions")],
+    ["LGA", displayFilterValue(lga, "All LGAs")],
+    ["Installer", displayFilterValue(installer, "All installers")],
+    ["Date Range", dateRangeLabel(startDate, endDate)],
+    ["Generated Date/Time", generatedAt],
     ["Report ID", reportId],
     ["Report Type", isFiltered ? "Filtered Excel Report" : "Full Excel Report"]
-  ]);
+  ];
+
+  if (search) {
+    coverMetadata.splice(10, 0, ["Search", search]);
+  }
+
+  addCoverSheet(workbook, coverMetadata);
   const sheet = XLSX.utils.json_to_sheet(rows);
   const headers = Object.keys(rows[0] ?? {
     "Installer Name": "",

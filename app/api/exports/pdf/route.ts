@@ -82,6 +82,25 @@ function matchesBrand(submission: Submission, selectedBrand: string) {
   return brandName === selected || selectedOutletBrandType === selected;
 }
 
+function displayFilterValue(value: string | null | undefined, fallback: string) {
+  const text = (value ?? "").trim();
+  return text || fallback;
+}
+
+function gpsFilterLabel(gps: string | null | undefined) {
+  const value = (gps ?? "").trim().toLowerCase();
+  if (value === "verified") return "GPS Verified";
+  if (value === "missing") return "GPS Missing";
+  return "All GPS";
+}
+
+function dateRangeLabel(startDate: string | null | undefined, endDate: string | null | undefined) {
+  const start = (startDate ?? "").trim();
+  const end = (endDate ?? "").trim();
+  if (!start && !end) return "All dates";
+  return `${start || "Any"} to ${end || "Any"}`;
+}
+
 export async function GET(request: Request) {
   try {
     await requireAdmin(request);
@@ -93,6 +112,7 @@ export async function GET(request: Request) {
     const lga = searchParams.get("lga")?.trim();
     const installer = searchParams.get("installer")?.trim();
     const project = searchParams.get("project")?.trim();
+    const clientName = searchParams.get("clientName")?.trim();
     const clientId = searchParams.get("clientId")?.trim();
     const projectId = searchParams.get("projectId")?.trim();
     const campaign = searchParams.get("campaign")?.trim();
@@ -105,10 +125,11 @@ export async function GET(request: Request) {
     const supabase = createAdminSupabase();
 
     let selectedProjectName: string | null = null;
+    let selectedProjectCampaign: string | null = null;
     if (projectId) {
       const { data: scopedProject, error: projectScopeError } = await supabase
         .from("projects")
-        .select("id, client_id, name")
+        .select("id, client_id, name, campaign")
         .eq("id", projectId)
         .maybeSingle();
 
@@ -125,6 +146,15 @@ export async function GET(request: Request) {
       }
 
       selectedProjectName = displayProjectName((scopedProject as { name?: string | null }).name);
+      selectedProjectCampaign = typeof (scopedProject as { campaign?: string | null }).campaign === "string"
+        ? ((scopedProject as { campaign?: string | null }).campaign ?? null)
+        : null;
+    }
+
+    let selectedClientName = clientName || null;
+    if (!selectedClientName && clientId) {
+      const { data: scopedClient } = await supabase.from("clients").select("id, name").eq("id", clientId).maybeSingle();
+      selectedClientName = typeof scopedClient?.name === "string" ? scopedClient.name : null;
     }
 
     let query = supabase.from("submissions").select("*").order("submitted_at", { ascending: false });
@@ -239,13 +269,43 @@ export async function GET(request: Request) {
     const rejectedCount = submissions.filter((item) => item.status === "Rejected").length;
 
     const reportProjectName = selectedProjectName ?? (project ? displayProjectName(project) : "All projects");
+    const reportCampaignName = campaign || selectedProjectCampaign || "All campaigns";
+    const reportMetadata: Array<[string, string]> = [
+      ["Client Name", displayFilterValue(selectedClientName, "All clients")],
+      ["Project Name", displayFilterValue(reportProjectName, "All projects")],
+      ["Campaign Name", displayFilterValue(reportCampaignName, "All campaigns")],
+      ["Brand", displayFilterValue(brand, "All brands")],
+      ["Status", displayFilterValue(status, "All statuses")],
+      ["GPS Status", gpsFilterLabel(gps)],
+      ["State", displayFilterValue(state, "All states")],
+      ["Region", displayFilterValue(region, "All regions")],
+      ["LGA", displayFilterValue(lga, "All LGAs")],
+      ["Installer", displayFilterValue(installer, "All installers")],
+      ["Date Range", dateRangeLabel(startDate, endDate)],
+      ["Generated Date/Time", generatedAt],
+      ["Report ID", reportId]
+    ];
 
-    drawReportHeader(doc, pageWidth, "Deployment Installation Report", [
-    ["Client Name", "All clients"],
-    ["Project Name", reportProjectName],
-    ["Generated Date/Time", generatedAt],
-    ["Report ID", reportId]
-  ]);
+    if (search) {
+      reportMetadata.splice(10, 0, ["Search", search]);
+    }
+
+    drawReportHeader(doc, pageWidth, "Deployment Installation Report", reportMetadata);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.text("Summary charts are shown on the next page.", margin, 121);
+    doc.setTextColor(15, 23, 42);
+
+    doc.addPage();
+
+    drawReportHeader(doc, pageWidth, "Deployment Summary", [
+      ["Client Name", displayFilterValue(selectedClientName, "All clients")],
+      ["Project Name", displayFilterValue(reportProjectName, "All projects")],
+      ["Generated Date/Time", generatedAt],
+      ["Report ID", reportId]
+    ]);
 
     doc.setFillColor(248, 250, 252);
   doc.roundedRect(margin, 64, pageWidth - margin * 2, 28, 2, 2, "F");
@@ -275,8 +335,8 @@ export async function GET(request: Request) {
 
   doc.addPage();
   drawReportHeader(doc, pageWidth, "Installation Table", [
-    ["Client Name", "All clients"],
-    ["Project Name", reportProjectName],
+    ["Client Name", displayFilterValue(selectedClientName, "All clients")],
+    ["Project Name", displayFilterValue(reportProjectName, "All projects")],
     ["Generated Date/Time", generatedAt],
     ["Report ID", reportId]
   ]);
@@ -308,8 +368,8 @@ export async function GET(request: Request) {
     if (y + cardHeight > contentBottom) {
       doc.addPage();
       drawReportHeader(doc, pageWidth, "Installation Table", [
-        ["Client Name", "All clients"],
-        ["Project Name", reportProjectName],
+        ["Client Name", displayFilterValue(selectedClientName, "All clients")],
+        ["Project Name", displayFilterValue(reportProjectName, "All projects")],
         ["Generated Date/Time", generatedAt],
         ["Report ID", reportId]
       ]);

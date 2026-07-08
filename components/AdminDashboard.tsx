@@ -138,7 +138,7 @@ function formatDate(value: Date | string | null | undefined) {
   return date.toLocaleDateString("en-GB", dateOnlyFormatOptions);
 }
 
-function buildExportQuery(filters: Filters, scope: { clientId?: string; projectId?: string; projectName?: string } = {}) {
+function buildExportQuery(filters: Filters, scope: { clientId?: string; clientName?: string; projectId?: string; projectName?: string } = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (key === "project") {
@@ -152,6 +152,7 @@ function buildExportQuery(filters: Filters, scope: { clientId?: string; projectI
     if (value.trim()) params.set(key, value.trim());
   });
   if (scope.clientId?.trim()) params.set("clientId", scope.clientId.trim());
+  if (scope.clientName?.trim()) params.set("clientName", scope.clientName.trim());
   const projectId = scope.projectId?.trim() || filters.project.trim();
   if (projectId) params.set("projectId", projectId);
   const projectName = scope.projectName?.trim();
@@ -599,15 +600,19 @@ export function AdminDashboard({
   const selectedFilterProjectName = selectedFilterProject ? displayProjectName(selectedFilterProject.project_name) : "";
   const scopedProject = scopeProjectOptions.find((project) => project.id === scopeProjectId) ?? null;
   const scopedProjectNameForExport = scopedProject ? displayProjectName(scopedProject.project_name) : "";
+  const selectedScopeClient = clientRecords.find((client) => client.id === scopeClientId) ?? null;
+  const selectedScopeClientName = selectedScopeClient?.name ?? "";
   const scopeExportQuery = buildExportQuery(blankFilters, {
     clientId: scopeClientId,
+    clientName: selectedScopeClientName,
     projectId: scopeProjectId,
     projectName: scopedProjectNameForExport
   });
   const exportQuery = buildExportQuery(filters, {
     clientId: scopeClientId,
+    clientName: selectedScopeClientName,
     projectId: scopeProjectId || filters.project,
-    projectName: selectedFilterProjectName
+    projectName: scopedProjectNameForExport || selectedFilterProjectName
   });
   const metrics = getExecutiveMetrics(filtered);
   const trendSeries = getTrendSeries(filtered);
