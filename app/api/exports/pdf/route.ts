@@ -126,6 +126,7 @@ export async function GET(request: Request) {
 
     let selectedProjectName: string | null = null;
     let selectedProjectCampaign: string | null = null;
+    let selectedProjectClientId: string | null = null;
     if (projectId) {
       const { data: scopedProject, error: projectScopeError } = await supabase
         .from("projects")
@@ -146,14 +147,16 @@ export async function GET(request: Request) {
       }
 
       selectedProjectName = displayProjectName((scopedProject as { name?: string | null }).name);
+      selectedProjectClientId = typeof scopedProject.client_id === "string" ? scopedProject.client_id : null;
       selectedProjectCampaign = typeof (scopedProject as { campaign?: string | null }).campaign === "string"
         ? ((scopedProject as { campaign?: string | null }).campaign ?? null)
         : null;
     }
 
     let selectedClientName = clientName || null;
-    if (!selectedClientName && clientId) {
-      const { data: scopedClient } = await supabase.from("clients").select("id, name").eq("id", clientId).maybeSingle();
+    const effectiveClientId = clientId || selectedProjectClientId;
+    if (!selectedClientName && effectiveClientId) {
+      const { data: scopedClient } = await supabase.from("clients").select("id, name").eq("id", effectiveClientId).maybeSingle();
       selectedClientName = typeof scopedClient?.name === "string" ? scopedClient.name : null;
     }
 
