@@ -15,6 +15,7 @@ const pageWidth = 210;
 const margin = 14;
 const contentBottom = 276;
 const rowLineHeight = 4.5;
+const MAX_PDF_IMAGE_PREVIEWS = 50;
 
 function hasValidGps(item: Submission) {
   if (item.gps_latitude === null || item.gps_longitude === null) return false;
@@ -334,7 +335,12 @@ export async function GET(request: Request) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(71, 85, 105);
-    doc.text("Summary charts are shown on the next page.", margin, 121);
+    const coverNote = "Photo previews are limited for large reports. Full evidence photo links are available in Excel export.";
+    const coverNoteLines = wrappedLines(doc, coverNote, pageWidth - margin * 2 - 2);
+    const coverNoteStartY = 116;
+    doc.text(coverNoteLines, margin, coverNoteStartY);
+    const summaryHintY = coverNoteStartY + coverNoteLines.length * rowLineHeight + 1;
+    doc.text("Summary charts are shown on the next page.", margin, summaryHintY);
     doc.setTextColor(15, 23, 42);
 
     doc.addPage();
@@ -380,9 +386,11 @@ export async function GET(request: Request) {
     ["Report ID", reportId]
   ]);
 
-  const previewByUrl = await buildImagePreviewMap(submissions.map((item) => item.image_url));
+  const previewByUrl = await buildImagePreviewMap(
+    submissions.slice(0, MAX_PDF_IMAGE_PREVIEWS).map((item) => item.image_url)
+  );
   let y = 64;
-  for (const item of submissions) {
+  for (const [index, item] of submissions.entries()) {
     const textX = margin + 30;
     const textWidth = pageWidth - margin - textX - 4;
     doc.setFont("helvetica", "normal");
@@ -417,17 +425,23 @@ export async function GET(request: Request) {
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
 
-    const preview = previewByUrl.get(item.image_url) ?? null;
-    if (preview) {
-      try {
-        doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
-      } catch {
+    if (index < MAX_PDF_IMAGE_PREVIEWS) {
+      const preview = previewByUrl.get(item.image_url) ?? null;
+      if (preview) {
+        try {
+          doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
+        } catch {
+          doc.setFontSize(7);
+          doc.text("Preview unavailable", margin + 3, y + 16);
+        }
+      } else {
         doc.setFontSize(7);
         doc.text("Preview unavailable", margin + 3, y + 16);
       }
     } else {
       doc.setFontSize(7);
-      doc.text("Preview unavailable", margin + 3, y + 16);
+      doc.text("Preview omitted for large report stability", margin + 3, y + 14.5);
+      doc.text("Photo link available in Excel export", margin + 3, y + 18.5);
     }
 
     let textY = y + 7;
