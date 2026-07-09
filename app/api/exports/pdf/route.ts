@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { jsPDF } from "jspdf";
+import sharp from "sharp";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { accessControlErrorResponse, requireAdmin } from "@/lib/accessControl";
 import { getBrandCounts, getInstallerCounts, getRegionCounts } from "@/lib/reporting";
@@ -48,18 +49,53 @@ function drawBars(doc: jsPDF, title: string, rows: Array<[string, number]>, x: n
   });
 }
 
-async function imageToDataUrl(url: string) {
+type ImagePreview = { dataUrl: string; format: "JPEG" | "PNG" };
+
+async function imageToDataUrl(url: string, timeoutMs = 1500): Promise<ImagePreview | null> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
-    const response = await fetch(url);
+    const controller = new AbortController();
+    timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) return null;
-    const contentType = response.headers.get("content-type") || "image/jpeg";
+
     const arrayBuffer = await response.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const format = contentType.includes("png") ? "PNG" : "JPEG";
-    return { dataUrl: `data:${contentType};base64,${base64}`, format };
+    const input = Buffer.from(arrayBuffer);
+    const output = await sharp(input)
+      .rotate()
+      .resize({ width: 220, height: 220, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 58, mozjpeg: true })
+      .toBuffer();
+
+    const base64 = output.toString("base64");
+    return { dataUrl: `data:image/jpeg;base64,${base64}`, format: "JPEG" };
   } catch {
     return null;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
+}
+
+async function buildImagePreviewMap(urls: string[]) {
+  const uniqueUrls = Array.from(new Set(urls.filter(Boolean)));
+  const previews = new Map<string, ImagePreview | null>();
+  if (uniqueUrls.length === 0) return previews;
+
+  let nextIndex = 0;
+  const workerCount = Math.min(8, uniqueUrls.length);
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < uniqueUrls.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const url = uniqueUrls[index];
+      const preview = await imageToDataUrl(url);
+      previews.set(url, preview);
+    }
+  });
+
+  await Promise.all(workers);
+  return previews;
 }
 
 function wrappedLines(doc: jsPDF, text: string, width: number) {
@@ -344,9 +380,8 @@ export async function GET(request: Request) {
     ["Report ID", reportId]
   ]);
 
+  const previewByUrl = await buildImagePreviewMap(submissions.map((item) => item.image_url));
   let y = 64;
-  const imagePreviewLimit = 25;
-  let previewCount = 0;
   for (const item of submissions) {
     const textX = margin + 30;
     const textWidth = pageWidth - margin - textX - 4;
@@ -382,20 +417,17 @@ export async function GET(request: Request) {
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
 
-    if (previewCount < imagePreviewLimit) {
-      const preview = await imageToDataUrl(item.image_url);
-      if (preview) {
-        try {
-          doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
-          previewCount += 1;
-        } catch {
-          doc.setFontSize(7);
-          doc.text("Preview unavailable", margin + 3, y + 16);
-        }
+    const preview = previewByUrl.get(item.image_url) ?? null;
+    if (preview) {
+      try {
+        doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
+      } catch {
+        doc.setFontSize(7);
+        doc.text("Preview unavailable", margin + 3, y + 16);
       }
     } else {
       doc.setFontSize(7);
-      doc.text("Preview omitted", margin + 3, y + 16);
+      doc.text("Preview unavailable", margin + 3, y + 16);
     }
 
     let textY = y + 7;
