@@ -15,7 +15,7 @@ const pageWidth = 210;
 const margin = 14;
 const contentBottom = 276;
 const rowLineHeight = 4.5;
-const MAX_PDF_IMAGE_PREVIEWS = 50;
+const PREVIEW_BATCH_SIZE = 24;
 
 function hasValidGps(item: Submission) {
   if (item.gps_latitude === null || item.gps_longitude === null) return false;
@@ -52,7 +52,7 @@ function drawBars(doc: jsPDF, title: string, rows: Array<[string, number]>, x: n
 
 type ImagePreview = { dataUrl: string; format: "JPEG" | "PNG" };
 
-async function imageToDataUrl(url: string, timeoutMs = 1500): Promise<ImagePreview | null> {
+async function imageToDataUrl(url: string, timeoutMs = 1400): Promise<ImagePreview | null> {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
     const controller = new AbortController();
@@ -64,8 +64,8 @@ async function imageToDataUrl(url: string, timeoutMs = 1500): Promise<ImagePrevi
     const input = Buffer.from(arrayBuffer);
     const output = await sharp(input)
       .rotate()
-      .resize({ width: 220, height: 220, fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: 58, mozjpeg: true })
+      .resize({ width: 160, height: 160, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 45, mozjpeg: true })
       .toBuffer();
 
     const base64 = output.toString("base64");
@@ -77,20 +77,32 @@ async function imageToDataUrl(url: string, timeoutMs = 1500): Promise<ImagePrevi
   }
 }
 
-async function buildImagePreviewMap(urls: string[]) {
+async function buildImagePreviewMap(urls: string[], cache: Map<string, ImagePreview | null>) {
   const uniqueUrls = Array.from(new Set(urls.filter(Boolean)));
   const previews = new Map<string, ImagePreview | null>();
   if (uniqueUrls.length === 0) return previews;
 
+  const pendingUrls: string[] = [];
+  uniqueUrls.forEach((url) => {
+    if (cache.has(url)) {
+      previews.set(url, cache.get(url) ?? null);
+      return;
+    }
+    pendingUrls.push(url);
+  });
+
+  if (pendingUrls.length === 0) return previews;
+
   let nextIndex = 0;
-  const workerCount = Math.min(8, uniqueUrls.length);
+  const workerCount = Math.min(6, pendingUrls.length);
 
   const workers = Array.from({ length: workerCount }, async () => {
-    while (nextIndex < uniqueUrls.length) {
+    while (nextIndex < pendingUrls.length) {
       const index = nextIndex;
       nextIndex += 1;
-      const url = uniqueUrls[index];
+      const url = pendingUrls[index];
       const preview = await imageToDataUrl(url);
+      cache.set(url, preview);
       previews.set(url, preview);
     }
   });
@@ -335,12 +347,7 @@ export async function GET(request: Request) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(71, 85, 105);
-    const coverNote = "Photo previews are limited for large reports. Full evidence photo links are available in Excel export.";
-    const coverNoteLines = wrappedLines(doc, coverNote, pageWidth - margin * 2 - 2);
-    const coverNoteStartY = 116;
-    doc.text(coverNoteLines, margin, coverNoteStartY);
-    const summaryHintY = coverNoteStartY + coverNoteLines.length * rowLineHeight + 1;
-    doc.text("Summary charts are shown on the next page.", margin, summaryHintY);
+    doc.text("Summary charts are shown on the next page.", margin, 116);
     doc.setTextColor(15, 23, 42);
 
     doc.addPage();
@@ -386,11 +393,17 @@ export async function GET(request: Request) {
     ["Report ID", reportId]
   ]);
 
-  const previewByUrl = await buildImagePreviewMap(
-    submissions.slice(0, MAX_PDF_IMAGE_PREVIEWS).map((item) => item.image_url)
-  );
+  const previewCache = new Map<string, ImagePreview | null>();
+  let previewByUrl = new Map<string, ImagePreview | null>();
   let y = 64;
   for (const [index, item] of submissions.entries()) {
+    if (index % PREVIEW_BATCH_SIZE === 0) {
+      const batchUrls = submissions
+        .slice(index, index + PREVIEW_BATCH_SIZE)
+        .map((submission) => submission.image_url);
+      previewByUrl = await buildImagePreviewMap(batchUrls, previewCache);
+    }
+
     const textX = margin + 30;
     const textWidth = pageWidth - margin - textX - 4;
     doc.setFont("helvetica", "normal");
@@ -425,23 +438,17 @@ export async function GET(request: Request) {
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 2, 2);
 
-    if (index < MAX_PDF_IMAGE_PREVIEWS) {
-      const preview = previewByUrl.get(item.image_url) ?? null;
-      if (preview) {
-        try {
-          doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
-        } catch {
-          doc.setFontSize(7);
-          doc.text("Preview unavailable", margin + 3, y + 16);
-        }
-      } else {
+    const preview = previewByUrl.get(item.image_url) ?? previewCache.get(item.image_url) ?? null;
+    if (preview) {
+      try {
+        doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
+      } catch {
         doc.setFontSize(7);
         doc.text("Preview unavailable", margin + 3, y + 16);
       }
     } else {
       doc.setFontSize(7);
-      doc.text("Preview omitted for large report stability", margin + 3, y + 14.5);
-      doc.text("Photo link available in Excel export", margin + 3, y + 18.5);
+      doc.text("Preview unavailable", margin + 3, y + 16);
     }
 
     let textY = y + 7;
