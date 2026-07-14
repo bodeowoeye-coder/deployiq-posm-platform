@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { ProjectDashboardShell } from "@/components/ProjectDashboardShell";
 import { requireRole } from "@/lib/auth";
+import { getBuildSitesForProject } from "@/lib/build/sites/service";
 import { normalizeProjectRecord } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Project } from "@/lib/types";
@@ -21,6 +22,10 @@ export default async function AdminProjectDashboardPage({
   if (!project) notFound();
 
   const normalized = normalizeProjectRecord(project) as Project;
+  const sites =
+    (normalized.project_type || "Retail Deployment").toLowerCase() === "retail deployment"
+      ? []
+      : await getBuildSitesForProject({ projectId: normalized.id });
 
   return (
     <ProjectDashboardShell
@@ -28,6 +33,7 @@ export default async function AdminProjectDashboardPage({
       audience="admin"
       activeTab={searchParams?.tab}
       basePath={`/admin/projects/${params.projectId}`}
+      sites={sites}
     />
   );
 }

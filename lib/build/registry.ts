@@ -1,6 +1,7 @@
 import type { BuildModuleHealth, BuildModuleName } from "@/lib/build/types";
 
 const moduleNames: BuildModuleName[] = [
+  "sites",
   "activities",
   "supplies",
   "progress",

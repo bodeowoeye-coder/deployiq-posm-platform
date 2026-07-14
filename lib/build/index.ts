@@ -1,5 +1,8 @@
 export * from "@/lib/build/types";
 export * from "@/lib/build/registry";
+export * from "@/lib/build/sites/types";
+export * from "@/lib/build/sites/service";
+export * from "@/lib/build/sites/module";
 
 export * from "@/lib/build/activities/service";
 export * from "@/lib/build/supplies/service";

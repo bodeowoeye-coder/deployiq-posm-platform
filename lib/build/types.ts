@@ -1,4 +1,5 @@
 export type BuildModuleName =
+  | "sites"
   | "activities"
   | "supplies"
   | "progress"
@@ -12,8 +13,13 @@ export type BuildModuleName =
 
 export type BuildModuleContext = {
   projectId: string;
+  siteId: string | null;
   projectType: string;
-  actorUserId?: string | null;
+  actor: {
+    userId: string;
+    role: "admin" | "client" | "installer";
+    clientId: string | null;
+  };
 };
 
 export type BuildModuleHealth = {

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Project } from "@/lib/types";
+import type { BuildSite } from "@/lib/build/sites/types";
 
 const dashboardTabs = [
   "Overview",
@@ -25,18 +26,26 @@ function projectTypeLabel(project: Project) {
   return project.project_type || "Retail Deployment";
 }
 
+function isBuildProject(project: Project) {
+  return projectTypeLabel(project).toLowerCase() !== "retail deployment";
+}
+
 export function ProjectDashboardShell({
   project,
   audience,
   activeTab,
-  basePath
+  basePath,
+  sites
 }: {
   project: Project;
   audience: "admin" | "client";
   activeTab?: string;
   basePath: string;
+  sites?: BuildSite[];
 }) {
   const selectedTab = normalizedTab(activeTab);
+  const buildProject = isBuildProject(project);
+  const availableSites = sites ?? [];
 
   return (
     <main className="min-h-screen bg-[var(--page-bg)] px-4 py-6 text-[var(--text-primary)] sm:px-6">
@@ -80,6 +89,24 @@ export function ProjectDashboardShell({
             This tab is intentionally a foundation placeholder for DeployIQ Build. Functional workflows will be added in a later sprint.
           </p>
           <p className="mt-4 text-xs uppercase tracking-[0.14em] text-slate-500">Audience: {audience}</p>
+
+          {buildProject && selectedTab === "Overview" ? (
+            <div className="mt-6 rounded-lg border border-[var(--border-soft)] bg-white p-4">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Sites</h3>
+              {availableSites.length === 0 ? (
+                <p className="mt-2 text-sm text-[var(--text-muted)]">No Sites configured yet.</p>
+              ) : (
+                <ul className="mt-2 space-y-1 text-sm text-[var(--text-muted)]">
+                  {availableSites.slice(0, 5).map((site) => (
+                    <li key={site.id}>
+                      {site.site_code} - {site.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-3 text-xs text-slate-500">Site context is prepared for future Build modules in Sprint 2.</p>
+            </div>
+          ) : null}
         </section>
       </div>
     </main>
