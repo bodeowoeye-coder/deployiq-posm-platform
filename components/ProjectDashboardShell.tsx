@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { buildResourceTypeConfig, buildResourceTypeOrder, type BuildResourceType } from "@/lib/build/resources/types";
 import type { Project } from "@/lib/types";
 import type { BuildSite } from "@/lib/build/sites/types";
 import type { BuildWorkPackage } from "@/lib/build/workPackages/types";
@@ -43,7 +44,8 @@ export function ProjectDashboardShell({
   currentSiteName,
   selectedSiteId,
   workPackages,
-  templateCategoryMap
+  templateCategoryMap,
+  templateResourceSummaryMap
 }: {
   project: Project;
   audience: "admin" | "client";
@@ -57,6 +59,7 @@ export function ProjectDashboardShell({
   selectedSiteId?: string | null;
   workPackages?: BuildWorkPackage[];
   templateCategoryMap?: Record<string, string[]>;
+  templateResourceSummaryMap?: Record<string, { total: number } & Record<BuildResourceType, number>>;
 }) {
   const selectedTab = normalizedTab(activeTab);
   const buildProject = isBuildProject(project);
@@ -67,6 +70,7 @@ export function ProjectDashboardShell({
   const selectedSite = selectedSiteId ? availableSites.find((site) => site.id === selectedSiteId) ?? null : null;
   const availableWorkPackages = workPackages ?? [];
   const categoryMap = templateCategoryMap ?? {};
+  const resourceSummaryMap = templateResourceSummaryMap ?? {};
 
   return (
     <main className="min-h-screen bg-[var(--page-bg)] px-4 py-6 text-[var(--text-primary)] sm:px-6">
@@ -150,6 +154,25 @@ export function ProjectDashboardShell({
                             ? categoryMap[workPackage.id]
                             : ["Preparation", "Execution", "Inspection", "Close-Out"]
                           ).join(" / ")}
+                        </div>
+                      ) : null}
+                      {workPackage.template_id ? (
+                        <div className="mt-1 text-xs text-slate-500">
+                          {(() => {
+                            const summary = resourceSummaryMap[workPackage.id] ?? {
+                              total: 0,
+                              labour: 0,
+                              material: 0,
+                              equipment: 0,
+                              vehicle: 0,
+                              contractor: 0,
+                              service: 0
+                            };
+                            const detail = buildResourceTypeOrder
+                              .map((resourceType) => `${buildResourceTypeConfig[resourceType].shortLabel}: ${summary[resourceType]}`)
+                              .join(" | ");
+                            return `Required Resources: ${summary.total} | ${detail}`;
+                          })()}
                         </div>
                       ) : null}
                     </li>

@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { ProjectDashboardShell } from "@/components/ProjectDashboardShell";
 import { requireRole } from "@/lib/auth";
 import { getCategories } from "@/lib/build/activityCategories/service";
+import type { BuildResourceType } from "@/lib/build/resources/types";
+import { getTemplateResourceRequirements } from "@/lib/build/resources/service";
 import { getBuildSitesForProject } from "@/lib/build/sites/service";
 import { getWorkPackages } from "@/lib/build/workPackages/service";
 import { normalizeProjectRecord } from "@/lib/projects";
@@ -45,6 +47,7 @@ export default async function ClientProjectDashboardPage({
     : [];
 
   const templateCategoryMap: Record<string, string[]> = {};
+  const templateResourceSummaryMap: Record<string, { total: number } & Record<BuildResourceType, number>> = {};
   if (selectedSite && workPackages.length > 0) {
     await Promise.all(
       workPackages.map(async (workPackage) => {
@@ -56,6 +59,30 @@ export default async function ClientProjectDashboardPage({
           templateId: workPackage.template_id
         });
         templateCategoryMap[workPackage.id] = categories.map((category) => category.name);
+
+        const requirements = await getTemplateResourceRequirements({
+          projectId: normalized.id,
+          siteId: selectedSite.id,
+          workPackageId: workPackage.id,
+          templateId: workPackage.template_id
+        });
+
+        const summary = {
+          total: requirements.length,
+          labour: 0,
+          material: 0,
+          equipment: 0,
+          vehicle: 0,
+          contractor: 0,
+          service: 0
+        };
+
+        for (const requirement of requirements) {
+          if (!requirement.resource_type) continue;
+          summary[requirement.resource_type] += 1;
+        }
+
+        templateResourceSummaryMap[workPackage.id] = summary;
       })
     );
   }
@@ -94,6 +121,7 @@ export default async function ClientProjectDashboardPage({
       selectedSiteId={selectedSite?.id ?? null}
       workPackages={workPackages}
       templateCategoryMap={templateCategoryMap}
+      templateResourceSummaryMap={templateResourceSummaryMap}
     />
   );
 }

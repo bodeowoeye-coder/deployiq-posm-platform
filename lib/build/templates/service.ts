@@ -213,6 +213,30 @@ function normalizeEquipment(row: Record<string, unknown>): BuildEquipmentTemplat
   };
 }
 
+function normalizeTemplateResourceRequirementPreview(
+  row: Record<string, unknown>,
+  resource: Record<string, unknown> | null
+) {
+  return {
+    id: textValue(row.id),
+    template_id: textValue(row.template_id),
+    activity_category_id: textValue(row.activity_category_id) || null,
+    activity_template_id: textValue(row.activity_template_id) || null,
+    resource_id: textValue(row.resource_id),
+    sequence: Number(row.sequence || 1),
+    quantity: Number(row.quantity || 0),
+    unit_of_measure: textValue(row.unit_of_measure),
+    requirement_type: textValue(row.requirement_type),
+    required_stage: textValue(row.required_stage) || null,
+    mandatory: Boolean(row.mandatory),
+    notes: textValue(row.notes) || null,
+    resource_type: resource ? textValue(resource.resource_type) || null : null,
+    resource_code: resource ? textValue(resource.code) || null : null,
+    resource_name: resource ? textValue(resource.name) || null : null,
+    resource_category: resource ? textValue(resource.category) || null : null
+  };
+}
+
 function applyTemplateVisibility<T extends { eq: Function; or: Function }>(
   query: T,
   clientId: string,
@@ -449,7 +473,7 @@ export async function instantiateTemplate(params: {
   });
 
   const supabase = createAdminSupabase();
-  const [categoriesRes, activitiesRes, inspectionsRes, safetyRes, suppliesRes, equipmentRes] = await Promise.all([
+  const [categoriesRes, activitiesRes, inspectionsRes, safetyRes, suppliesRes, equipmentRes, requirementsRes] = await Promise.all([
     supabase
       .from("build_activity_categories")
       .select("*")
@@ -480,6 +504,12 @@ export async function instantiateTemplate(params: {
       .from("build_equipment_templates")
       .select("*")
       .eq("template_id", template.id)
+      .order("sequence", { ascending: true }),
+    supabase
+      .from("build_template_resource_requirements")
+      .select("*")
+      .eq("template_id", template.id)
+      .is("archived_at", null)
       .order("sequence", { ascending: true })
   ]);
 
@@ -489,6 +519,9 @@ export async function instantiateTemplate(params: {
   if (safetyRes.error) throw new AccessControlError(`Could not load safety templates: ${safetyRes.error.message}`, 500);
   if (suppliesRes.error) throw new AccessControlError(`Could not load supply templates: ${suppliesRes.error.message}`, 500);
   if (equipmentRes.error) throw new AccessControlError(`Could not load equipment templates: ${equipmentRes.error.message}`, 500);
+  if (requirementsRes.error) {
+    throw new AccessControlError(`Could not load template resource requirements: ${requirementsRes.error.message}`, 500);
+  }
 
   const categories = (categoriesRes.data ?? []).map((row) => normalizeActivityCategory(row as Record<string, unknown>));
   const activities = (activitiesRes.data ?? []).map((row) => normalizeActivity(row as Record<string, unknown>));
@@ -510,6 +543,33 @@ export async function instantiateTemplate(params: {
         return (data ?? []).map((row) => normalizeChecklist(row as Record<string, unknown>));
       })()
     : [];
+
+  const requirementRows = (requirementsRes.data ?? []) as Array<Record<string, unknown>>;
+  const resourceIds = Array.from(new Set(requirementRows.map((item) => textValue(item.resource_id)).filter(Boolean)));
+
+  const resourceMap = new Map<string, Record<string, unknown>>();
+  if (resourceIds.length > 0) {
+    const { data: resourceRows, error: resourceError } = await supabase
+      .from("build_resources")
+      .select("id, code, name, resource_type, category")
+      .in("id", resourceIds)
+      .or(`client_id.eq.${access.project.client_id},is_global.eq.true`);
+
+    if (resourceError) {
+      throw new AccessControlError(`Could not load resource catalogue details: ${resourceError.message}`, 500);
+    }
+
+    for (const row of resourceRows ?? []) {
+      const id = textValue(row.id);
+      if (!id) continue;
+      resourceMap.set(id, row as Record<string, unknown>);
+    }
+  }
+
+  const resourceRequirements = requirementRows.map((row) => {
+    const resourceId = textValue(row.resource_id);
+    return normalizeTemplateResourceRequirementPreview(row, resourceMap.get(resourceId) ?? null);
+  });
 
   const bundle: BuildWorkPackageTemplateBundle = {
     template,
@@ -535,9 +595,11 @@ export async function instantiateTemplate(params: {
       inspectionsCount: bundle.inspections.length,
       safetyCount: bundle.safety.length,
       suppliesCount: bundle.supplies.length,
-      equipmentCount: bundle.equipment.length
+      equipmentCount: bundle.equipment.length,
+      resourceRequirementsCount: resourceRequirements.length
     },
-    bundle
+    bundle,
+    resourceRequirements
   };
 }
 

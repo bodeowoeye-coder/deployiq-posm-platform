@@ -56,6 +56,7 @@ Template code uniqueness:
 - safety templates
 - supply templates
 - equipment templates
+- shared resource requirements
 
 No live Activities, Checklists, Inspections, Supplies, or Equipment records are created in Sprint 2B.
 
@@ -64,6 +65,7 @@ Template
 -> Create Categories
 -> Create Activities
 -> Create Checklists
+-> Create Shared Resource Requirements
 -> Create Inspections
 -> Create Safety Tasks
 -> Create Supply Requirements
@@ -78,6 +80,8 @@ All generated records should carry:
 - source_template_id (or equivalent lineage fields)
 
 Activity-template lineage should also preserve category relationship fields for reporting and progress grouping.
+
+Shared resource requirement lineage should preserve catalogue identity (`resource_id`) and ownership level (template/category/activity-template).
 
 ## API Summary
 `GET /api/build/templates`
