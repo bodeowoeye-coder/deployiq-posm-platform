@@ -13,9 +13,18 @@ export const dynamic = "force-dynamic";
 
 const pageWidth = 210;
 const margin = 14;
-const contentBottom = 276;
+const contentBottom = 280;
 const rowLineHeight = 4.5;
 const PREVIEW_BATCH_SIZE = 24;
+const installationCardTextXOffset = 27;
+const installationCardPhotoSize = 22;
+const installationCardTopPadding = 5;
+const installationCardBottomPadding = 5;
+const installationCardTitleLineHeight = 4.2;
+const installationCardBodyLineHeight = 4.1;
+const installationCardBodyGap = 0.9;
+const installationCardBottomGap = 4;
+const installationCardFallbackHeight = 30;
 
 function hasValidGps(item: Submission) {
   if (item.gps_latitude === null || item.gps_longitude === null) return false;
@@ -407,7 +416,7 @@ export async function GET(request: Request) {
       previewByUrl = await buildImagePreviewMap(batchUrls, previewCache);
     }
 
-    const textX = margin + 30;
+    const textX = margin + installationCardTextXOffset;
     const textWidth = pageWidth - margin - textX - 4;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
@@ -424,8 +433,11 @@ export async function GET(request: Request) {
       `AI review: ${item.ai_review_note || "No AI review note"}`
     ].map((row) => wrappedLines(doc, row, textWidth));
     const titleLines = wrappedLines(doc, item.salon_name || "Name not visible", textWidth);
-    const textHeight = titleLines.length * 5 + rows.reduce((total, lines) => total + lines.length * rowLineHeight + 1.6, 0);
-    const cardHeight = Math.max(34, textHeight + 10);
+    const titleHeight = titleLines.length * installationCardTitleLineHeight;
+    const bodyHeight = rows.reduce((total, lines) => total + lines.length * installationCardBodyLineHeight + installationCardBodyGap, 0);
+    const textBlockHeight = installationCardTopPadding + titleHeight + 0.8 + bodyHeight + installationCardBottomPadding;
+    const photoBlockHeight = installationCardPhotoSize + installationCardTopPadding + installationCardBottomPadding;
+    const cardHeight = Math.max(installationCardFallbackHeight, Math.max(textBlockHeight, photoBlockHeight));
 
     if (y + cardHeight > contentBottom) {
       doc.addPage();
@@ -438,7 +450,7 @@ export async function GET(request: Request) {
     const preview = previewByUrl.get(item.image_url) ?? previewCache.get(item.image_url) ?? null;
     if (preview) {
       try {
-        doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, 24, 24);
+        doc.addImage(preview.dataUrl, preview.format, margin + 2, y + 4, installationCardPhotoSize, installationCardPhotoSize);
       } catch {
         doc.setFontSize(7);
         doc.text("Preview unavailable", margin + 3, y + 16);
@@ -448,19 +460,19 @@ export async function GET(request: Request) {
       doc.text("Preview unavailable", margin + 3, y + 16);
     }
 
-    let textY = y + 7;
+    let textY = y + installationCardTopPadding;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
     doc.text(titleLines, textX, textY);
-    textY += titleLines.length * 5 + 1;
+    textY += titleLines.length * installationCardTitleLineHeight + 0.8;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     rows.forEach((lines) => {
       doc.text(lines, textX, textY);
-      textY += lines.length * rowLineHeight + 1.6;
+      textY += lines.length * installationCardBodyLineHeight + installationCardBodyGap;
     });
 
-    y += cardHeight + 5;
+    y += cardHeight + installationCardBottomGap;
   }
 
   drawReportFooter(doc, pageWidth, 297, margin);

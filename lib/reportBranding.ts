@@ -63,9 +63,9 @@ export function drawInstallationTableHeader(
   options: { margin?: number; top?: number; dividerGap?: number; contentGap?: number } = {}
 ) {
   const margin = options.margin ?? 14;
-  const top = options.top ?? 12;
-  const dividerGap = options.dividerGap ?? 12;
-  const contentGap = options.contentGap ?? 14;
+  const top = options.top ?? 10.5;
+  const dividerGap = options.dividerGap ?? 10;
+  const contentGap = options.contentGap ?? 12;
   const metadataWidth = pageWidth - margin * 2;
 
   drawDeployIqLogo(doc, margin, top);
@@ -83,18 +83,18 @@ export function drawInstallationTableHeader(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
   doc.setTextColor(15, 23, 42);
-  doc.text(title, margin, top + 29);
+  doc.text(title, margin, top + 27.5);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(71, 85, 105);
 
-  let y = top + 37;
+  let y = top + 35.5;
   metadata.forEach(([label, value], index) => {
     const lines = doc.splitTextToSize(`${label}: ${value}`, metadataWidth) as string[];
     doc.text(lines, margin, y);
-    y += lines.length * 4.6;
-    if (index < metadata.length - 1) y += 1.4;
+    y += lines.length * 4.1;
+    if (index < metadata.length - 1) y += 0.8;
   });
 
   const dividerY = y + dividerGap;
