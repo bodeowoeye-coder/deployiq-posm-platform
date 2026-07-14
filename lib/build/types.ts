@@ -4,6 +4,7 @@ export type BuildModuleName =
   | "templates"
   | "activity-categories"
   | "resources"
+  | "dependencies"
   | "activities"
   | "supplies"
   | "progress"

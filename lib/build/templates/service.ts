@@ -1,4 +1,5 @@
 import { AccessControlError } from "@/lib/accessControl";
+import { getDependencies } from "@/lib/build/dependencies/service";
 import { assertWorkPackageAccess, getWorkPackage } from "@/lib/build/workPackages/service";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type {
@@ -582,6 +583,36 @@ export async function instantiateTemplate(params: {
     equipment: (equipmentRes.data ?? []).map((row) => normalizeEquipment(row as Record<string, unknown>))
   };
 
+  const dependencyResult = await getDependencies({
+    request: params.request,
+    projectId: params.projectId,
+    siteId: params.siteId,
+    workPackageId: params.workPackageId,
+    templateId: template.id,
+    includeArchived: false
+  });
+
+  const activityById = new Map(bundle.activities.map((activity) => [activity.id, activity]));
+  const executionFlow = {
+    orderedActivities: dependencyResult.graphValidation.topologicalOrder.map((activityId) => {
+      const activity = activityById.get(activityId);
+      return {
+        activityTemplateId: activityId,
+        code: activity?.code ?? null,
+        name: activity?.name ?? null
+      };
+    }),
+    edges: dependencyResult.dependencies.map((dependency) => ({
+      predecessorActivityTemplateId: dependency.predecessor_activity_template_id,
+      successorActivityTemplateId: dependency.successor_activity_template_id,
+      dependencyType: dependency.dependency_type,
+      lagValue: dependency.lag_value,
+      lagUnit: dependency.lag_unit,
+      mandatory: dependency.mandatory
+    })),
+    graphValidation: dependencyResult.graphValidation
+  };
+
   return {
     context: {
       projectId: access.project.id,
@@ -596,10 +627,12 @@ export async function instantiateTemplate(params: {
       safetyCount: bundle.safety.length,
       suppliesCount: bundle.supplies.length,
       equipmentCount: bundle.equipment.length,
-      resourceRequirementsCount: resourceRequirements.length
+      resourceRequirementsCount: resourceRequirements.length,
+      dependenciesCount: dependencyResult.dependencies.length
     },
     bundle,
-    resourceRequirements
+    resourceRequirements,
+    executionFlow
   };
 }
 

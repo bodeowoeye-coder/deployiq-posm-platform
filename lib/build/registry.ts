@@ -6,6 +6,7 @@ const moduleNames: BuildModuleName[] = [
   "templates",
   "activity-categories",
   "resources",
+  "dependencies",
   "activities",
   "supplies",
   "progress",
