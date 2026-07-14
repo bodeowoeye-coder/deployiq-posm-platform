@@ -3,7 +3,16 @@ export type BrandMatchStatus = "Matched" | "Mismatch" | "Uncertain";
 export type AiConfidenceLevel = "High" | "Medium" | "Low";
 export type DuplicateStatus = "Unique" | "Possible Duplicate" | "Duplicate";
 export type OutletMatchStatus = "matched" | "warning" | "not_checked";
-export type ProjectStatus = "Planning" | "Active" | "On Hold" | "Completed";
+export type ProjectType = "Retail Deployment" | "Construction" | "Real Estate" | "Facility Management";
+export type ProjectStatus =
+  | "Planning"
+  | "Active"
+  | "On Hold"
+  | "Completed"
+  | "Not Started"
+  | "In Progress"
+  | "Delayed"
+  | "Cancelled";
 export type DeploymentStageCode = "production" | "warehouse" | "in_transit" | "installed" | "approved";
 
 export type Submission = {
@@ -109,8 +118,19 @@ export type Project = {
   brand_id: string | null;
   project_name: string;
   campaign_name: string | null;
+  project_type?: ProjectType | null;
+  project_code?: string | null;
+  client_project_reference?: string | null;
+  project_manager?: string | null;
+  site_supervisor?: string | null;
+  consultant?: string | null;
+  contractor?: string | null;
   start_date: string | null;
   end_date: string | null;
+  planned_completion?: string | null;
+  actual_completion?: string | null;
+  budget?: number | null;
+  currency?: string | null;
   target_quantity: number;
   status: ProjectStatus;
   regions_covered: string[];

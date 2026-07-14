@@ -13,6 +13,13 @@ function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [];
 }
 
+function numberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
 function isMissingProjectBrandColumn(error: { code?: string; message?: string; details?: string } | null) {
   const message = error?.message?.toLowerCase() ?? "";
   const details = error?.details?.toLowerCase() ?? "";
@@ -50,12 +57,23 @@ export async function POST(request: Request) {
     const clientId = stringValue(body.clientId);
     const brandId = stringValue(body.brandId) || null;
     const campaignName = stringValue(body.campaignName) || null;
+    const projectType = stringValue(body.projectType) || "Retail Deployment";
+    const projectCode = stringValue(body.projectCode) || null;
+    const clientProjectReference = stringValue(body.clientProjectReference) || null;
+    const projectManager = stringValue(body.projectManager) || null;
+    const siteSupervisor = stringValue(body.siteSupervisor) || null;
+    const consultant = stringValue(body.consultant) || null;
+    const contractor = stringValue(body.contractor) || null;
     const targetQuantity = Number(body.targetQuantity ?? 0);
     const status = stringValue(body.status) || "Planning";
     const regionsCovered = stringArray(body.regionsCovered);
     const assignedInstallers = stringArray(body.assignedInstallers);
     const startDate = stringValue(body.startDate) || null;
     const endDate = stringValue(body.endDate) || null;
+    const plannedCompletion = stringValue(body.plannedCompletion) || null;
+    const actualCompletion = stringValue(body.actualCompletion) || null;
+    const budget = numberOrNull(body.budget);
+    const currency = stringValue(body.currency) || "NGN";
     const targetRegion = stringValue(body.targetRegion) || null;
     const targetState = stringValue(body.targetState) || null;
     const targetInstaller = stringValue(body.targetInstaller) || null;
@@ -75,6 +93,13 @@ export async function POST(request: Request) {
       brand_id: brandId,
       brand: selectedBrand?.brand_name ?? null,
       campaign: campaignName,
+      project_type: projectType,
+      project_code: projectCode,
+      client_project_reference: clientProjectReference,
+      project_manager: projectManager,
+      site_supervisor: siteSupervisor,
+      consultant,
+      contractor,
       target_quantity: targetQuantity,
       status,
       regions_covered: regionsCovered,
@@ -82,7 +107,11 @@ export async function POST(request: Request) {
       primary_target_region: targetRegion,
       primary_target_state: targetState,
       start_date: startDate,
-      end_date: endDate
+      end_date: endDate,
+      planned_completion: plannedCompletion,
+      actual_completion: actualCompletion,
+      budget,
+      currency
     };
 
     const { data: project, error } = await supabase
@@ -155,9 +184,20 @@ export async function PATCH(request: Request) {
     const updates = {
       name: projectName,
       campaign: stringValue(body.campaignName) || null,
+      project_type: stringValue(body.projectType) || "Retail Deployment",
+      project_code: stringValue(body.projectCode) || null,
+      client_project_reference: stringValue(body.clientProjectReference) || null,
+      project_manager: stringValue(body.projectManager) || null,
+      site_supervisor: stringValue(body.siteSupervisor) || null,
+      consultant: stringValue(body.consultant) || null,
+      contractor: stringValue(body.contractor) || null,
       target_quantity: Number(body.targetQuantity ?? 0),
       start_date: stringValue(body.startDate) || null,
       end_date: stringValue(body.endDate) || null,
+      planned_completion: stringValue(body.plannedCompletion) || null,
+      actual_completion: stringValue(body.actualCompletion) || null,
+      budget: numberOrNull(body.budget),
+      currency: stringValue(body.currency) || "NGN",
       status: stringValue(body.status) || "Planning",
       regions_covered: stringArray(body.regionsCovered),
       assigned_installers: stringArray(body.assignedInstallers),

@@ -38,16 +38,42 @@ create table if not exists public.projects (
   brand_id uuid references public.brands(id) on delete set null,
   project_name text not null,
   campaign_name text,
+  project_type text not null default 'Retail Deployment' check (project_type in ('Retail Deployment', 'Construction', 'Real Estate', 'Facility Management')),
+  project_code text,
+  client_project_reference text,
+  project_manager text,
+  site_supervisor text,
+  consultant text,
+  contractor text,
   start_date date,
   end_date date,
+  planned_completion date,
+  actual_completion date,
+  budget numeric,
+  currency text,
   target_quantity integer not null default 0 check (target_quantity >= 0),
-  status text not null default 'Planning' check (status in ('Planning', 'Active', 'On Hold', 'Completed')),
+  status text not null default 'Planning' check (status in ('Planning', 'Active', 'On Hold', 'Completed', 'Not Started', 'In Progress', 'Delayed', 'Cancelled')),
   regions_covered text[] not null default '{}',
   assigned_installers text[] not null default '{}',
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   unique (client_id, project_name)
 );
+
+alter table public.projects
+add column if not exists project_type text not null default 'Retail Deployment'
+check (project_type in ('Retail Deployment', 'Construction', 'Real Estate', 'Facility Management'));
+
+alter table public.projects add column if not exists project_code text;
+alter table public.projects add column if not exists client_project_reference text;
+alter table public.projects add column if not exists project_manager text;
+alter table public.projects add column if not exists site_supervisor text;
+alter table public.projects add column if not exists consultant text;
+alter table public.projects add column if not exists contractor text;
+alter table public.projects add column if not exists planned_completion date;
+alter table public.projects add column if not exists actual_completion date;
+alter table public.projects add column if not exists budget numeric;
+alter table public.projects add column if not exists currency text;
 
 create table if not exists public.project_targets (
   id uuid primary key default gen_random_uuid(),
