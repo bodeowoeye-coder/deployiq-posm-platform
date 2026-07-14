@@ -4,6 +4,7 @@ const moduleNames: BuildModuleName[] = [
   "sites",
   "work-packages",
   "templates",
+  "activity-categories",
   "activities",
   "supplies",
   "progress",

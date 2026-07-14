@@ -1,5 +1,30 @@
 export type BuildWorkPackageTemplateStatus = "draft" | "active" | "archived";
 
+export type BuildActivityCategoryType =
+  | "preparation"
+  | "execution"
+  | "inspection"
+  | "testing"
+  | "commissioning"
+  | "close_out"
+  | "general";
+
+export type BuildActivityCategoryStatus = "active" | "archived";
+
+export type BuildActivityCategory = {
+  id: string;
+  template_id: string;
+  sequence: number;
+  code: string;
+  name: string;
+  description: string | null;
+  category_type: BuildActivityCategoryType;
+  estimated_duration: number | null;
+  status: BuildActivityCategoryStatus;
+  created_at: string;
+  updated_at: string;
+};
+
 export type BuildWorkPackageTemplate = {
   id: string;
   client_id: string | null;
@@ -20,6 +45,7 @@ export type BuildWorkPackageTemplate = {
 export type BuildActivityTemplate = {
   id: string;
   template_id: string;
+  activity_category_id: string | null;
   sequence: number;
   code: string;
   name: string;
@@ -97,12 +123,42 @@ export type BuildEquipmentTemplate = {
 
 export type BuildWorkPackageTemplateBundle = {
   template: BuildWorkPackageTemplate;
+  categories: BuildActivityCategory[];
   activities: BuildActivityTemplate[];
   checklists: BuildChecklistTemplate[];
   inspections: BuildInspectionTemplate[];
   safety: BuildSafetyTemplate[];
   supplies: BuildSupplyTemplate[];
   equipment: BuildEquipmentTemplate[];
+};
+
+export type CreateBuildActivityCategoryInput = {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  templateId: string;
+  sequence?: number;
+  code: string;
+  name: string;
+  description?: string | null;
+  categoryType?: BuildActivityCategoryType;
+  estimatedDuration?: number | null;
+  status?: BuildActivityCategoryStatus;
+};
+
+export type UpdateBuildActivityCategoryInput = {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  templateId: string;
+  id: string;
+  sequence?: number;
+  code?: string;
+  name?: string;
+  description?: string | null;
+  categoryType?: BuildActivityCategoryType;
+  estimatedDuration?: number | null;
+  status?: BuildActivityCategoryStatus;
 };
 
 export type CreateBuildWorkPackageTemplateInput = {

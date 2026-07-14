@@ -3,6 +3,9 @@ import { assertWorkPackageAccess, getWorkPackage } from "@/lib/build/workPackage
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type {
   BuildActivityTemplate,
+  BuildActivityCategory,
+  BuildActivityCategoryStatus,
+  BuildActivityCategoryType,
   BuildChecklistTemplate,
   BuildEquipmentTemplate,
   BuildInspectionTemplate,
@@ -56,6 +59,7 @@ function normalizeActivity(row: Record<string, unknown>): BuildActivityTemplate 
   return {
     id: textValue(row.id),
     template_id: textValue(row.template_id),
+    activity_category_id: textValue(row.activity_category_id) || null,
     sequence: Number(row.sequence || 0),
     code: textValue(row.code),
     name: textValue(row.name),
@@ -68,6 +72,73 @@ function normalizeActivity(row: Record<string, unknown>): BuildActivityTemplate 
     created_at: textValue(row.created_at),
     updated_at: textValue(row.updated_at)
   };
+}
+
+function parseCategoryType(value: unknown): BuildActivityCategoryType {
+  const candidate = textValue(value).toLowerCase().replace(/[\s-]+/g, "_") as BuildActivityCategoryType;
+  if (
+    candidate === "preparation" ||
+    candidate === "execution" ||
+    candidate === "inspection" ||
+    candidate === "testing" ||
+    candidate === "commissioning" ||
+    candidate === "close_out" ||
+    candidate === "general"
+  ) {
+    return candidate;
+  }
+  return "general";
+}
+
+function parseCategoryStatus(value: unknown): BuildActivityCategoryStatus {
+  const candidate = textValue(value).toLowerCase() as BuildActivityCategoryStatus;
+  if (candidate === "active" || candidate === "archived") return candidate;
+  return "active";
+}
+
+function normalizeActivityCategory(row: Record<string, unknown>): BuildActivityCategory {
+  return {
+    id: textValue(row.id),
+    template_id: textValue(row.template_id),
+    sequence: Number(row.sequence || 1),
+    code: textValue(row.code),
+    name: textValue(row.name),
+    description: textValue(row.description) || null,
+    category_type: parseCategoryType(row.category_type),
+    estimated_duration: row.estimated_duration === null ? null : Number(row.estimated_duration || 0),
+    status: parseCategoryStatus(row.status),
+    created_at: textValue(row.created_at),
+    updated_at: textValue(row.updated_at)
+  };
+}
+
+function validateActivityCategoryIntegrity(params: {
+  templateId: string;
+  categories: BuildActivityCategory[];
+  activities: BuildActivityTemplate[];
+}) {
+  const categoryMap = new Map(params.categories.map((item) => [item.id, item]));
+
+  for (const activity of params.activities) {
+    if (!activity.activity_category_id) {
+      throw new AccessControlError("Activity template validation failed: activity_category_id is required.", 400);
+    }
+
+    const category = categoryMap.get(activity.activity_category_id);
+    if (!category) {
+      throw new AccessControlError(
+        "Activity template validation failed: activity category is missing or not visible.",
+        400
+      );
+    }
+
+    if (category.template_id !== params.templateId || activity.template_id !== params.templateId) {
+      throw new AccessControlError(
+        "Activity template validation failed: category and activity must belong to the same template.",
+        400
+      );
+    }
+  }
 }
 
 function normalizeChecklist(row: Record<string, unknown>): BuildChecklistTemplate {
@@ -378,7 +449,13 @@ export async function instantiateTemplate(params: {
   });
 
   const supabase = createAdminSupabase();
-  const [activitiesRes, inspectionsRes, safetyRes, suppliesRes, equipmentRes] = await Promise.all([
+  const [categoriesRes, activitiesRes, inspectionsRes, safetyRes, suppliesRes, equipmentRes] = await Promise.all([
+    supabase
+      .from("build_activity_categories")
+      .select("*")
+      .eq("template_id", template.id)
+      .neq("status", "archived")
+      .order("sequence", { ascending: true }),
     supabase
       .from("build_activity_templates")
       .select("*")
@@ -406,13 +483,20 @@ export async function instantiateTemplate(params: {
       .order("sequence", { ascending: true })
   ]);
 
+  if (categoriesRes.error) throw new AccessControlError(`Could not load activity categories: ${categoriesRes.error.message}`, 500);
   if (activitiesRes.error) throw new AccessControlError(`Could not load activity templates: ${activitiesRes.error.message}`, 500);
   if (inspectionsRes.error) throw new AccessControlError(`Could not load inspection templates: ${inspectionsRes.error.message}`, 500);
   if (safetyRes.error) throw new AccessControlError(`Could not load safety templates: ${safetyRes.error.message}`, 500);
   if (suppliesRes.error) throw new AccessControlError(`Could not load supply templates: ${suppliesRes.error.message}`, 500);
   if (equipmentRes.error) throw new AccessControlError(`Could not load equipment templates: ${equipmentRes.error.message}`, 500);
 
+  const categories = (categoriesRes.data ?? []).map((row) => normalizeActivityCategory(row as Record<string, unknown>));
   const activities = (activitiesRes.data ?? []).map((row) => normalizeActivity(row as Record<string, unknown>));
+  validateActivityCategoryIntegrity({
+    templateId: template.id,
+    categories,
+    activities
+  });
 
   const activityIds = activities.map((activity) => activity.id);
   const checklists = activityIds.length
@@ -429,6 +513,7 @@ export async function instantiateTemplate(params: {
 
   const bundle: BuildWorkPackageTemplateBundle = {
     template,
+    categories,
     activities,
     checklists,
     inspections: (inspectionsRes.data ?? []).map((row) => normalizeInspection(row as Record<string, unknown>)),
@@ -444,6 +529,7 @@ export async function instantiateTemplate(params: {
       workPackageId: params.workPackageId
     },
     instantiatePreview: {
+      categoriesCount: bundle.categories.length,
       activitiesCount: bundle.activities.length,
       checklistsCount: bundle.checklists.length,
       inspectionsCount: bundle.inspections.length,

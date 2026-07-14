@@ -8,6 +8,7 @@ export * from "@/lib/build/workPackages/service";
 export * from "@/lib/build/workPackages/module";
 export * from "@/lib/build/templates/types";
 export * from "@/lib/build/templates/service";
+export * from "@/lib/build/activityCategories/service";
 
 export * from "@/lib/build/activities/service";
 export * from "@/lib/build/supplies/service";

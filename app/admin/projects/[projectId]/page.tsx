@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { ProjectDashboardShell } from "@/components/ProjectDashboardShell";
 import { requireRole } from "@/lib/auth";
+import { getCategories } from "@/lib/build/activityCategories/service";
 import { getBuildSitesForProject } from "@/lib/build/sites/service";
 import { getWorkPackages } from "@/lib/build/workPackages/service";
 import { normalizeProjectRecord } from "@/lib/projects";
@@ -35,6 +36,22 @@ export default async function AdminProjectDashboardPage({
       })
     : [];
 
+  const templateCategoryMap: Record<string, string[]> = {};
+  if (selectedSite && workPackages.length > 0) {
+    await Promise.all(
+      workPackages.map(async (workPackage) => {
+        if (!workPackage.template_id) return;
+        const categories = await getCategories({
+          projectId: normalized.id,
+          siteId: selectedSite.id,
+          workPackageId: workPackage.id,
+          templateId: workPackage.template_id
+        });
+        templateCategoryMap[workPackage.id] = categories.map((category) => category.name);
+      })
+    );
+  }
+
   const [clientRow, businessUnitRow, portfolioRow] = await Promise.all([
     supabase.from("clients").select("name").eq("id", normalized.client_id).maybeSingle(),
     normalized.business_unit_id
@@ -68,6 +85,7 @@ export default async function AdminProjectDashboardPage({
       currentSiteName={selectedSite?.name ?? null}
       selectedSiteId={selectedSite?.id ?? null}
       workPackages={workPackages}
+      templateCategoryMap={templateCategoryMap}
     />
   );
 }

@@ -49,6 +49,7 @@ Template code uniqueness:
 ## Instantiation Preview
 `instantiateTemplate()` currently returns a preview bundle only:
 - template
+- categories
 - activities
 - checklists
 - inspection templates
@@ -60,6 +61,7 @@ No live Activities, Checklists, Inspections, Supplies, or Equipment records are 
 
 ## Future Instantiation Flow (Sprint 2C+)
 Template
+-> Create Categories
 -> Create Activities
 -> Create Checklists
 -> Create Inspections
@@ -74,6 +76,8 @@ All generated records should carry:
 - site_id
 - work_package_id
 - source_template_id (or equivalent lineage fields)
+
+Activity-template lineage should also preserve category relationship fields for reporting and progress grouping.
 
 ## API Summary
 `GET /api/build/templates`

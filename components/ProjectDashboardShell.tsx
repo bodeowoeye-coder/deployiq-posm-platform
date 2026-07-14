@@ -42,7 +42,8 @@ export function ProjectDashboardShell({
   portfolioName,
   currentSiteName,
   selectedSiteId,
-  workPackages
+  workPackages,
+  templateCategoryMap
 }: {
   project: Project;
   audience: "admin" | "client";
@@ -55,6 +56,7 @@ export function ProjectDashboardShell({
   currentSiteName?: string | null;
   selectedSiteId?: string | null;
   workPackages?: BuildWorkPackage[];
+  templateCategoryMap?: Record<string, string[]>;
 }) {
   const selectedTab = normalizedTab(activeTab);
   const buildProject = isBuildProject(project);
@@ -64,6 +66,7 @@ export function ProjectDashboardShell({
     .filter(Boolean);
   const selectedSite = selectedSiteId ? availableSites.find((site) => site.id === selectedSiteId) ?? null : null;
   const availableWorkPackages = workPackages ?? [];
+  const categoryMap = templateCategoryMap ?? {};
 
   return (
     <main className="min-h-screen bg-[var(--page-bg)] px-4 py-6 text-[var(--text-primary)] sm:px-6">
@@ -141,6 +144,14 @@ export function ProjectDashboardShell({
                   {availableWorkPackages.slice(0, 8).map((workPackage) => (
                     <li key={workPackage.id}>
                       {workPackage.code} - {workPackage.name} - Template: {workPackage.template_name || "No Template Assigned"}
+                      {workPackage.template_id ? (
+                        <div className="mt-1 text-xs text-slate-500">
+                          Categories: {(categoryMap[workPackage.id] && categoryMap[workPackage.id].length > 0
+                            ? categoryMap[workPackage.id]
+                            : ["Preparation", "Execution", "Inspection", "Close-Out"]
+                          ).join(" / ")}
+                        </div>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
