@@ -55,6 +55,60 @@ export function drawReportHeader(
   doc.setTextColor(15, 23, 42);
 }
 
+export function drawInstallationTableHeader(
+  doc: jsPDF,
+  pageWidth: number,
+  title: string,
+  metadata: Array<[string, string]>,
+  options: { margin?: number; top?: number; dividerGap?: number; contentGap?: number } = {}
+) {
+  const margin = options.margin ?? 14;
+  const top = options.top ?? 12;
+  const dividerGap = options.dividerGap ?? 12;
+  const contentGap = options.contentGap ?? 14;
+  const metadataWidth = pageWidth - margin * 2;
+
+  drawDeployIqLogo(doc, margin, top);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(15, 23, 42);
+  doc.text("DeployIQ", margin + 38, top + 5);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text(reportSubtitle, margin + 38, top + 10.5);
+  doc.setDrawColor(226, 232, 240);
+  doc.line(margin, top + 18, pageWidth - margin, top + 18);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.setTextColor(15, 23, 42);
+  doc.text(title, margin, top + 29);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+
+  let y = top + 37;
+  metadata.forEach(([label, value], index) => {
+    const lines = doc.splitTextToSize(`${label}: ${value}`, metadataWidth) as string[];
+    doc.text(lines, margin, y);
+    y += lines.length * 4.6;
+    if (index < metadata.length - 1) y += 1.4;
+  });
+
+  const dividerY = y + dividerGap;
+  doc.setDrawColor(226, 232, 240);
+  doc.line(margin, dividerY, pageWidth - margin, dividerY);
+  doc.setTextColor(15, 23, 42);
+
+  return {
+    dividerY,
+    contentTopY: dividerY + contentGap,
+    metadataBottomY: y
+  };
+}
+
 export function drawReportFooter(doc: jsPDF, pageWidth: number, pageHeight: number, margin = 14) {
   const pages = doc.getNumberOfPages();
   for (let page = 1; page <= pages; page += 1) {

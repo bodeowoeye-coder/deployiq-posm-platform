@@ -6,7 +6,7 @@ import { accessControlErrorResponse, requireAdmin } from "@/lib/accessControl";
 import { getBrandCounts, getInstallerCounts, getRegionCounts } from "@/lib/reporting";
 import type { Installer, ManagedUser, Submission } from "@/lib/types";
 import { campaignMatches, displayProjectName, normalizeProjectRecords, resolveSubmissionCampaignName } from "@/lib/projects";
-import { createReportId, drawReportFooter, drawReportHeader } from "@/lib/reportBranding";
+import { createReportId, drawInstallationTableHeader, drawReportFooter, drawReportHeader } from "@/lib/reportBranding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -386,16 +386,19 @@ export async function GET(request: Request) {
   drawBars(doc, "Installer performance", installerCounts.map((item) => [item.installer, item.count]), margin, 158, 176);
 
   doc.addPage();
-  drawReportHeader(doc, pageWidth, "Installation Table", [
+  const installationTableMetadata: Array<[string, string]> = [
     ["Client Name", displayFilterValue(selectedClientName, "All clients")],
     ["Project Name", displayFilterValue(reportProjectName, "All projects")],
     ["Generated Date/Time", generatedAt],
     ["Report ID", reportId]
-  ]);
+  ];
+
+  const renderInstallationTableHeader = () =>
+    drawInstallationTableHeader(doc, pageWidth, "Installation Table", installationTableMetadata);
 
   const previewCache = new Map<string, ImagePreview | null>();
   let previewByUrl = new Map<string, ImagePreview | null>();
-  let y = 64;
+  let y = renderInstallationTableHeader().contentTopY;
   for (const [index, item] of submissions.entries()) {
     if (index % PREVIEW_BATCH_SIZE === 0) {
       const batchUrls = submissions
@@ -426,13 +429,7 @@ export async function GET(request: Request) {
 
     if (y + cardHeight > contentBottom) {
       doc.addPage();
-      drawReportHeader(doc, pageWidth, "Installation Table", [
-        ["Client Name", displayFilterValue(selectedClientName, "All clients")],
-        ["Project Name", displayFilterValue(reportProjectName, "All projects")],
-        ["Generated Date/Time", generatedAt],
-        ["Report ID", reportId]
-      ]);
-      y = 64;
+      y = renderInstallationTableHeader().contentTopY;
     }
 
     doc.setDrawColor(226, 232, 240);
