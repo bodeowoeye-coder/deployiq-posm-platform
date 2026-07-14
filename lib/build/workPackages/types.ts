@@ -33,6 +33,8 @@ export type BuildWorkPackage = {
   actual_start: string | null;
   actual_finish: string | null;
   status: BuildWorkPackageStatus;
+  template_id: string | null;
+  template_name: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -52,6 +54,7 @@ export type CreateBuildWorkPackageInput = {
   plannedFinish?: string | null;
   actualStart?: string | null;
   actualFinish?: string | null;
+  templateId?: string | null;
   status?: BuildWorkPackageStatus;
 };
 

@@ -61,9 +61,47 @@ function normalizeWorkPackage(row: BuildWorkPackageRow): BuildWorkPackage {
     actual_start: row.actual_start ?? null,
     actual_finish: row.actual_finish ?? null,
     status: (row.status || "planned") as BuildWorkPackageStatus,
+    template_id: (row as Record<string, unknown>).template_id ? textValue((row as Record<string, unknown>).template_id) : null,
+    template_name: (row as Record<string, unknown>).template_name
+      ? textValue((row as Record<string, unknown>).template_name)
+      : null,
     created_by: row.created_by ?? null,
     archived_at: row.archived_at ?? null
   };
+}
+
+async function attachTemplateNames(rows: BuildWorkPackageRow[]) {
+  const supabase = createAdminSupabase();
+  const templateIds = Array.from(
+    new Set(rows.map((row) => textValue((row as Record<string, unknown>).template_id)).filter(Boolean))
+  );
+
+  if (templateIds.length === 0) {
+    return rows.map((row) => normalizeWorkPackage(row));
+  }
+
+  const { data, error } = await supabase
+    .from("build_work_package_templates")
+    .select("id, name")
+    .in("id", templateIds);
+
+  if (error) throw new AccessControlError(`Could not load assigned templates: ${error.message}`, 500);
+
+  const templateNameById = new Map<string, string>();
+  for (const item of data ?? []) {
+    const id = textValue(item.id);
+    if (!id) continue;
+    templateNameById.set(id, textValue(item.name));
+  }
+
+  return rows.map((row) => {
+    const normalized = normalizeWorkPackage(row);
+    if (!normalized.template_id) return normalized;
+    return {
+      ...normalized,
+      template_name: templateNameById.get(normalized.template_id) ?? null
+    };
+  });
 }
 
 async function getBuildProject(projectId: string) {
@@ -218,7 +256,7 @@ export async function getWorkPackages(params: {
 
   const { data, error } = await query;
   if (error) throw new AccessControlError(`Could not load Work Packages: ${error.message}`, 500);
-  return (data ?? []).map((row) => normalizeWorkPackage(row as BuildWorkPackageRow));
+  return await attachTemplateNames((data ?? []) as BuildWorkPackageRow[]);
 }
 
 export async function getWorkPackage(params: {
@@ -239,7 +277,8 @@ export async function getWorkPackage(params: {
 
   if (!access.workPackage) return null;
   if (!includeArchived && access.workPackage.archived_at) return null;
-  return normalizeWorkPackage(access.workPackage);
+  const [enriched] = await attachTemplateNames([access.workPackage]);
+  return enriched ?? normalizeWorkPackage(access.workPackage);
 }
 
 export async function createWorkPackage(params: {
@@ -287,7 +326,8 @@ export async function createWorkPackage(params: {
     throw new AccessControlError(`Could not create Work Package: ${error.message}`, 500);
   }
 
-  return normalizeWorkPackage(data as BuildWorkPackageRow);
+  const [enriched] = await attachTemplateNames([data as BuildWorkPackageRow]);
+  return enriched ?? normalizeWorkPackage(data as BuildWorkPackageRow);
 }
 
 export async function updateWorkPackage(params: {
@@ -317,6 +357,7 @@ export async function updateWorkPackage(params: {
   if ("plannedFinish" in input) updates.planned_finish = textValue(input.plannedFinish || "") || null;
   if ("actualStart" in input) updates.actual_start = textValue(input.actualStart || "") || null;
   if ("actualFinish" in input) updates.actual_finish = textValue(input.actualFinish || "") || null;
+  if ("templateId" in input) updates.template_id = textValue((input as Record<string, unknown>).templateId) || null;
   if (input.status) updates.status = input.status;
 
   const supabase = createAdminSupabase();
@@ -337,7 +378,8 @@ export async function updateWorkPackage(params: {
     throw new AccessControlError(`Could not update Work Package: ${error.message}`, 500);
   }
 
-  return normalizeWorkPackage(data as BuildWorkPackageRow);
+  const [enriched] = await attachTemplateNames([data as BuildWorkPackageRow]);
+  return enriched ?? normalizeWorkPackage(data as BuildWorkPackageRow);
 }
 
 export async function archiveWorkPackage(params: {
@@ -372,5 +414,6 @@ export async function archiveWorkPackage(params: {
     .single();
 
   if (error) throw new AccessControlError(`Could not archive Work Package: ${error.message}`, 500);
-  return normalizeWorkPackage(data as BuildWorkPackageRow);
+  const [enriched] = await attachTemplateNames([data as BuildWorkPackageRow]);
+  return enriched ?? normalizeWorkPackage(data as BuildWorkPackageRow);
 }

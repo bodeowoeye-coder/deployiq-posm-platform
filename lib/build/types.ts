@@ -1,6 +1,7 @@
 export type BuildModuleName =
   | "sites"
   | "work-packages"
+  | "templates"
   | "activities"
   | "supplies"
   | "progress"

@@ -140,7 +140,7 @@ export function ProjectDashboardShell({
                 <ul className="mt-2 space-y-1 text-sm text-[var(--text-muted)]">
                   {availableWorkPackages.slice(0, 8).map((workPackage) => (
                     <li key={workPackage.id}>
-                      {workPackage.code} - {workPackage.name}
+                      {workPackage.code} - {workPackage.name} - Template: {workPackage.template_name || "No Template Assigned"}
                     </li>
                   ))}
                 </ul>
