@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Project } from "@/lib/types";
 import type { BuildSite } from "@/lib/build/sites/types";
+import type { BuildWorkPackage } from "@/lib/build/workPackages/types";
 
 const dashboardTabs = [
   "Overview",
@@ -39,7 +40,9 @@ export function ProjectDashboardShell({
   clientName,
   businessUnitName,
   portfolioName,
-  currentSiteName
+  currentSiteName,
+  selectedSiteId,
+  workPackages
 }: {
   project: Project;
   audience: "admin" | "client";
@@ -50,6 +53,8 @@ export function ProjectDashboardShell({
   businessUnitName?: string | null;
   portfolioName?: string | null;
   currentSiteName?: string | null;
+  selectedSiteId?: string | null;
+  workPackages?: BuildWorkPackage[];
 }) {
   const selectedTab = normalizedTab(activeTab);
   const buildProject = isBuildProject(project);
@@ -57,6 +62,8 @@ export function ProjectDashboardShell({
   const breadcrumb = [clientName, businessUnitName, portfolioName, project.project_name, currentSiteName]
     .map((item) => (item ?? "").trim())
     .filter(Boolean);
+  const selectedSite = selectedSiteId ? availableSites.find((site) => site.id === selectedSiteId) ?? null : null;
+  const availableWorkPackages = workPackages ?? [];
 
   return (
     <main className="min-h-screen bg-[var(--page-bg)] px-4 py-6 text-[var(--text-primary)] sm:px-6">
@@ -119,6 +126,25 @@ export function ProjectDashboardShell({
                 </ul>
               )}
               <p className="mt-3 text-xs text-slate-500">Site context is prepared for future Build modules in Sprint 2.</p>
+            </div>
+          ) : null}
+
+          {buildProject && selectedTab === "Overview" ? (
+            <div className="mt-4 rounded-lg border border-[var(--border-soft)] bg-white p-4">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Work Packages</h3>
+              {!selectedSite ? (
+                <p className="mt-2 text-sm text-[var(--text-muted)]">Select a Site to view Work Packages.</p>
+              ) : availableWorkPackages.length === 0 ? (
+                <p className="mt-2 text-sm text-[var(--text-muted)]">No Work Packages yet.</p>
+              ) : (
+                <ul className="mt-2 space-y-1 text-sm text-[var(--text-muted)]">
+                  {availableWorkPackages.slice(0, 8).map((workPackage) => (
+                    <li key={workPackage.id}>
+                      {workPackage.code} - {workPackage.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           ) : null}
         </section>

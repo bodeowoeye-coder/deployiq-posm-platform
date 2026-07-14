@@ -32,6 +32,14 @@ export type BuildSiteCore = {
   archived_at: string | null;
 };
 
+export type BuildWorkPackageCore = {
+  id: string;
+  client_id: string;
+  project_id: string;
+  site_id: string;
+  archived_at: string | null;
+};
+
 function textValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -87,6 +95,18 @@ export async function getBuildSiteCore(siteId: string) {
   if (error) throw new AccessControlError(`Could not resolve site: ${error.message}`, 500);
   if (!data) throw new AccessControlError("Site not found.", 404);
   return data as BuildSiteCore;
+}
+
+export async function getBuildWorkPackageCore(workPackageId: string) {
+  const supabase = createAdminSupabase();
+  const { data, error } = await supabase
+    .from("build_work_packages")
+    .select("id, client_id, project_id, site_id, archived_at")
+    .eq("id", workPackageId)
+    .maybeSingle();
+  if (error) throw new AccessControlError(`Could not resolve work package: ${error.message}`, 500);
+  if (!data) throw new AccessControlError("Work Package not found.", 404);
+  return data as BuildWorkPackageCore;
 }
 
 export async function validateClientBusinessUnitRelation(params: {
@@ -180,4 +200,25 @@ export async function validateProjectSiteOwnership(params: {
     throw new AccessControlError("Project and client mismatch.", 400);
   }
   return { project, site };
+}
+
+export async function validateWorkPackageOwnership(params: {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  clientId?: string | null;
+}) {
+  const { project, site } = await validateProjectSiteOwnership({
+    projectId: params.projectId,
+    siteId: params.siteId,
+    clientId: params.clientId
+  });
+  const workPackage = await getBuildWorkPackageCore(params.workPackageId);
+  if (workPackage.project_id !== project.id || workPackage.site_id !== site.id) {
+    throw new AccessControlError("Work Package does not belong to the specified project/site.", 400);
+  }
+  if (workPackage.client_id !== project.client_id) {
+    throw new AccessControlError("Work Package and project tenant ownership mismatch.", 400);
+  }
+  return { project, site, workPackage };
 }

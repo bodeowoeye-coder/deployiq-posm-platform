@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { ProjectDashboardShell } from "@/components/ProjectDashboardShell";
 import { requireRole } from "@/lib/auth";
 import { getBuildSitesForProject } from "@/lib/build/sites/service";
+import { getWorkPackages } from "@/lib/build/workPackages/service";
 import { normalizeProjectRecord } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Project } from "@/lib/types";
@@ -35,6 +36,12 @@ export default async function ClientProjectDashboardPage({
       ? []
       : await getBuildSitesForProject({ projectId: normalized.id });
   const selectedSite = searchParams?.siteId ? sites.find((site) => site.id === searchParams.siteId) ?? null : null;
+  const workPackages = selectedSite
+    ? await getWorkPackages({
+        projectId: normalized.id,
+        siteId: selectedSite.id
+      })
+    : [];
 
   const [clientRow, businessUnitRow, portfolioRow] = await Promise.all([
     supabase.from("clients").select("name").eq("id", normalized.client_id).maybeSingle(),
@@ -67,6 +74,8 @@ export default async function ClientProjectDashboardPage({
       businessUnitName={businessUnitRow.data?.name ?? null}
       portfolioName={portfolioRow.data?.name ?? null}
       currentSiteName={selectedSite?.name ?? null}
+      selectedSiteId={selectedSite?.id ?? null}
+      workPackages={workPackages}
     />
   );
 }
