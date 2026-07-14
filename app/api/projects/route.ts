@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { accessControlErrorResponse, getAuthenticatedUserContext, requireAdmin } from "@/lib/accessControl";
+import { validateProjectHierarchyInput } from "@/lib/core/enterpriseHierarchy";
 import { normalizeProjectRecord, normalizeProjectRecords } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 
@@ -59,6 +60,8 @@ export async function POST(request: Request) {
     const campaignName = stringValue(body.campaignName) || null;
     const projectType = stringValue(body.projectType) || "Retail Deployment";
     const projectCode = stringValue(body.projectCode) || null;
+    const businessUnitId = stringValue(body.businessUnitId) || null;
+    const portfolioId = stringValue(body.portfolioId) || null;
     const clientProjectReference = stringValue(body.clientProjectReference) || null;
     const projectManager = stringValue(body.projectManager) || null;
     const siteSupervisor = stringValue(body.siteSupervisor) || null;
@@ -84,12 +87,20 @@ export async function POST(request: Request) {
     }
 
     const supabase = createAdminSupabase();
+    await validateProjectHierarchyInput({
+      clientId,
+      businessUnitId,
+      portfolioId
+    });
+
     const { data: selectedBrand } = brandId
       ? await supabase.from("brands").select("brand_name").eq("id", brandId).maybeSingle()
       : { data: null };
     const projectInsertPayload = {
       name: projectName,
       client_id: clientId,
+      business_unit_id: businessUnitId,
+      portfolio_id: portfolioId,
       brand_id: brandId,
       brand: selectedBrand?.brand_name ?? null,
       campaign: campaignName,
@@ -184,6 +195,8 @@ export async function PATCH(request: Request) {
     const updates = {
       name: projectName,
       campaign: stringValue(body.campaignName) || null,
+      business_unit_id: stringValue(body.businessUnitId) || null,
+      portfolio_id: stringValue(body.portfolioId) || null,
       project_type: stringValue(body.projectType) || "Retail Deployment",
       project_code: stringValue(body.projectCode) || null,
       client_project_reference: stringValue(body.clientProjectReference) || null,
@@ -208,6 +221,25 @@ export async function PATCH(request: Request) {
     }
 
     const supabase = createAdminSupabase();
+    const { data: existingProject, error: existingProjectError } = await supabase
+      .from("projects")
+      .select("id, client_id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (existingProjectError) {
+      return NextResponse.json({ error: existingProjectError.message }, { status: 500 });
+    }
+    if (!existingProject) {
+      return NextResponse.json({ error: "Project not found." }, { status: 404 });
+    }
+
+    await validateProjectHierarchyInput({
+      clientId: existingProject.client_id,
+      businessUnitId: updates.business_unit_id,
+      portfolioId: updates.portfolio_id
+    });
+
     const { data: project, error } = await supabase.from("projects").update(updates).eq("id", id).select().single();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ project: normalizeProjectRecord(project) });

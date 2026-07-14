@@ -35,17 +35,28 @@ export function ProjectDashboardShell({
   audience,
   activeTab,
   basePath,
-  sites
+  sites,
+  clientName,
+  businessUnitName,
+  portfolioName,
+  currentSiteName
 }: {
   project: Project;
   audience: "admin" | "client";
   activeTab?: string;
   basePath: string;
   sites?: BuildSite[];
+  clientName?: string | null;
+  businessUnitName?: string | null;
+  portfolioName?: string | null;
+  currentSiteName?: string | null;
 }) {
   const selectedTab = normalizedTab(activeTab);
   const buildProject = isBuildProject(project);
   const availableSites = sites ?? [];
+  const breadcrumb = [clientName, businessUnitName, portfolioName, project.project_name, currentSiteName]
+    .map((item) => (item ?? "").trim())
+    .filter(Boolean);
 
   return (
     <main className="min-h-screen bg-[var(--page-bg)] px-4 py-6 text-[var(--text-primary)] sm:px-6">
@@ -59,6 +70,9 @@ export function ProjectDashboardShell({
             <span>Code: {project.project_code || "Not set"}</span>
             <span>Client Ref: {project.client_project_reference || "Not set"}</span>
           </div>
+          {buildProject && breadcrumb.length > 0 ? (
+            <p className="mt-3 text-xs text-slate-500">{breadcrumb.join(" / ")}</p>
+          ) : null}
         </section>
 
         <section className="rounded-xl border border-[var(--border-soft)] bg-[var(--card-bg)] p-3 shadow-sm">

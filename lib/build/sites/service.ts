@@ -1,5 +1,6 @@
 import { AccessControlError, getAuthenticatedUserContext } from "@/lib/accessControl";
 import { getProjectAccessRegistry } from "@/lib/core/auth";
+import { isRetailProjectType, validateProjectSiteOwnership } from "@/lib/core/enterpriseHierarchy";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { BuildSite, BuildSiteStatus, CreateBuildSiteInput, UpdateBuildSiteInput } from "@/lib/build/sites/types";
 
@@ -33,11 +34,6 @@ function slugFromProject(project: BuildProjectRow) {
     .replace(/[^A-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return compact.slice(0, 8) || "SITE";
-}
-
-function isRetailProjectType(projectType: string | null | undefined) {
-  const normalized = textValue(projectType).toLowerCase().replace(/[\s-]+/g, "_");
-  return normalized === "retail_deployment" || normalized === "retail" || normalized === "retail_posm";
 }
 
 function assertModulePermission(canWrite: boolean, permissions: string[]) {
@@ -151,10 +147,12 @@ export async function assertBuildSiteAccess(params: {
   let site: BuildSiteRow | null = null;
   const siteId = textValue(params.siteId);
   if (siteId) {
+    await validateProjectSiteOwnership({
+      projectId: project.id,
+      siteId,
+      clientId: project.client_id
+    });
     site = await getSiteByIdOrThrow(siteId);
-    if (site.project_id !== project.id || site.client_id !== project.client_id) {
-      throw new AccessControlError("Site does not belong to the specified project/client.", 400);
-    }
   }
 
   return {

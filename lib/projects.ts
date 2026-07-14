@@ -61,6 +61,8 @@ export function normalizeProjectRecord<T extends ProjectRowLike>(project: T) {
   const campaignName = textValue(project.campaign_name) || textValue(project.campaign);
   const projectType = textValue(project.project_type) || textValue(project.projectType) || "Retail Deployment";
   const projectCode = textValue(project.project_code) || textValue(project.projectCode);
+  const businessUnitId = textValue(project.business_unit_id) || textValue(project.businessUnitId);
+  const portfolioId = textValue(project.portfolio_id) || textValue(project.portfolioId);
   const clientProjectReference = textValue(project.client_project_reference) || textValue(project.clientProjectReference);
   const projectManager = textValue(project.project_manager) || textValue(project.projectManager);
   const siteSupervisor = textValue(project.site_supervisor) || textValue(project.siteSupervisor);
@@ -77,6 +79,8 @@ export function normalizeProjectRecord<T extends ProjectRowLike>(project: T) {
     campaign_name: campaignName || null,
     project_type: projectType,
     project_code: projectCode || null,
+    business_unit_id: businessUnitId || null,
+    portfolio_id: portfolioId || null,
     client_project_reference: clientProjectReference || null,
     project_manager: projectManager || null,
     site_supervisor: siteSupervisor || null,

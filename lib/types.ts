@@ -14,6 +14,9 @@ export type ProjectStatus =
   | "Delayed"
   | "Cancelled";
 export type DeploymentStageCode = "production" | "warehouse" | "in_transit" | "installed" | "approved";
+export type BusinessUnitStatus = "active" | "inactive" | "archived";
+export type PortfolioStatus = "active" | "inactive" | "archived";
+export type PortfolioType = string;
 
 export type Submission = {
   id: string;
@@ -115,6 +118,8 @@ export type Brand = {
 export type Project = {
   id: string;
   client_id: string;
+  business_unit_id?: string | null;
+  portfolio_id?: string | null;
   brand_id: string | null;
   project_name: string;
   campaign_name: string | null;
@@ -139,6 +144,78 @@ export type Project = {
   created_at: string;
   client?: Client | null;
   brand?: Brand | null;
+};
+
+export type BusinessUnit = {
+  id: string;
+  client_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  status: BusinessUnitStatus;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+};
+
+export type CreateBusinessUnitInput = {
+  clientId: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  status?: BusinessUnitStatus;
+};
+
+export type UpdateBusinessUnitInput = {
+  id: string;
+  clientId: string;
+  code?: string;
+  name?: string;
+  description?: string | null;
+  status?: BusinessUnitStatus;
+};
+
+export type ProjectPortfolio = {
+  id: string;
+  client_id: string;
+  business_unit_id: string | null;
+  code: string;
+  name: string;
+  description: string | null;
+  portfolio_type: PortfolioType | null;
+  status: PortfolioStatus;
+  planned_start_date: string | null;
+  planned_end_date: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+};
+
+export type CreateProjectPortfolioInput = {
+  clientId: string;
+  businessUnitId?: string | null;
+  code: string;
+  name: string;
+  description?: string | null;
+  portfolioType?: PortfolioType | null;
+  status?: PortfolioStatus;
+  plannedStartDate?: string | null;
+  plannedEndDate?: string | null;
+};
+
+export type UpdateProjectPortfolioInput = {
+  id: string;
+  clientId: string;
+  businessUnitId?: string | null;
+  code?: string;
+  name?: string;
+  description?: string | null;
+  portfolioType?: PortfolioType | null;
+  status?: PortfolioStatus;
+  plannedStartDate?: string | null;
+  plannedEndDate?: string | null;
 };
 
 export type ProjectTarget = {
