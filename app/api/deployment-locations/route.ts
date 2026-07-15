@@ -77,35 +77,30 @@ export async function GET(request: Request) {
     let installerAssignedStates: string[] = [];
 
     if (context.role === "installer") {
-      const [{ data: installerRow, error: installerError }, { data: profileRow, error: profileError }] = await Promise.all([
-        supabase
+      const { data: installerRow, error: installerError } = await supabase
         .from("installers")
-        .select("assigned_states")
+        .select("id, assigned_states")
         .eq("user_id", context.user_id)
-        .maybeSingle(),
-        supabase
-          .schema("public")
-          .from("user_profiles")
-          .select("assigned_states")
-          .eq("user_id", context.user_id)
-          .maybeSingle()
-      ]);
+        .maybeSingle();
 
       if (installerError) {
         return NextResponse.json({ error: installerError.message }, { status: 500 });
       }
-      if (profileError) {
-        return NextResponse.json({ error: profileError.message }, { status: 500 });
-      }
 
-      const assignedStates = canonicalizeStates([
-        ...parseStateAssignments(installerRow?.assigned_states),
-        ...parseStateAssignments(profileRow?.assigned_states)
-      ]);
+      // Installer assignment is the source-of-truth for outlet directory scope.
+      // If an installer record has no explicit assigned states, preserve legacy pilot behavior (no state restriction).
+      const assignedStates = canonicalizeStates(parseStateAssignments(installerRow?.assigned_states));
       installerAssignedStates = assignedStates;
 
       if (assignedStates.length > 0) {
         if (requestedState && !assignedStates.includes(requestedState)) {
+          console.warn("[deployment-locations] installer state access denied", {
+            userId: context.user_id,
+            installerId: typeof installerRow?.id === "string" ? installerRow.id : null,
+            requestedState,
+            assignedStates,
+            reason: "requested_state_not_in_installer_assigned_states"
+          });
           return NextResponse.json({ error: "You do not have access to this state directory scope." }, { status: 403 });
         }
       }
