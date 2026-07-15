@@ -61,13 +61,59 @@ function drawBars(doc: jsPDF, title: string, rows: Array<[string, number]>, x: n
 
 type ImagePreview = { dataUrl: string; format: "JPEG" | "PNG" };
 
-async function imageToDataUrl(url: string, timeoutMs = 1400): Promise<ImagePreview | null> {
+type ImagePreviewFailureReason =
+  | "invalid_url"
+  | "http_error"
+  | "timeout"
+  | "network_error"
+  | "unsupported_content_type"
+  | "decode_error";
+
+type ImagePreviewResult = {
+  preview: ImagePreview | null;
+  reason: ImagePreviewFailureReason | "ok";
+  statusCode?: number;
+};
+
+function sanitizeImageUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return "invalid-url";
+  }
+}
+
+async function imageToDataUrl(url: string, timeoutMs = 1400): Promise<ImagePreviewResult> {
+  if (!url) return { preview: null, reason: "invalid_url" };
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return { preview: null, reason: "invalid_url" };
+  }
+
   let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
     const controller = new AbortController();
     timeout = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return null;
+    const response = await fetch(parsedUrl, { signal: controller.signal });
+    if (!response.ok) {
+      return {
+        preview: null,
+        reason: "http_error",
+        statusCode: response.status
+      };
+    }
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    if (contentType && !contentType.includes("image/") && !contentType.includes("application/octet-stream")) {
+      return {
+        preview: null,
+        reason: "unsupported_content_type"
+      };
+    }
 
     const arrayBuffer = await response.arrayBuffer();
     const input = Buffer.from(arrayBuffer);
@@ -78,12 +124,30 @@ async function imageToDataUrl(url: string, timeoutMs = 1400): Promise<ImagePrevi
       .toBuffer();
 
     const base64 = output.toString("base64");
-    return { dataUrl: `data:image/jpeg;base64,${base64}`, format: "JPEG" };
-  } catch {
-    return null;
+    return {
+      preview: { dataUrl: `data:image/jpeg;base64,${base64}`, format: "JPEG" },
+      reason: "ok"
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { preview: null, reason: "timeout" };
+    }
+
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    if (message.includes("sharp") || message.includes("unsupported") || message.includes("decode")) {
+      return { preview: null, reason: "decode_error" };
+    }
+
+    return { preview: null, reason: "network_error" };
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+function shouldRetryPreview(result: ImagePreviewResult) {
+  if (result.reason === "timeout" || result.reason === "network_error") return true;
+  if (result.reason === "http_error" && typeof result.statusCode === "number" && result.statusCode >= 500) return true;
+  return false;
 }
 
 async function buildImagePreviewMap(urls: string[], cache: Map<string, ImagePreview | null>) {
@@ -110,9 +174,22 @@ async function buildImagePreviewMap(urls: string[], cache: Map<string, ImagePrev
       const index = nextIndex;
       nextIndex += 1;
       const url = pendingUrls[index];
-      const preview = await imageToDataUrl(url);
-      cache.set(url, preview);
-      previews.set(url, preview);
+      let result = await imageToDataUrl(url);
+
+      if (shouldRetryPreview(result)) {
+        result = await imageToDataUrl(url, 1400);
+      }
+
+      if (!result.preview) {
+        console.warn("[exports-pdf] image preview unavailable", {
+          reason: result.reason,
+          statusCode: result.statusCode ?? null,
+          imageUrl: sanitizeImageUrl(url)
+        });
+      }
+
+      cache.set(url, result.preview);
+      previews.set(url, result.preview);
     }
   });
 
@@ -458,6 +535,11 @@ export async function GET(request: Request) {
     } else {
       doc.setFontSize(7);
       doc.text("Preview unavailable", margin + 3, y + 16);
+      console.warn("[exports-pdf] submission preview unavailable", {
+        submissionId: item.id,
+        imageUrl: sanitizeImageUrl(item.image_url),
+        reason: "preview_missing_after_fetch"
+      });
     }
 
     let textY = y + installationCardTopPadding;

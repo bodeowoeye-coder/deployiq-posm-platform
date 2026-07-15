@@ -11,6 +11,53 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const CANONICAL_STATE_BY_NORMALIZED = new Map(
+  (NIGERIA_STATES as readonly string[]).map((state) => [normalizeStateToken(state), state])
+);
+
+function normalizeStateToken(value: unknown) {
+  return typeof value === "string"
+    ? value
+        .trim()
+        .replace(/\s+/g, " ")
+        .replace(/\s+state$/i, "")
+        .toLowerCase()
+    : "";
+}
+
+function parseStateAssignments(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+
+  if (typeof value !== "string") return [];
+
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    }
+  } catch {
+    // Legacy non-JSON text values are handled below.
+  }
+
+  if (trimmed.includes(",")) {
+    return trimmed.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+
+  return [trimmed];
+}
+
+function canonicalizeStates(values: string[]) {
+  const canonical = values
+    .map((value) => CANONICAL_STATE_BY_NORMALIZED.get(normalizeStateToken(value)) ?? "")
+    .filter(Boolean);
+  return Array.from(new Set(canonical));
+}
+
 export async function GET(request: Request) {
   try {
     const context = await getAuthenticatedUserContext(request);
@@ -19,6 +66,7 @@ export async function GET(request: Request) {
     }
 
     const state = new URL(request.url).searchParams.get("state")?.trim() ?? "";
+    const requestedState = CANONICAL_STATE_BY_NORMALIZED.get(normalizeStateToken(state)) ?? "";
     const supabase = createAdminSupabase();
     let query = supabase
       .from("deployment_locations")
@@ -26,31 +74,45 @@ export async function GET(request: Request) {
       .order("state", { ascending: true })
       .order("outlet_name", { ascending: true });
 
+    let installerAssignedStates: string[] = [];
+
     if (context.role === "installer") {
-      const { data: installerRow, error: installerError } = await supabase
+      const [{ data: installerRow, error: installerError }, { data: profileRow, error: profileError }] = await Promise.all([
+        supabase
         .from("installers")
         .select("assigned_states")
         .eq("user_id", context.user_id)
-        .maybeSingle();
+        .maybeSingle(),
+        supabase
+          .schema("public")
+          .from("user_profiles")
+          .select("assigned_states")
+          .eq("user_id", context.user_id)
+          .maybeSingle()
+      ]);
 
       if (installerError) {
         return NextResponse.json({ error: installerError.message }, { status: 500 });
       }
+      if (profileError) {
+        return NextResponse.json({ error: profileError.message }, { status: 500 });
+      }
 
-      const assignedStates = Array.isArray(installerRow?.assigned_states)
-        ? installerRow.assigned_states.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        : [];
+      const assignedStates = canonicalizeStates([
+        ...parseStateAssignments(installerRow?.assigned_states),
+        ...parseStateAssignments(profileRow?.assigned_states)
+      ]);
+      installerAssignedStates = assignedStates;
 
       if (assignedStates.length > 0) {
-        if (state && !assignedStates.includes(state)) {
+        if (requestedState && !assignedStates.includes(requestedState)) {
           return NextResponse.json({ error: "You do not have access to this state directory scope." }, { status: 403 });
         }
-        query = query.in("state", assignedStates);
       }
     }
 
-    if (state && (NIGERIA_STATES as readonly string[]).includes(state)) {
-      query = query.eq("state", state);
+    if (requestedState) {
+      query = query.ilike("state", requestedState);
     }
 
     const { data, error } = await query;
@@ -59,7 +121,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ locations: data ?? [] });
+    const locations = (data ?? []) as Array<Record<string, unknown>>;
+    if (context.role === "installer" && installerAssignedStates.length > 0) {
+      const assigned = new Set(installerAssignedStates.map((value) => normalizeStateToken(value)));
+      const filteredLocations = locations.filter((row) => assigned.has(normalizeStateToken(row.state)));
+      return NextResponse.json({ locations: filteredLocations });
+    }
+
+    return NextResponse.json({ locations });
   } catch (error) {
     const { status, payload } = accessControlErrorResponse(error);
     return NextResponse.json(payload, { status });
