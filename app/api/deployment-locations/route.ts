@@ -58,6 +58,10 @@ function canonicalizeStates(values: string[]) {
   return Array.from(new Set(canonical));
 }
 
+function safeString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 export async function GET(request: Request) {
   try {
     const context = await getAuthenticatedUserContext(request);
@@ -65,7 +69,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
 
-    const state = new URL(request.url).searchParams.get("state")?.trim() ?? "";
+    const url = new URL(request.url);
+    const state = url.searchParams.get("state")?.trim() ?? "";
+    const projectId = url.searchParams.get("projectId")?.trim() ?? "";
     const requestedState = CANONICAL_STATE_BY_NORMALIZED.get(normalizeStateToken(state)) ?? "";
     const supabase = createAdminSupabase();
     let query = supabase
@@ -79,27 +85,57 @@ export async function GET(request: Request) {
     if (context.role === "installer") {
       const { data: installerRow, error: installerError } = await supabase
         .from("installers")
-        .select("id, assigned_states")
+        .select("*")
+        .eq("user_id", context.user_id)
+        .maybeSingle();
+
+      const { data: profileRow, error: profileError } = await supabase
+        .schema("public")
+        .from("user_profiles")
+        .select("email, full_name")
         .eq("user_id", context.user_id)
         .maybeSingle();
 
       if (installerError) {
         return NextResponse.json({ error: installerError.message }, { status: 500 });
       }
+      if (profileError) {
+        return NextResponse.json({ error: profileError.message }, { status: 500 });
+      }
 
       // Installer assignment is the source-of-truth for outlet directory scope.
       // If an installer record has no explicit assigned states, preserve legacy pilot behavior (no state restriction).
-      const assignedStates = canonicalizeStates(parseStateAssignments(installerRow?.assigned_states));
+      const rawAssignedStates = parseStateAssignments(installerRow?.assigned_states);
+      const rawInstallerState = safeString((installerRow as Record<string, unknown> | null)?.state);
+      const assignedStates = canonicalizeStates([
+        ...rawAssignedStates,
+        // Legacy compatibility: some historical installer rows used a single `state` field.
+        rawInstallerState
+      ]);
       installerAssignedStates = assignedStates;
 
       if (assignedStates.length > 0) {
         if (requestedState && !assignedStates.includes(requestedState)) {
           console.warn("[deployment-locations] installer state access denied", {
+            finalDecision: "deny",
             userId: context.user_id,
+            email: safeString(context.email),
+            authClientId: context.client_id,
+            authAllowedProjectIds: context.allowed_project_ids,
+            projectId: projectId || null,
+            installerFound: Boolean(installerRow),
             installerId: typeof installerRow?.id === "string" ? installerRow.id : null,
-            requestedState,
-            assignedStates,
-            reason: "requested_state_not_in_installer_assigned_states"
+            installerEmail: safeString(profileRow?.email),
+            installerName: safeString(profileRow?.full_name),
+            installerUserId: safeString((installerRow as Record<string, unknown> | null)?.user_id),
+            installerStatus: safeString((installerRow as Record<string, unknown> | null)?.status),
+            installerAccessStatus: safeString((installerRow as Record<string, unknown> | null)?.access_status),
+            rawAssignedStates,
+            rawInstallerState: rawInstallerState || null,
+            requestedStateRaw: state || null,
+            requestedStateNormalized: requestedState || null,
+            assignedStatesNormalized: assignedStates,
+            reason: "requested_state_not_in_effective_installer_state_scope"
           });
           return NextResponse.json({ error: "You do not have access to this state directory scope." }, { status: 403 });
         }

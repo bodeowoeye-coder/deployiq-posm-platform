@@ -279,7 +279,11 @@ export default function SubmitPage() {
       }
       const outletsStart = performance.now();
       try {
-        const response = await fetch(`/api/deployment-locations?state=${encodeURIComponent(installerState)}`, { credentials: "include" });
+        const params = new URLSearchParams({
+          state: installerState,
+          projectId
+        });
+        const response = await fetch(`/api/deployment-locations?${params.toString()}`, { credentials: "include" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Could not load approved outlets.");
         if (!isActive) return;
@@ -306,7 +310,7 @@ export default function SubmitPage() {
     return () => {
       isActive = false;
     };
-  }, [installerState]);
+  }, [installerState, projectId]);
 
   useEffect(() => {
     if (!selectedOutlet) return;
