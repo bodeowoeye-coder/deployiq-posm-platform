@@ -1,5 +1,9 @@
 export type BuildWorkPackageTemplateStatus = "draft" | "active" | "archived";
 
+export type BuildActivityTemplateStatus = "draft" | "active" | "inactive" | "archived";
+
+export type BuildActivityDurationUnit = "hours" | "days" | "weeks";
+
 export type BuildActivityCategoryType =
   | "preparation"
   | "execution"
@@ -45,18 +49,22 @@ export type BuildWorkPackageTemplate = {
 export type BuildActivityTemplate = {
   id: string;
   template_id: string;
-  activity_category_id: string | null;
+  activity_category_id: string;
   sequence: number;
   code: string;
   name: string;
   description: string | null;
   estimated_duration: number | null;
+  duration_unit: BuildActivityDurationUnit;
   mandatory: boolean;
   requires_photo: boolean;
   requires_gps: boolean;
   requires_approval: boolean;
+  status: BuildActivityTemplateStatus;
+  notes: string | null;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
 };
 
 export type BuildChecklistTemplate = {
@@ -64,9 +72,37 @@ export type BuildChecklistTemplate = {
   activity_template_id: string;
   sequence: number;
   item: string;
+  description: string | null;
   mandatory: boolean;
+  requires_photo: boolean;
+  requires_comment: boolean;
+  acceptance_type: string | null;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
+};
+
+export type ActivityTemplateDependencySummary = {
+  predecessor_count: number;
+  successor_count: number;
+  dependency_validation_status: "valid" | "invalid";
+};
+
+export type ActivityTemplateResourceSummary = {
+  requirement_count: number;
+  resource_types: string[];
+  quantity_unit_summary: string[];
+};
+
+export type BuildActivityTemplateAuthoringRecord = BuildActivityTemplate & {
+  checklist_count: number;
+  dependency: ActivityTemplateDependencySummary;
+  resources: ActivityTemplateResourceSummary;
+};
+
+export type BuildTemplateAuthoringValidationSummary = {
+  errors: string[];
+  warnings: string[];
 };
 
 export type BuildInspectionTemplate = {
@@ -159,6 +195,95 @@ export type UpdateBuildActivityCategoryInput = {
   categoryType?: BuildActivityCategoryType;
   estimatedDuration?: number | null;
   status?: BuildActivityCategoryStatus;
+};
+
+export type CreateBuildActivityTemplateInput = {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  templateId: string;
+  activityCategoryId: string;
+  sequence?: number;
+  code: string;
+  name: string;
+  description?: string | null;
+  estimatedDuration?: number | null;
+  durationUnit?: BuildActivityDurationUnit;
+  mandatory?: boolean;
+  requiresPhoto?: boolean;
+  requiresGps?: boolean;
+  requiresApproval?: boolean;
+  status?: BuildActivityTemplateStatus;
+  notes?: string | null;
+};
+
+export type UpdateBuildActivityTemplateInput = {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  templateId: string;
+  id: string;
+  activityCategoryId?: string;
+  sequence?: number;
+  code?: string;
+  name?: string;
+  description?: string | null;
+  estimatedDuration?: number | null;
+  durationUnit?: BuildActivityDurationUnit;
+  mandatory?: boolean;
+  requiresPhoto?: boolean;
+  requiresGps?: boolean;
+  requiresApproval?: boolean;
+  status?: BuildActivityTemplateStatus;
+  notes?: string | null;
+};
+
+export type ReorderBuildActivityTemplatesInput = {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  templateId: string;
+  activityCategoryId: string;
+  orderedActivityTemplateIds: string[];
+};
+
+export type CreateBuildChecklistTemplateInput = {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  templateId: string;
+  activityTemplateId: string;
+  sequence?: number;
+  item: string;
+  description?: string | null;
+  mandatory?: boolean;
+  requiresPhoto?: boolean;
+  requiresComment?: boolean;
+  acceptanceType?: string | null;
+};
+
+export type UpdateBuildChecklistTemplateInput = {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  templateId: string;
+  id: string;
+  sequence?: number;
+  item?: string;
+  description?: string | null;
+  mandatory?: boolean;
+  requiresPhoto?: boolean;
+  requiresComment?: boolean;
+  acceptanceType?: string | null;
+};
+
+export type ReorderBuildChecklistTemplatesInput = {
+  projectId: string;
+  siteId: string;
+  workPackageId: string;
+  templateId: string;
+  activityTemplateId: string;
+  orderedChecklistTemplateIds: string[];
 };
 
 export type CreateBuildWorkPackageTemplateInput = {

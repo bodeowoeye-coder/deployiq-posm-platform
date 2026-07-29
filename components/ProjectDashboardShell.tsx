@@ -175,6 +175,18 @@ export function ProjectDashboardShell({
                           })()}
                         </div>
                       ) : null}
+                      {audience === "admin" && selectedSite && workPackage.template_id ? (
+                        <div className="mt-1">
+                          <Link
+                            href={`/admin/build/template-authoring?projectId=${encodeURIComponent(project.id)}&siteId=${encodeURIComponent(
+                              selectedSite.id
+                            )}&workPackageId=${encodeURIComponent(workPackage.id)}&templateId=${encodeURIComponent(workPackage.template_id)}`}
+                            className="text-xs font-semibold text-orange-700 hover:underline"
+                          >
+                            Open Activity Template Authoring
+                          </Link>
+                        </div>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

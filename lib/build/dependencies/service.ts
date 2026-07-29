@@ -85,18 +85,22 @@ async function getTemplateActivities(templateId: string): Promise<BuildActivityT
   return (data ?? []).map((row) => ({
     id: textValue(row.id),
     template_id: textValue(row.template_id),
-    activity_category_id: textValue(row.activity_category_id) || null,
+    activity_category_id: textValue(row.activity_category_id) || "",
     sequence: Number(row.sequence || 0),
     code: textValue(row.code),
     name: textValue(row.name),
     description: textValue(row.description) || null,
     estimated_duration: row.estimated_duration === null ? null : Number(row.estimated_duration || 0),
+    duration_unit: "days" as const,
     mandatory: Boolean(row.mandatory),
     requires_photo: Boolean(row.requires_photo),
     requires_gps: Boolean(row.requires_gps),
     requires_approval: Boolean(row.requires_approval),
+    status: "active" as const,
+    notes: null,
     created_at: textValue(row.created_at),
-    updated_at: textValue(row.updated_at)
+    updated_at: textValue(row.updated_at),
+    archived_at: null
   }));
 }
 

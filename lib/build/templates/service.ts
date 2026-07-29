@@ -1,9 +1,12 @@
 import { AccessControlError } from "@/lib/accessControl";
+import { buildTemplateValidationSummary } from "@/lib/build/activityTemplates/service";
 import { getDependencies } from "@/lib/build/dependencies/service";
 import { assertWorkPackageAccess, getWorkPackage } from "@/lib/build/workPackages/service";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type {
+  BuildActivityDurationUnit,
   BuildActivityTemplate,
+  BuildActivityTemplateStatus,
   BuildActivityCategory,
   BuildActivityCategoryStatus,
   BuildActivityCategoryType,
@@ -57,21 +60,36 @@ function normalizeTemplate(row: Record<string, unknown>): BuildWorkPackageTempla
 }
 
 function normalizeActivity(row: Record<string, unknown>): BuildActivityTemplate {
+  const activityStatus = textValue(row.status).toLowerCase() as BuildActivityTemplateStatus;
+  const status: BuildActivityTemplateStatus =
+    activityStatus === "draft" || activityStatus === "active" || activityStatus === "inactive" || activityStatus === "archived"
+      ? activityStatus
+      : "active";
+  const durationUnitCandidate = textValue(row.duration_unit).toLowerCase() as BuildActivityDurationUnit;
+  const durationUnit: BuildActivityDurationUnit =
+    durationUnitCandidate === "hours" || durationUnitCandidate === "days" || durationUnitCandidate === "weeks"
+      ? durationUnitCandidate
+      : "days";
+
   return {
     id: textValue(row.id),
     template_id: textValue(row.template_id),
-    activity_category_id: textValue(row.activity_category_id) || null,
+    activity_category_id: textValue(row.activity_category_id),
     sequence: Number(row.sequence || 0),
     code: textValue(row.code),
     name: textValue(row.name),
     description: textValue(row.description) || null,
     estimated_duration: row.estimated_duration === null ? null : Number(row.estimated_duration || 0),
+    duration_unit: durationUnit,
     mandatory: Boolean(row.mandatory),
     requires_photo: Boolean(row.requires_photo),
     requires_gps: Boolean(row.requires_gps),
     requires_approval: Boolean(row.requires_approval),
+    status,
+    notes: textValue(row.notes) || null,
     created_at: textValue(row.created_at),
-    updated_at: textValue(row.updated_at)
+    updated_at: textValue(row.updated_at),
+    archived_at: textValue(row.archived_at) || null
   };
 }
 
@@ -148,9 +166,14 @@ function normalizeChecklist(row: Record<string, unknown>): BuildChecklistTemplat
     activity_template_id: textValue(row.activity_template_id),
     sequence: Number(row.sequence || 0),
     item: textValue(row.item),
+    description: textValue(row.description) || null,
     mandatory: Boolean(row.mandatory),
+    requires_photo: Boolean(row.requires_photo),
+    requires_comment: Boolean(row.requires_comment),
+    acceptance_type: textValue(row.acceptance_type) || null,
     created_at: textValue(row.created_at),
-    updated_at: textValue(row.updated_at)
+    updated_at: textValue(row.updated_at),
+    archived_at: textValue(row.archived_at) || null
   };
 }
 
@@ -613,6 +636,76 @@ export async function instantiateTemplate(params: {
     graphValidation: dependencyResult.graphValidation
   };
 
+  const categoryMap = new Map(bundle.categories.map((category) => [category.id, category]));
+  const checklistsByActivityId = new Map<string, BuildChecklistTemplate[]>();
+  for (const checklist of bundle.checklists) {
+    const list = checklistsByActivityId.get(checklist.activity_template_id) ?? [];
+    list.push(checklist);
+    checklistsByActivityId.set(checklist.activity_template_id, list);
+  }
+
+  const groupedHierarchy = bundle.categories.map((category) => {
+    const activities = bundle.activities
+      .filter((activity) => activity.activity_category_id === category.id)
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((activity) => ({
+        ...activity,
+        checklistItems: (checklistsByActivityId.get(activity.id) ?? []).sort((a, b) => a.sequence - b.sequence)
+      }));
+
+    return {
+      category,
+      activities
+    };
+  });
+
+  const templateValidation = buildTemplateValidationSummary({
+    categories: bundle.categories.map((category) => ({
+      id: category.id,
+      template_id: category.template_id,
+      sequence: category.sequence,
+      code: category.code,
+      name: category.name,
+      status: category.status
+    })),
+    activities: bundle.activities,
+    checklists: bundle.checklists,
+    dependencies: dependencyResult.dependencies,
+    requirementRows: resourceRequirements.map((item) => ({
+      quantity: item.quantity,
+      unit_of_measure: item.unit_of_measure,
+      activity_template_id: item.activity_template_id
+    }))
+  });
+
+  const dependencyByActivityId = new Map<string, { predecessor: number; successor: number }>();
+  for (const activity of bundle.activities) {
+    dependencyByActivityId.set(activity.id, { predecessor: 0, successor: 0 });
+  }
+  for (const dependency of dependencyResult.dependencies) {
+    const predecessor = dependencyByActivityId.get(dependency.predecessor_activity_template_id);
+    if (predecessor) predecessor.successor += 1;
+    const successor = dependencyByActivityId.get(dependency.successor_activity_template_id);
+    if (successor) successor.predecessor += 1;
+  }
+
+  const resourceByActivityId = new Map<string, number>();
+  for (const requirement of resourceRequirements) {
+    if (!requirement.activity_template_id) continue;
+    resourceByActivityId.set(
+      requirement.activity_template_id,
+      (resourceByActivityId.get(requirement.activity_template_id) ?? 0) + 1
+    );
+  }
+
+  const hierarchyCounts = {
+    categories: bundle.categories.length,
+    activities: bundle.activities.length,
+    checklists: bundle.checklists.length,
+    dependencies: dependencyResult.dependencies.length,
+    resourceRequirements: resourceRequirements.length
+  };
+
   return {
     context: {
       projectId: access.project.id,
@@ -628,10 +721,23 @@ export async function instantiateTemplate(params: {
       suppliesCount: bundle.supplies.length,
       equipmentCount: bundle.equipment.length,
       resourceRequirementsCount: resourceRequirements.length,
-      dependenciesCount: dependencyResult.dependencies.length
+      dependenciesCount: dependencyResult.dependencies.length,
+      hierarchyCounts,
+      warnings: templateValidation.warnings,
+      errors: templateValidation.errors
     },
     bundle,
+    hierarchy: groupedHierarchy.map((entry) => ({
+      category: entry.category,
+      activities: entry.activities.map((activity) => ({
+        ...activity,
+        dependencyCount: dependencyByActivityId.get(activity.id) ?? { predecessor: 0, successor: 0 },
+        resourceRequirementCount: resourceByActivityId.get(activity.id) ?? 0
+      }))
+    })),
     resourceRequirements,
+    dependencies: dependencyResult.dependencies,
+    templateValidation,
     executionFlow
   };
 }

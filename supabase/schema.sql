@@ -320,23 +320,32 @@ create table if not exists public.build_activity_templates (
   name text not null,
   description text,
   estimated_duration integer check (estimated_duration is null or estimated_duration >= 0),
+  duration_unit text not null default 'days' check (duration_unit in ('hours', 'days', 'weeks')),
   mandatory boolean not null default true,
   requires_photo boolean not null default false,
   requires_gps boolean not null default false,
   requires_approval boolean not null default false,
+  status text not null default 'draft' check (status in ('draft', 'active', 'inactive', 'archived')),
+  notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  archived_at timestamptz,
   unique (template_id, code),
   unique (template_id, sequence)
 );
 
 create index if not exists idx_build_activity_templates_template_id on public.build_activity_templates(template_id);
+create index if not exists idx_build_activity_templates_status on public.build_activity_templates(status);
+create index if not exists idx_build_activity_templates_archived_at on public.build_activity_templates(archived_at);
 
 alter table public.build_activity_templates
   add column if not exists activity_category_id uuid references public.build_activity_categories(id) on delete restrict;
 
 create index if not exists idx_build_activity_templates_activity_category_id
   on public.build_activity_templates(activity_category_id);
+
+create index if not exists idx_build_activity_templates_category_sequence
+  on public.build_activity_templates(activity_category_id, sequence);
 
 create or replace function public.validate_build_activity_template_category()
 returns trigger
@@ -370,13 +379,21 @@ create table if not exists public.build_checklist_templates (
   activity_template_id uuid not null references public.build_activity_templates(id) on delete cascade,
   sequence integer not null default 1 check (sequence > 0),
   item text not null,
+  description text,
   mandatory boolean not null default true,
+  requires_photo boolean not null default false,
+  requires_comment boolean not null default false,
+  acceptance_type text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  archived_at timestamptz,
   unique (activity_template_id, sequence)
 );
 
 create index if not exists idx_build_checklist_templates_activity_id on public.build_checklist_templates(activity_template_id);
+create index if not exists idx_build_checklist_templates_archived_at on public.build_checklist_templates(archived_at);
+create index if not exists idx_build_checklist_templates_activity_sequence
+  on public.build_checklist_templates(activity_template_id, sequence);
 
 create table if not exists public.build_inspection_templates (
   id uuid primary key default gen_random_uuid(),
@@ -996,6 +1013,24 @@ create table if not exists public.audit_logs (
   action_type text not null,
   old_value jsonb,
   new_value jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.onboarding_drafts (
+  id uuid primary key default gen_random_uuid(),
+  resume_token text not null unique,
+  email text,
+  status text not null default 'started',
+  current_step text not null default 'welcome',
+  draft_data jsonb not null default '{}'::jsonb,
+  selected_product text,
+  pricing_snapshot_id uuid,
+  authenticated_user_id uuid references auth.users(id) on delete set null,
+  expires_at timestamptz,
+  last_updated_at timestamptz not null default now(),
+  completed_at timestamptz,
+  abandoned_at timestamptz,
+  failure_reason text,
   created_at timestamptz not null default now()
 );
 
