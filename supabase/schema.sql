@@ -1034,6 +1034,98 @@ create table if not exists public.onboarding_drafts (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.commercial_pricing_templates (
+  id uuid primary key default gen_random_uuid(),
+  product_key text not null check (length(trim(product_key)) > 0),
+  name text not null,
+  description text,
+  currency text not null check (length(trim(currency)) > 0),
+  country text,
+  region text,
+  customer_segment text,
+  campaign_type text,
+  pricing_metric text not null check (length(trim(pricing_metric)) > 0),
+  pricing_method text not null check (length(trim(pricing_method)) > 0),
+  status text not null default 'draft' check (status in ('draft', 'active', 'inactive', 'archived')),
+  is_default boolean not null default false,
+  effective_from timestamptz,
+  effective_to timestamptz,
+  quotation_validity_days integer,
+  created_by uuid,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  archived_at timestamptz,
+  constraint commercial_pricing_templates_effective_range_chk check (effective_to is null or effective_from is null or effective_to >= effective_from),
+  constraint commercial_pricing_templates_quotation_validity_chk check (quotation_validity_days is null or quotation_validity_days >= 0)
+);
+
+create table if not exists public.commercial_pricing_tiers (
+  id uuid primary key default gen_random_uuid(),
+  pricing_template_id uuid not null references public.commercial_pricing_templates(id) on delete restrict,
+  sequence integer not null check (sequence > 0),
+  minimum_quantity integer not null check (minimum_quantity > 0),
+  maximum_quantity integer,
+  unit_price numeric(12,2) not null check (unit_price >= 0),
+  fixed_charge numeric(12,2) default 0 check (fixed_charge is null or fixed_charge >= 0),
+  calculation_type text not null default 'progressive' check (calculation_type in ('progressive')),
+  enterprise_action text,
+  status text not null default 'active' check (status in ('active', 'inactive', 'archived')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  archived_at timestamptz,
+  constraint commercial_pricing_tiers_maximum_quantity_chk check (maximum_quantity is null or maximum_quantity >= minimum_quantity),
+  constraint commercial_pricing_tiers_enterprise_action_chk check (enterprise_action is null or enterprise_action in ('request_quotation', 'no_automatic_checkout', 'custom_rate'))
+);
+
+create table if not exists public.commercial_pricing_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  onboarding_draft_id uuid references public.onboarding_drafts(id) on delete set null,
+  organisation_id uuid,
+  product_key text not null,
+  pricing_template_id uuid not null references public.commercial_pricing_templates(id) on delete restrict,
+  pricing_template_name text not null,
+  template_version text not null,
+  market text,
+  currency text not null,
+  pricing_metric text not null,
+  pricing_method text not null,
+  quantity integer not null check (quantity > 0),
+  tier_breakdown jsonb not null default '[]'::jsonb,
+  subtotal numeric(12,2) not null default 0,
+  discount numeric(12,2) not null default 0,
+  tax numeric(12,2) not null default 0,
+  total numeric(12,2) not null default 0,
+  included_admin_users integer not null default 0,
+  requires_enterprise_review boolean not null default false,
+  calculated_at timestamptz not null default now(),
+  expires_at timestamptz,
+  status text not null default 'calculated' check (status in ('calculated', 'accepted', 'expired', 'superseded', 'cancelled')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists commercial_pricing_templates_product_key_idx on public.commercial_pricing_templates (product_key);
+create index if not exists commercial_pricing_templates_status_idx on public.commercial_pricing_templates (status);
+create index if not exists commercial_pricing_templates_currency_idx on public.commercial_pricing_templates (currency);
+create index if not exists commercial_pricing_templates_country_idx on public.commercial_pricing_templates (country);
+create index if not exists commercial_pricing_templates_is_default_idx on public.commercial_pricing_templates (is_default);
+create index if not exists commercial_pricing_templates_effective_dates_idx on public.commercial_pricing_templates (effective_from, effective_to);
+create unique index if not exists commercial_pricing_templates_active_default_scope_idx on public.commercial_pricing_templates (
+  product_key,
+  currency,
+  coalesce(country, ''),
+  coalesce(region, ''),
+  coalesce(customer_segment, ''),
+  coalesce(campaign_type, '')
+)
+where status = 'active' and is_default = true and archived_at is null;
+create unique index if not exists commercial_pricing_tiers_template_sequence_idx on public.commercial_pricing_tiers (pricing_template_id, sequence);
+create index if not exists commercial_pricing_tiers_pricing_template_id_idx on public.commercial_pricing_tiers (pricing_template_id);
+create index if not exists commercial_pricing_tiers_status_idx on public.commercial_pricing_tiers (status);
+create index if not exists commercial_pricing_snapshots_onboarding_draft_id_idx on public.commercial_pricing_snapshots (onboarding_draft_id);
+create index if not exists commercial_pricing_snapshots_status_idx on public.commercial_pricing_snapshots (status);
+create index if not exists commercial_pricing_snapshots_pricing_template_id_idx on public.commercial_pricing_snapshots (pricing_template_id);
+
 create table if not exists public.deployment_locations (
   id uuid primary key default gen_random_uuid(),
   state text not null,
