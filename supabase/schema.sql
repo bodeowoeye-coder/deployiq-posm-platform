@@ -53,6 +53,8 @@ create table if not exists public.projects (
   currency text,
   target_quantity integer not null default 0 check (target_quantity >= 0),
   status text not null default 'Planning' check (status in ('Planning', 'Active', 'On Hold', 'Completed', 'Not Started', 'In Progress', 'Delayed', 'Cancelled')),
+  primary_target_region text,
+  primary_target_state text,
   regions_covered text[] not null default '{}',
   assigned_installers text[] not null default '{}',
   archived_at timestamptz,
@@ -72,6 +74,8 @@ alter table public.projects add column if not exists consultant text;
 alter table public.projects add column if not exists contractor text;
 alter table public.projects add column if not exists planned_completion date;
 alter table public.projects add column if not exists actual_completion date;
+alter table public.projects add column if not exists primary_target_region text;
+alter table public.projects add column if not exists primary_target_state text;
 alter table public.projects add column if not exists budget numeric;
 alter table public.projects add column if not exists currency text;
 

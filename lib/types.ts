@@ -134,6 +134,8 @@ export type Project = {
   end_date: string | null;
   planned_completion?: string | null;
   actual_completion?: string | null;
+  primary_target_region?: string | null;
+  primary_target_state?: string | null;
   budget?: number | null;
   currency?: string | null;
   target_quantity: number;
