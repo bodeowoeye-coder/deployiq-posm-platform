@@ -58,6 +58,7 @@ export function CommercialPricingAdminPanel() {
   const [form, setForm] = useState<FormState>(createDefaultState());
   const [quantity, setQuantity] = useState("1000");
   const [preview, setPreview] = useState<null | { total: number; includedAdminUsers: number; quotationStatus: string }>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
     void loadTemplates();
@@ -117,6 +118,26 @@ export function CommercialPricingAdminPanel() {
     return { total: preview.total.toLocaleString("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 }), includedAdminUsers: preview.includedAdminUsers, quotationStatus: preview.quotationStatus };
   }, [preview]);
 
+  async function handleLifecycleAction(templateId: string, action: "activate" | "deactivate" | "archive" | "clone") {
+    setError(null);
+    setSuccess(null);
+    setActionLoading(`${templateId}:${action}`);
+    try {
+      const response = await fetch(`/api/admin/commercial/pricing-templates/${templateId}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `Unable to ${action} template.`);
+      setSuccess(action === "clone" ? `Cloned as "${payload.template?.name ?? "new template"}".` : `Template ${action}d successfully.`);
+      await loadTemplates();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Unable to ${action} template.`);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   async function handlePreview() {
     const parsed = Number(quantity);
     if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -168,6 +189,48 @@ export function CommercialPricingAdminPanel() {
                     <div>{template.is_default ? "Default" : "Not default"}</div>
                   </div>
                 </div>
+                {template.id ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {template.status !== "active" && template.status !== "archived" ? (
+                      <button
+                        type="button"
+                        className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 disabled:opacity-50"
+                        disabled={!!actionLoading}
+                        onClick={() => { void handleLifecycleAction(template.id!, "activate"); }}
+                      >
+                        {actionLoading === `${template.id}:activate` ? "…" : "Activate"}
+                      </button>
+                    ) : null}
+                    {template.status === "active" ? (
+                      <button
+                        type="button"
+                        className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 disabled:opacity-50"
+                        disabled={!!actionLoading}
+                        onClick={() => { void handleLifecycleAction(template.id!, "deactivate"); }}
+                      >
+                        {actionLoading === `${template.id}:deactivate` ? "…" : "Deactivate"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+                      disabled={!!actionLoading}
+                      onClick={() => { void handleLifecycleAction(template.id!, "clone"); }}
+                    >
+                      {actionLoading === `${template.id}:clone` ? "…" : "Clone"}
+                    </button>
+                    {template.status !== "active" && template.status !== "archived" ? (
+                      <button
+                        type="button"
+                        className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 disabled:opacity-50"
+                        disabled={!!actionLoading}
+                        onClick={() => { void handleLifecycleAction(template.id!, "archive"); }}
+                      >
+                        {actionLoading === `${template.id}:archive` ? "…" : "Archive"}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

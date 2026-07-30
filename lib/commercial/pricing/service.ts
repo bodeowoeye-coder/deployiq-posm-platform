@@ -1,15 +1,18 @@
 import { createAdminSupabase } from "../../supabaseAdmin";
 import { buildPricingTemplatePayload as buildPricingTemplatePayloadFromModule } from "./payload";
+import { validatePricingTemplate as validatePricingTemplateFromModule } from "./validation";
 import type {
   EnterpriseReviewResult,
   PricingCalculationRequest,
   PricingCalculationResult,
+  PricingEnterpriseAction,
   PricingScope,
   PricingSnapshot,
   PricingTemplate,
   PricingTemplateStatus,
   PricingTier,
   PricingTierBreakdown,
+  PricingTierStatus,
   PricingUnavailableResult,
   PricingValidationError
 } from "./types";
@@ -129,67 +132,7 @@ export function calculateAdministrativeUsers(quantity: number) {
   return Math.ceil(quantity / 1000) * 5;
 }
 
-export function validatePricingTemplate(template: PricingTemplate): { isValid: boolean; errors: PricingValidationError[]; activeTiers: PricingTier[] } {
-  const errors: PricingValidationError[] = [];
-  const activeTiers = template.tiers.filter((tier) => tier.status === "active").sort((left, right) => left.sequence - right.sequence);
-
-  if (!activeTiers.length) {
-    errors.push({ code: "invalid_configuration", message: "The pricing template must contain at least one active tier." });
-    return { isValid: false, errors, activeTiers: [] };
-  }
-
-  const seenSequences = new Set<number>();
-  let previousTier: PricingTier | null = null;
-
-  activeTiers.forEach((tier) => {
-    if (!Number.isInteger(tier.sequence) || tier.sequence <= 0) {
-      errors.push({ code: "invalid_configuration", message: `Tier ${tier.sequence ?? "unknown"} has an invalid sequence.` });
-    }
-    if (seenSequences.has(tier.sequence)) {
-      errors.push({ code: "invalid_configuration", message: `Duplicate tier sequence ${tier.sequence}.` });
-    }
-    seenSequences.add(tier.sequence);
-
-    if (tier.minimum_quantity <= 0) {
-      errors.push({ code: "invalid_configuration", message: `Tier ${tier.sequence} must have a positive minimum quantity.` });
-    }
-    if (tier.maximum_quantity !== null && tier.maximum_quantity < tier.minimum_quantity) {
-      errors.push({ code: "invalid_configuration", message: `Tier ${tier.sequence} has an invalid maximum quantity.` });
-    }
-    if (tier.unit_price < 0) {
-      errors.push({ code: "invalid_configuration", message: `Tier ${tier.sequence} has a negative unit price.` });
-    }
-    if ((tier.fixed_charge ?? 0) < 0) {
-      errors.push({ code: "invalid_configuration", message: `Tier ${tier.sequence} has a negative fixed charge.` });
-    }
-
-    if (previousTier) {
-      if (previousTier.maximum_quantity !== null && tier.minimum_quantity <= previousTier.maximum_quantity) {
-        errors.push({ code: "invalid_configuration", message: `Tier ${tier.sequence} overlaps the previous tier range.` });
-      }
-      if (previousTier.maximum_quantity === null) {
-        errors.push({ code: "invalid_configuration", message: "An open-ended tier must be the final active tier." });
-      }
-      if (previousTier.maximum_quantity !== null && tier.minimum_quantity !== previousTier.maximum_quantity + 1) {
-        errors.push({ code: "invalid_configuration", message: `Tier ${tier.sequence} is not continuous with the previous tier.` });
-      }
-    } else if (tier.minimum_quantity !== 1) {
-      errors.push({ code: "invalid_configuration", message: "The first tier must start at quantity 1." });
-    }
-
-    if (tier.maximum_quantity === null && !activeTiers.every((entry) => entry.sequence === tier.sequence || entry.maximum_quantity !== null)) {
-      errors.push({ code: "invalid_configuration", message: "The final open-ended tier must be the last active tier." });
-    }
-
-    if (tier.maximum_quantity === null && tier.enterprise_action === null) {
-      errors.push({ code: "invalid_configuration", message: `Tier ${tier.sequence} requires an enterprise action for open-ended coverage.` });
-    }
-
-    previousTier = tier;
-  });
-
-  return { isValid: errors.length === 0, errors, activeTiers };
-}
+export const validatePricingTemplate = validatePricingTemplateFromModule;
 
 export function calculateProgressivePricing(
   quantity: number,
@@ -406,6 +349,119 @@ export async function listPricingTemplates(): Promise<PricingTemplate[]> {
   return (data ?? []).map((record) => normalizeTemplateRecord({ ...record, tiers: Array.isArray(record.commercial_pricing_tiers) ? (record.commercial_pricing_tiers as Record<string, unknown>[]).map(normalizeTierRecord) : [] }));
 }
 
+function buildSyntheticTemplateForValidation(
+  payload: ReturnType<typeof buildPricingTemplatePayload>,
+  templateId: string | null
+): PricingTemplate {
+  const now = new Date().toISOString();
+  return {
+    id: templateId,
+    product_key: payload.product_key,
+    name: payload.name,
+    description: payload.description,
+    currency: payload.currency,
+    country: payload.country,
+    region: payload.region,
+    customer_segment: payload.customer_segment,
+    campaign_type: payload.campaign_type,
+    pricing_metric: payload.pricing_metric as PricingTemplate["pricing_metric"],
+    pricing_method: payload.pricing_method as PricingTemplate["pricing_method"],
+    status: payload.status as PricingTemplateStatus,
+    is_default: payload.is_default,
+    effective_from: payload.effective_from,
+    effective_to: payload.effective_to,
+    quotation_validity_days: payload.quotation_validity_days,
+    created_by: null,
+    updated_by: null,
+    activated_by: null,
+    activated_at: null,
+    deactivated_by: null,
+    deactivated_at: null,
+    archived_by: null,
+    created_at: now,
+    updated_at: now,
+    archived_at: null,
+    tiers: payload.tiers.map((tier) => ({
+      id: null,
+      pricing_template_id: templateId,
+      sequence: tier.sequence,
+      minimum_quantity: tier.minimum_quantity,
+      maximum_quantity: tier.maximum_quantity,
+      unit_price: tier.unit_price,
+      fixed_charge: tier.fixed_charge,
+      calculation_type: "progressive" as const,
+      enterprise_action: tier.enterprise_action as PricingEnterpriseAction,
+      status: tier.status as PricingTierStatus
+    }))
+  };
+}
+
+function tiersStructurallyEqual(
+  payloadTiers: ReturnType<typeof buildPricingTemplatePayload>["tiers"],
+  existingTiers: PricingTier[]
+): boolean {
+  const activeExisting = existingTiers.filter((t) => t.status === "active");
+  if (payloadTiers.length !== activeExisting.length) return false;
+  const sortedPayload = [...payloadTiers].sort((a, b) => a.sequence - b.sequence);
+  const sortedExisting = [...activeExisting].sort((a, b) => a.sequence - b.sequence);
+  return sortedPayload.every((pt, i) => {
+    const et = sortedExisting[i];
+    return (
+      pt.sequence === et.sequence &&
+      pt.minimum_quantity === et.minimum_quantity &&
+      pt.maximum_quantity === et.maximum_quantity &&
+      pt.unit_price === et.unit_price &&
+      pt.enterprise_action === et.enterprise_action
+    );
+  });
+}
+
+async function checkDefaultConflict(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  scope: { product_key: string; currency: string; country: string | null; region: string | null; customer_segment: string | null; campaign_type: string | null },
+  excludeTemplateId: string | null
+): Promise<void> {
+  let query = supabase
+    .from("commercial_pricing_templates")
+    .select("id, name")
+    .eq("product_key", scope.product_key)
+    .eq("currency", scope.currency)
+    .eq("status", "active")
+    .eq("is_default", true)
+    .is("archived_at", null);
+
+  if (scope.country !== null) {
+    query = query.eq("country", scope.country);
+  } else {
+    query = query.is("country", null);
+  }
+  if (scope.region !== null) {
+    query = query.eq("region", scope.region);
+  } else {
+    query = query.is("region", null);
+  }
+  if (scope.customer_segment !== null) {
+    query = query.eq("customer_segment", scope.customer_segment);
+  } else {
+    query = query.is("customer_segment", null);
+  }
+  if (scope.campaign_type !== null) {
+    query = query.eq("campaign_type", scope.campaign_type);
+  } else {
+    query = query.is("campaign_type", null);
+  }
+  if (excludeTemplateId) {
+    query = query.neq("id", excludeTemplateId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  if (data && data.length > 0) {
+    const existing = data[0] as { id: string; name: string };
+    throw new Error(`A default template already exists for this scope: "${existing.name}". Deactivate it first or unset is_default.`);
+  }
+}
+
 export async function createOrUpdatePricingTemplate(input: {
   templateId?: string | null;
   userId?: string | null;
@@ -413,6 +469,40 @@ export async function createOrUpdatePricingTemplate(input: {
 }): Promise<PricingTemplate> {
   const supabase = createAdminSupabase();
   const now = new Date().toISOString();
+
+  // Validate tier configuration before any DB write
+  const synthetic = buildSyntheticTemplateForValidation(input.payload, input.templateId ?? null);
+  const validation = validatePricingTemplate(synthetic);
+  if (!validation.isValid) {
+    throw new Error(validation.errors[0]?.message ?? "Invalid pricing configuration.");
+  }
+
+  // Guard structural edits on active templates
+  if (input.templateId) {
+    const current = await getPricingTemplateById(input.templateId);
+    if (!current) throw new Error("Pricing template not found.");
+    if (current.status === "active") {
+      const methodChanged = input.payload.pricing_method !== current.pricing_method;
+      const metricChanged = input.payload.pricing_metric !== current.pricing_metric;
+      const tiersChanged = !tiersStructurallyEqual(input.payload.tiers, current.tiers);
+      if (methodChanged || metricChanged || tiersChanged) {
+        throw new Error("Active templates cannot be structurally edited. Clone or deactivate the template first.");
+      }
+    }
+  }
+
+  // Default conflict protection
+  if (input.payload.is_default && input.payload.status === "active") {
+    await checkDefaultConflict(supabase, {
+      product_key: input.payload.product_key,
+      currency: input.payload.currency,
+      country: input.payload.country,
+      region: input.payload.region,
+      customer_segment: input.payload.customer_segment,
+      campaign_type: input.payload.campaign_type
+    }, input.templateId ?? null);
+  }
+
   const templatePayload = {
     product_key: input.payload.product_key,
     name: input.payload.name,
@@ -472,6 +562,139 @@ export async function createOrUpdatePricingTemplate(input: {
   const createdTemplate = await getPricingTemplateById(String(templateRecord.id));
   if (!createdTemplate) throw new Error("Pricing template could not be loaded after save.");
   return createdTemplate;
+}
+
+export async function activateTemplate(templateId: string, userId: string | null): Promise<PricingTemplate> {
+  const template = await getPricingTemplateById(templateId);
+  if (!template) throw new Error("Pricing template not found.");
+  if (template.status === "archived" || template.archived_at !== null) {
+    throw new Error("Archived templates cannot be activated.");
+  }
+  const validation = validatePricingTemplate(template);
+  if (!validation.isValid) {
+    throw new Error(validation.errors[0]?.message ?? "Template is invalid and cannot be activated.");
+  }
+  const supabase = createAdminSupabase();
+  const now = new Date().toISOString();
+  if (template.is_default) {
+    await checkDefaultConflict(supabase, {
+      product_key: template.product_key,
+      currency: template.currency,
+      country: template.country,
+      region: template.region,
+      customer_segment: template.customer_segment,
+      campaign_type: template.campaign_type
+    }, templateId);
+  }
+  const { error } = await supabase
+    .from("commercial_pricing_templates")
+    .update({ status: "active", activated_by: userId, activated_at: now, updated_by: userId, updated_at: now })
+    .eq("id", templateId);
+  if (error) throw error;
+  const updated = await getPricingTemplateById(templateId);
+  if (!updated) throw new Error("Pricing template could not be reloaded after activation.");
+  return updated;
+}
+
+export async function deactivateTemplate(templateId: string, userId: string | null): Promise<PricingTemplate> {
+  const template = await getPricingTemplateById(templateId);
+  if (!template) throw new Error("Pricing template not found.");
+  if (template.status === "archived") {
+    throw new Error("Archived templates cannot be deactivated.");
+  }
+  const supabase = createAdminSupabase();
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("commercial_pricing_templates")
+    .update({ status: "inactive", deactivated_by: userId, deactivated_at: now, updated_by: userId, updated_at: now })
+    .eq("id", templateId);
+  if (error) throw error;
+  const updated = await getPricingTemplateById(templateId);
+  if (!updated) throw new Error("Pricing template could not be reloaded after deactivation.");
+  return updated;
+}
+
+export async function archiveTemplate(templateId: string, userId: string | null): Promise<PricingTemplate> {
+  const template = await getPricingTemplateById(templateId);
+  if (!template) throw new Error("Pricing template not found.");
+  if (template.status === "active") {
+    throw new Error("Active templates cannot be archived directly. Deactivate the template first.");
+  }
+  if (template.status === "archived" || template.archived_at !== null) {
+    throw new Error("Template is already archived.");
+  }
+  const supabase = createAdminSupabase();
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("commercial_pricing_templates")
+    .update({ status: "archived", archived_by: userId, archived_at: now, updated_by: userId, updated_at: now })
+    .eq("id", templateId);
+  if (error) throw error;
+  const updated = await getPricingTemplateById(templateId);
+  if (!updated) throw new Error("Pricing template could not be reloaded after archiving.");
+  return updated;
+}
+
+export async function cloneTemplate(templateId: string, userId: string | null): Promise<PricingTemplate> {
+  const source = await getPricingTemplateById(templateId);
+  if (!source) throw new Error("Pricing template not found.");
+  const supabase = createAdminSupabase();
+  const now = new Date().toISOString();
+  const { data: cloneData, error: cloneError } = await supabase
+    .from("commercial_pricing_templates")
+    .insert({
+      product_key: source.product_key,
+      name: `${source.name} (Copy)`,
+      description: source.description,
+      currency: source.currency,
+      country: source.country,
+      region: source.region,
+      customer_segment: source.customer_segment,
+      campaign_type: source.campaign_type,
+      pricing_metric: source.pricing_metric,
+      pricing_method: source.pricing_method,
+      status: "draft",
+      is_default: false,
+      effective_from: source.effective_from,
+      effective_to: source.effective_to,
+      quotation_validity_days: source.quotation_validity_days,
+      created_by: userId,
+      updated_by: userId,
+      activated_by: null,
+      activated_at: null,
+      deactivated_by: null,
+      deactivated_at: null,
+      archived_by: null,
+      archived_at: null,
+      created_at: now,
+      updated_at: now
+    })
+    .select()
+    .single();
+  if (cloneError) throw cloneError;
+  if (!cloneData?.id) throw new Error("Cloned template could not be created.");
+
+  if (source.tiers.length > 0) {
+    const { error: tierError } = await supabase.from("commercial_pricing_tiers").insert(
+      source.tiers.map((tier) => ({
+        pricing_template_id: cloneData.id,
+        sequence: tier.sequence,
+        minimum_quantity: tier.minimum_quantity,
+        maximum_quantity: tier.maximum_quantity,
+        unit_price: tier.unit_price,
+        fixed_charge: tier.fixed_charge,
+        enterprise_action: tier.enterprise_action,
+        status: tier.status,
+        created_at: now,
+        updated_at: now
+      }))
+    );
+    if (tierError) throw tierError;
+  }
+
+  const cloned = await getPricingTemplateById(String(cloneData.id));
+  if (!cloned) throw new Error("Cloned template could not be reloaded after creation.");
+  return cloned;
 }
 
 export function getDefaultRetailPricingTemplate(): PricingTemplate {
