@@ -31,6 +31,12 @@ export type PricingTemplateRecord = {
   effective_to: string | null;
   quotation_validity_days: number | null;
   created_by: string | null;
+  updated_by: string | null;
+  activated_by: string | null;
+  activated_at: string | null;
+  deactivated_by: string | null;
+  deactivated_at: string | null;
+  archived_by: string | null;
   created_at: string;
   updated_at: string;
   archived_at: string | null;

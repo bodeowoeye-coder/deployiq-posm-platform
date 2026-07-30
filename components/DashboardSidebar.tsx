@@ -47,6 +47,7 @@ export type DashboardView =
   | "preferences"
   | "demo-data"
   | "audit-logs"
+  | "commercial-pricing"
   | "overview";
 
 const adminPrimaryItems: NavItem[] = [
@@ -57,7 +58,8 @@ const adminPrimaryItems: NavItem[] = [
   { view: "analytics", label: "Analytics", icon: BriefcaseBusiness },
   { view: "alerts", label: "Alerts", icon: Bell },
   { view: "clients", label: "Clients", icon: UsersRound },
-  { view: "installers", label: "Installers", icon: CircleUserRound }
+  { view: "installers", label: "Installers", icon: CircleUserRound },
+  { view: "commercial-pricing", label: "Commercial Pricing", icon: Settings2, href: "/admin/commercial/pricing" }
 ];
 
 const clientItems: NavItem[] = [

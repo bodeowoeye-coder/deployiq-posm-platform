@@ -30,6 +30,7 @@ import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, get
 import { StateCombobox } from "@/components/StateCombobox";
 import { getRegionForState, NIGERIA_REGIONS, NIGERIA_STATES } from "@/lib/geography";
 import { AdminProjectNotificationActions } from "@/components/AdminProjectNotificationActions";
+import { CommercialPricingAdminPanel } from "@/components/CommercialPricingAdminPanel";
 import { SUBMISSION_REJECTION_REASONS, isSubmissionRejectionReason } from "@/lib/submissionRejection";
 
 type Filters = {
@@ -243,7 +244,8 @@ function adminViewTitle(view: DashboardView) {
     regions: "Regions & Territories",
     preferences: "System Preferences",
     "demo-data": "Demo/Test Data",
-    "audit-logs": "Audit Logs"
+    "audit-logs": "Audit Logs",
+    "commercial-pricing": "Commercial Pricing"
   };
   return titles[view] ?? "Dashboard";
 }
@@ -269,7 +271,8 @@ function adminViewDescription(view: DashboardView) {
     regions: "Territory planning and regional configuration.",
     preferences: "System-wide operational preferences.",
     "demo-data": "Safely archive seeded sample data before pilots and demos.",
-    "audit-logs": "Governance, review, and system activity trails."
+    "audit-logs": "Governance, review, and system activity trails.",
+    "commercial-pricing": "Manage platform pricing templates and preview commercial calculations."
   };
   return descriptions[view] ?? "Executive intelligence across deployments.";
 }
@@ -286,6 +289,7 @@ function adminPathToView(pathname: string): DashboardView {
   if (pathname === "/admin/reports") return "reports";
   if (pathname === "/admin/submissions") return "submissions";
   if (pathname === "/admin/profile") return "profile";
+  if (pathname === "/admin/commercial/pricing") return "commercial-pricing";
   return "dashboard";
 }
 
@@ -1857,6 +1861,7 @@ export function AdminDashboard({
         {activeView === "preferences" ? <AdminPlaceholder title="System Preferences" message="Coming soon: operational defaults and platform preferences." /> : null}
         {activeView === "demo-data" ? <DemoDataManagementPanel /> : null}
         {activeView === "audit-logs" ? <AuditLogPanel logs={auditLogRecords} users={userRecords} /> : null}
+        {activeView === "commercial-pricing" ? <CommercialPricingAdminPanel /> : null}
       </section>
       </div>
       <PhotoLightbox submissions={activeView === "submissions" ? submissionViewRecords : filtered} activeIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} onNavigate={setLightboxIndex} />

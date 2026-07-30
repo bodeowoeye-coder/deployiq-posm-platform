@@ -1,4 +1,5 @@
 import { createAdminSupabase } from "../../supabaseAdmin";
+import { buildPricingTemplatePayload as buildPricingTemplatePayloadFromModule } from "./payload";
 import type {
   EnterpriseReviewResult,
   PricingCalculationRequest,
@@ -52,6 +53,12 @@ function normalizeTemplateRecord(record: Record<string, unknown>): PricingTempla
     effective_to: parseDateString(record.effective_to),
     quotation_validity_days: toNumber(record.quotation_validity_days),
     created_by: toStringOrNull(record.created_by),
+    updated_by: toStringOrNull(record.updated_by),
+    activated_by: toStringOrNull(record.activated_by),
+    activated_at: parseDateString(record.activated_at),
+    deactivated_by: toStringOrNull(record.deactivated_by),
+    deactivated_at: parseDateString(record.deactivated_at),
+    archived_by: toStringOrNull(record.archived_by),
     created_at: parseDateString(record.created_at) ?? new Date().toISOString(),
     updated_at: parseDateString(record.updated_at) ?? new Date().toISOString(),
     archived_at: parseDateString(record.archived_at),
@@ -390,11 +397,81 @@ export async function createPricingSnapshot(input: {
   };
 }
 
+export const buildPricingTemplatePayload = buildPricingTemplatePayloadFromModule;
+
 export async function listPricingTemplates(): Promise<PricingTemplate[]> {
   const supabase = createAdminSupabase();
   const { data, error } = await supabase.from("commercial_pricing_templates").select("*, commercial_pricing_tiers(*)").order("updated_at", { ascending: false });
   if (error) throw error;
   return (data ?? []).map((record) => normalizeTemplateRecord({ ...record, tiers: Array.isArray(record.commercial_pricing_tiers) ? (record.commercial_pricing_tiers as Record<string, unknown>[]).map(normalizeTierRecord) : [] }));
+}
+
+export async function createOrUpdatePricingTemplate(input: {
+  templateId?: string | null;
+  userId?: string | null;
+  payload: ReturnType<typeof buildPricingTemplatePayload>;
+}): Promise<PricingTemplate> {
+  const supabase = createAdminSupabase();
+  const now = new Date().toISOString();
+  const templatePayload = {
+    product_key: input.payload.product_key,
+    name: input.payload.name,
+    description: input.payload.description,
+    currency: input.payload.currency,
+    country: input.payload.country,
+    region: input.payload.region,
+    customer_segment: input.payload.customer_segment,
+    campaign_type: input.payload.campaign_type,
+    pricing_metric: input.payload.pricing_metric,
+    pricing_method: input.payload.pricing_method,
+    status: input.payload.status,
+    is_default: input.payload.is_default,
+    effective_from: input.payload.effective_from,
+    effective_to: input.payload.effective_to,
+    quotation_validity_days: input.payload.quotation_validity_days,
+    updated_by: input.userId ?? null,
+    updated_at: now
+  };
+
+  let templateRecord: Record<string, unknown> | null = null;
+  if (input.templateId) {
+    const { data, error } = await supabase.from("commercial_pricing_templates").update(templatePayload).eq("id", input.templateId).select().single();
+    if (error) throw error;
+    templateRecord = data;
+  } else {
+    const { data, error } = await supabase.from("commercial_pricing_templates").insert({ ...templatePayload, created_by: input.userId ?? null, created_at: now }).select().single();
+    if (error) throw error;
+    templateRecord = data;
+  }
+
+  if (!templateRecord?.id) throw new Error("Pricing template could not be created.");
+
+  const existingTiers = await supabase.from("commercial_pricing_tiers").select("id").eq("pricing_template_id", templateRecord.id);
+  if (existingTiers.error) throw existingTiers.error;
+
+  const tierRows = (existingTiers.data ?? []).map((row) => row.id);
+  if (tierRows.length > 0) {
+    const { error } = await supabase.from("commercial_pricing_tiers").delete().in("id", tierRows);
+    if (error) throw error;
+  }
+
+  const insertedTiers = await supabase.from("commercial_pricing_tiers").insert(input.payload.tiers.map((tier) => ({
+    pricing_template_id: templateRecord.id,
+    sequence: tier.sequence,
+    minimum_quantity: tier.minimum_quantity,
+    maximum_quantity: tier.maximum_quantity,
+    unit_price: tier.unit_price,
+    fixed_charge: tier.fixed_charge,
+    enterprise_action: tier.enterprise_action,
+    status: tier.status,
+    created_at: now,
+    updated_at: now
+  }))).select();
+  if (insertedTiers.error) throw insertedTiers.error;
+
+  const createdTemplate = await getPricingTemplateById(String(templateRecord.id));
+  if (!createdTemplate) throw new Error("Pricing template could not be loaded after save.");
+  return createdTemplate;
 }
 
 export function getDefaultRetailPricingTemplate(): PricingTemplate {

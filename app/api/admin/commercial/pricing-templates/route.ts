@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/accessControl";
-import { getPricingTemplateById, listPricingTemplates } from "@/lib/commercial/pricing/service";
+import { buildPricingTemplatePayload, createOrUpdatePricingTemplate, getPricingTemplateById, listPricingTemplates } from "@/lib/commercial/pricing/service";
 
 export async function GET(request: Request) {
   try {
@@ -15,7 +15,50 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requireAdmin(request);
+    const context = await requireAdmin(request);
+    const body = await request.json();
+    const payload = buildPricingTemplatePayload({
+      name: typeof body.name === "string" ? body.name : "",
+      description: typeof body.description === "string" ? body.description : null,
+      productKey: typeof body.productKey === "string" ? body.productKey : "retail",
+      currency: typeof body.currency === "string" ? body.currency : "NGN",
+      country: typeof body.country === "string" ? body.country : null,
+      region: typeof body.region === "string" ? body.region : null,
+      customerSegment: typeof body.customerSegment === "string" ? body.customerSegment : null,
+      campaignType: typeof body.campaignType === "string" ? body.campaignType : null,
+      pricingMetric: typeof body.pricingMetric === "string" ? body.pricingMetric : "deployment_location",
+      pricingMethod: typeof body.pricingMethod === "string" ? body.pricingMethod : "progressive_tiered",
+      status: typeof body.status === "string" ? body.status : "draft",
+      isDefault: Boolean(body.isDefault),
+      effectiveFrom: typeof body.effectiveFrom === "string" ? body.effectiveFrom : null,
+      effectiveTo: typeof body.effectiveTo === "string" ? body.effectiveTo : null,
+      quotationValidityDays: typeof body.quotationValidityDays === "number" ? body.quotationValidityDays : null,
+      tiers: Array.isArray(body.tiers) ? body.tiers.map((tier: Record<string, unknown>) => ({
+        sequence: Number(tier.sequence ?? 0),
+        minimumQuantity: Number(tier.minimumQuantity ?? 0),
+        maximumQuantity: typeof tier.maximumQuantity === "number" ? tier.maximumQuantity : null,
+        unitPrice: Number(tier.unitPrice ?? 0),
+        fixedCharge: typeof tier.fixedCharge === "number" ? tier.fixedCharge : 0,
+        enterpriseAction: typeof tier.enterpriseAction === "string" ? tier.enterpriseAction : null
+      })) : []
+    });
+
+    const template = await createOrUpdatePricingTemplate({
+      templateId: typeof body.templateId === "string" ? body.templateId : null,
+      userId: context.user_id,
+      payload
+    });
+
+    return NextResponse.json({ template });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const context = await requireAdmin(request);
     const body = await request.json();
     const templateId = typeof body.templateId === "string" ? body.templateId : null;
     if (!templateId) {
@@ -25,7 +68,48 @@ export async function POST(request: Request) {
     if (!template) {
       return NextResponse.json({ error: "Pricing template not found." }, { status: 404 });
     }
-    return NextResponse.json({ template });
+    const payload = buildPricingTemplatePayload({
+      name: typeof body.name === "string" ? body.name : template.name,
+      description: typeof body.description === "string" ? body.description : template.description,
+      productKey: typeof body.productKey === "string" ? body.productKey : template.product_key,
+      currency: typeof body.currency === "string" ? body.currency : template.currency,
+      country: typeof body.country === "string" ? body.country : template.country,
+      region: typeof body.region === "string" ? body.region : template.region,
+      customerSegment: typeof body.customerSegment === "string" ? body.customerSegment : template.customer_segment,
+      campaignType: typeof body.campaignType === "string" ? body.campaignType : template.campaign_type,
+      pricingMetric: typeof body.pricingMetric === "string" ? body.pricingMetric : template.pricing_metric,
+      pricingMethod: typeof body.pricingMethod === "string" ? body.pricingMethod : template.pricing_method,
+      status: typeof body.status === "string" ? body.status : template.status,
+      isDefault: typeof body.isDefault === "boolean" ? body.isDefault : template.is_default,
+      effectiveFrom: typeof body.effectiveFrom === "string" ? body.effectiveFrom : template.effective_from,
+      effectiveTo: typeof body.effectiveTo === "string" ? body.effectiveTo : template.effective_to,
+      quotationValidityDays: typeof body.quotationValidityDays === "number" ? body.quotationValidityDays : template.quotation_validity_days,
+      tiers: Array.isArray(body.tiers)
+        ? body.tiers.map((tier: Record<string, unknown>) => ({
+            sequence: Number(tier.sequence ?? 0),
+            minimumQuantity: Number(tier.minimumQuantity ?? 0),
+            maximumQuantity: typeof tier.maximumQuantity === "number" ? tier.maximumQuantity : null,
+            unitPrice: Number(tier.unitPrice ?? 0),
+            fixedCharge: typeof tier.fixedCharge === "number" ? tier.fixedCharge : 0,
+            enterpriseAction: typeof tier.enterpriseAction === "string" ? tier.enterpriseAction : null
+          }))
+        : template.tiers.map((tier) => ({
+            sequence: tier.sequence,
+            minimumQuantity: tier.minimum_quantity,
+            maximumQuantity: tier.maximum_quantity,
+            unitPrice: tier.unit_price,
+            fixedCharge: tier.fixed_charge ?? 0,
+            enterpriseAction: tier.enterprise_action ?? null
+          }))
+    });
+
+    const updatedTemplate = await createOrUpdatePricingTemplate({
+      templateId,
+      userId: context.user_id,
+      payload
+    });
+
+    return NextResponse.json({ template: updatedTemplate });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
