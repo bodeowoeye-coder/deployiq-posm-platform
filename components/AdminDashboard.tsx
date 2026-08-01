@@ -30,8 +30,8 @@ import { getOperationalAlerts, getPortfolioOperations, getProjectOperations, get
 import { StateCombobox } from "@/components/StateCombobox";
 import { getRegionForState, NIGERIA_REGIONS, NIGERIA_STATES } from "@/lib/geography";
 import { AdminProjectNotificationActions } from "@/components/AdminProjectNotificationActions";
-import { CommercialPricingAdminPanel } from "@/components/CommercialPricingAdminPanel";
 import { SUBMISSION_REJECTION_REASONS, isSubmissionRejectionReason } from "@/lib/submissionRejection";
+import Link from "next/link";
 
 type Filters = {
   query: string;
@@ -1861,7 +1861,7 @@ export function AdminDashboard({
         {activeView === "preferences" ? <AdminPlaceholder title="System Preferences" message="Coming soon: operational defaults and platform preferences." /> : null}
         {activeView === "demo-data" ? <DemoDataManagementPanel /> : null}
         {activeView === "audit-logs" ? <AuditLogPanel logs={auditLogRecords} users={userRecords} /> : null}
-        {activeView === "commercial-pricing" ? <CommercialPricingAdminPanel /> : null}
+        {activeView === "commercial-pricing" ? <CommercialPricingLauncher /> : null}
       </section>
       </div>
       <PhotoLightbox submissions={activeView === "submissions" ? submissionViewRecords : filtered} activeIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} onNavigate={setLightboxIndex} />
@@ -3942,5 +3942,35 @@ function DemoReportsTable({ reports }: { reports: DemoDataPlan["reports"] }) {
         </tr>
       ))}
     </DemoPreviewTable>
+  );
+}
+
+function CommercialPricingLauncher() {
+  return (
+    <div className="mx-auto max-w-xl py-10">
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 bg-slate-50 px-5 py-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+            Admin · Commercial
+          </p>
+        </div>
+        <div className="px-5 py-5">
+          <h2 className="text-lg font-bold text-slate-900">Pricing Studio</h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
+            Create and manage commercial pricing templates, configure progressive tier structures,
+            preview calculations and control template lifecycle — in a dedicated, focused workspace.
+          </p>
+          <Link
+            href="/admin/commercial/pricing"
+            className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-700 transition-colors focus:outline-none focus:ring-2 focus:ring-orange-300"
+          >
+            Open Pricing Studio
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }

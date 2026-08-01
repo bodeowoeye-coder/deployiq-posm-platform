@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/accessControl";
+import { requireAdmin, AccessControlError } from "@/lib/accessControl";
 import { buildPricingTemplatePayload, createOrUpdatePricingTemplate, getPricingTemplateById, listPricingTemplates } from "@/lib/commercial/pricing/service";
 
 export async function GET(request: Request) {
@@ -8,12 +8,18 @@ export async function GET(request: Request) {
     const templates = await listPricingTemplates();
     return NextResponse.json({ templates });
   } catch (error) {
+    if (error instanceof AccessControlError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function POST(request: Request) {
+  let payloadFieldNames: string[] = [];
+  let tierCount = 0;
+  
   try {
     const context = await requireAdmin(request);
     const body = await request.json();
@@ -42,6 +48,9 @@ export async function POST(request: Request) {
         enterpriseAction: typeof tier.enterpriseAction === "string" ? tier.enterpriseAction : null
       })) : []
     });
+    
+    payloadFieldNames = Object.keys(payload);
+    tierCount = (payload.tiers ?? []).length;
 
     const template = await createOrUpdatePricingTemplate({
       templateId: typeof body.templateId === "string" ? body.templateId : null,
@@ -51,8 +60,56 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ template });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // DIAGNOSTIC LOGGING - Temporary for debugging POST 500 error
+    let errorCode = null;
+    let errorMessage = null;
+    let errorDetails = null;
+    let errorHint = null;
+    
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      errorCode = (error as any).code;
+      errorDetails = (error as any).details;
+      errorHint = (error as any).hint;
+    } else if (typeof error === 'object' && error !== null) {
+      // Handle plain objects from Supabase errors
+      errorCode = (error as any).code;
+      errorMessage = (error as any).message;
+      errorDetails = (error as any).details;
+      errorHint = (error as any).hint;
+    }
+    
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      errorName: error instanceof Error ? error.constructor.name : typeof error,
+      errorCode,
+      errorMessage,
+      errorDetails,
+      errorHint,
+      payloadFieldNames,
+      tierCount,
+    };
+    console.error("[POST /api/admin/commercial/pricing-templates] Diagnostic Error Report:", JSON.stringify(diagnostics, null, 2));
+    
+    if (error instanceof AccessControlError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    
+    const message = errorMessage ?? "Unknown error";
+    const isNotFound = message.includes("not found");
+    const isValidation = message.includes("Invalid") || message.includes("invalid") || message.includes("cannot");
+    const isDatabaseConstraint = message.includes("check constraint") || message.includes("unique violation") || message.includes("foreign key");
+    
+    let userFacingMessage = "Unable to save pricing template.";
+    if (isValidation) {
+      userFacingMessage = `Pricing template validation failed: ${message}`;
+    } else if (isDatabaseConstraint) {
+      userFacingMessage = `Database constraint violation: ${message}`;
+    } else if (isNotFound) {
+      userFacingMessage = message;
+    }
+    
+    return NextResponse.json({ error: userFacingMessage }, { status: 500 });
   }
 }
 
@@ -111,6 +168,9 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({ template: updatedTemplate });
   } catch (error) {
+    if (error instanceof AccessControlError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

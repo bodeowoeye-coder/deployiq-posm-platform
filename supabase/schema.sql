@@ -1057,7 +1057,13 @@ create table if not exists public.commercial_pricing_templates (
   quotation_validity_days integer,
   created_by uuid,
   created_at timestamptz not null default now(),
+  updated_by uuid,
   updated_at timestamptz not null default now(),
+  activated_by uuid,
+  activated_at timestamptz,
+  deactivated_by uuid,
+  deactivated_at timestamptz,
+  archived_by uuid,
   archived_at timestamptz,
   constraint commercial_pricing_templates_effective_range_chk check (effective_to is null or effective_from is null or effective_to >= effective_from),
   constraint commercial_pricing_templates_quotation_validity_chk check (quotation_validity_days is null or quotation_validity_days >= 0)
@@ -1123,6 +1129,9 @@ create unique index if not exists commercial_pricing_templates_active_default_sc
   coalesce(campaign_type, '')
 )
 where status = 'active' and is_default = true and archived_at is null;
+create index if not exists commercial_pricing_templates_updated_by_idx on public.commercial_pricing_templates (updated_by);
+create index if not exists commercial_pricing_templates_activated_by_idx on public.commercial_pricing_templates (activated_by);
+create index if not exists commercial_pricing_templates_archived_by_idx on public.commercial_pricing_templates (archived_by);
 create unique index if not exists commercial_pricing_tiers_template_sequence_idx on public.commercial_pricing_tiers (pricing_template_id, sequence);
 create index if not exists commercial_pricing_tiers_pricing_template_id_idx on public.commercial_pricing_tiers (pricing_template_id);
 create index if not exists commercial_pricing_tiers_status_idx on public.commercial_pricing_tiers (status);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/accessControl";
+import { requireAdmin, AccessControlError } from "@/lib/accessControl";
 import { calculateProgressivePricing, getPricingTemplateById } from "@/lib/commercial/pricing/service";
 
 export async function POST(request: Request) {
@@ -21,6 +21,9 @@ export async function POST(request: Request) {
     const result = calculateProgressivePricing(quantity, template, template.tiers);
     return NextResponse.json({ result, templateId: template.id });
   } catch (error) {
+    if (error instanceof AccessControlError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

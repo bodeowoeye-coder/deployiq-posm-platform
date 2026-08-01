@@ -1,7 +1,17 @@
-import { AdminRoutePage } from "@/app/admin/AdminRoutePage";
+import { requireRole } from "@/lib/auth";
+import { PricingStudio } from "@/components/PricingStudio";
 
 export const dynamic = "force-dynamic";
 
-export default async function CommercialPricingPage() {
-  return <AdminRoutePage initialView="commercial-pricing" requestedPath="/admin/commercial/pricing" />;
+/**
+ * Dedicated Pricing Studio route.
+ * Only loads auth context — no submissions, projects, clients or unrelated dashboard data.
+ */
+export default async function PricingStudioPage() {
+  const context = await requireRole(["admin"], "/admin/commercial/pricing");
+
+  return (
+    <PricingStudio currentUserEmail={context.user.email ?? null} />
+  );
 }
+
