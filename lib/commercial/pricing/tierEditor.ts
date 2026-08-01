@@ -113,7 +113,21 @@ export function updateTierAndPropagate(
 // Validation
 // ---------------------------------------------------------------------------
 
-export function validateFormTiers(tiers: TierFormItem[]): TierFieldErrors[] {
+export function validateFormTiers(tiers: TierFormItem[], pricingMethod = "progressive_tiered"): TierFieldErrors[] {
+  // Flat-rate: only one automatic tier allowed
+  if (pricingMethod === "flat_rate") {
+    const autoTiers = tiers.filter((t) => !t.isEnterpriseTier);
+    return tiers.map((tier, index) => {
+      const errors: TierFieldErrors = {};
+      if (autoTiers.length > 1 && !tier.isEnterpriseTier) {
+        errors.unitPrice = "Flat-rate templates can only have one automatic pricing tier.";
+      }
+      if (tier.unitPrice < 0) errors.unitPrice = "Must be 0 or more.";
+      if (tier.fixedCharge < 0) errors.fixedCharge = "Must be 0 or more.";
+      return errors;
+    });
+  }
+
   return tiers.map((tier, index) => {
     const errors: TierFieldErrors = {};
     const prev = index > 0 ? tiers[index - 1] : null;
@@ -145,6 +159,15 @@ export function validateFormTiers(tiers: TierFormItem[]): TierFieldErrors[] {
     // Price checks
     if (tier.unitPrice < 0) errors.unitPrice = "Must be 0 or more.";
     if (tier.fixedCharge < 0) errors.fixedCharge = "Must be 0 or more.";
+
+    // An open-ended (no upper limit) non-enterprise last tier is not valid
+    // for progressive/volume — the server requires enterprise_action for null maximumQuantity.
+    // (flat_rate is exempted and handled above.)
+    const isLastTier = index === tiers.length - 1;
+    if (pricingMethod !== "flat_rate" && isLastTier && !tier.isEnterpriseTier && tier.maximumQuantity === null && !errors.maximumQuantity) {
+      errors.maximumQuantity =
+        "Set an upper limit, or choose 'Request a custom quotation' as the outcome.";
+    }
 
     return errors;
   });

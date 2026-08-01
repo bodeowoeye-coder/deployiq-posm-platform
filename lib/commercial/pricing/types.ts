@@ -1,6 +1,6 @@
 export type PricingTemplateStatus = "draft" | "active" | "inactive" | "archived";
 export type PricingTierStatus = "active" | "inactive" | "archived";
-export type PricingCalculationMethod = "progressive_tiered";
+export type PricingCalculationMethod = "progressive_tiered" | "volume_tiered" | "flat_rate";
 export type PricingMetric = "deployment_location";
 export type PricingEnterpriseAction = "request_quotation" | "no_automatic_checkout" | "custom_rate" | null;
 

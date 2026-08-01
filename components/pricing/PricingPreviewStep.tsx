@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { formatMoney, formatQuantity } from "@/lib/commercial/pricing/tierEditor";
+import { buildPreviewExplanation } from "./wizardUtils";
 import type { FormState, PreviewResult } from "./types";
 
 type Props = {
@@ -74,17 +75,18 @@ export function PricingPreviewStep({ form, savedTemplateId }: Props) {
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [useSaved, setUseSaved] = useState(false);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
 
   async function runPreview() {
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
-      setError("Enter a positive whole number for the quantity.");
+      setError("Enter a positive whole number for the rollout quantity.");
       return;
     }
     setLoading(true);
     setError(null);
     setResult(null);
-
+    setBreakdownOpen(false);
     try {
       const previewResult =
         useSaved && savedTemplateId
@@ -98,49 +100,42 @@ export function PricingPreviewStep({ form, savedTemplateId }: Props) {
     }
   }
 
+  const explanation = result
+    ? buildPreviewExplanation(result.quantity, result.tierBreakdown, form.pricingMethod)
+    : null;
+
   return (
     <div className="space-y-6">
-      <p className="text-sm text-slate-500">
-        Enter a rollout quantity to see how pricing is calculated across the tier structure.
-        Preview uses the shared pricing engine — results will match client invoicing exactly.
+      <p className="text-sm text-slate-500 leading-relaxed">
+        Enter a sample rollout quantity to confirm how DeployIQ will calculate the quotation.
       </p>
 
+      {/* Source toggle */}
       {savedTemplateId ? (
         <div
           className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1"
           role="radiogroup"
           aria-label="Preview source"
         >
-          <button
-            type="button"
-            role="radio"
-            aria-checked={!useSaved}
+          <button type="button" role="radio" aria-checked={!useSaved}
             onClick={() => { setUseSaved(false); setResult(null); }}
-            className={`rounded-lg px-3.5 py-1.5 text-xs font-medium transition-colors ${
-              !useSaved ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-medium transition-colors ${!useSaved ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
             Current draft
           </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={useSaved}
+          <button type="button" role="radio" aria-checked={useSaved}
             onClick={() => { setUseSaved(true); setResult(null); }}
-            className={`rounded-lg px-3.5 py-1.5 text-xs font-medium transition-colors ${
-              useSaved ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            Saved template
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-medium transition-colors ${useSaved ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+            Saved pricing rule
           </button>
         </div>
       ) : null}
 
-      <div className="flex items-end gap-3">
-        <div className="max-w-xs flex-1 space-y-1.5">
-          <label htmlFor="preview-qty" className="block text-sm font-medium text-slate-700">
-            Number of deployment locations
-          </label>
+      {/* Quantity row */}
+      <fieldset>
+        <legend className="mb-2 block text-sm font-medium text-slate-700">
+          Rollout quantity
+        </legend>
+        <div className="flex items-center gap-3">
           <input
             id="preview-qty"
             type="number"
@@ -148,21 +143,24 @@ export function PricingPreviewStep({ form, savedTemplateId }: Props) {
             step="1"
             value={quantity}
             onChange={(e) => { setQuantity(e.target.value); setResult(null); }}
-            className="block w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm font-mono focus:border-orange-400 focus:outline-none focus:ring-1 focus:ring-orange-400"
+            aria-label="Number of deployment locations"
+            className="block w-40 rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm font-mono focus:border-orange-400 focus:outline-none focus:ring-1 focus:ring-orange-400"
             placeholder="e.g. 8,750"
           />
+          <span className="text-sm text-slate-400">deployment locations</span>
+          <button
+            type="button"
+            onClick={() => { void runPreview(); }}
+            disabled={loading}
+            className="ml-auto inline-flex items-center gap-2 rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-50 transition-colors"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {loading ? "Calculating…" : "Calculate pricing"}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => { void runPreview(); }}
-          disabled={loading}
-          className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-50 transition-colors"
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {loading ? "Running…" : "Run preview"}
-        </button>
-      </div>
+      </fieldset>
 
+      {/* Error */}
       {error ? (
         <div className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -170,88 +168,113 @@ export function PricingPreviewStep({ form, savedTemplateId }: Props) {
         </div>
       ) : null}
 
+      {/* ── RESULT ── */}
       {result ? (
-        <div className="overflow-hidden rounded-xl border border-slate-200">
-          <div className="bg-slate-50 px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-              Pricing breakdown — {formatQuantity(result.quantity)} deployment locations
+        <div className="space-y-4" aria-live="polite">
+
+          {/* Hero: Estimated quotation */}
+          <div className={`rounded-2xl px-6 py-8 text-center ${
+            result.requiresEnterpriseReview
+              ? "bg-amber-50 border border-amber-200"
+              : "bg-slate-900"
+          }`}>
+            <p className={`text-xs font-semibold uppercase tracking-widest ${
+              result.requiresEnterpriseReview ? "text-amber-500" : "text-slate-400"
+            }`}>
+              Estimated quotation
             </p>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-slate-400">
-              <span>Method: Progressive tiered</span>
-              <span aria-hidden="true">·</span>
-              <span>Currency: {result.currency}</span>
-              {savedTemplateId && useSaved ? (
-                <><span aria-hidden="true">·</span><span className="text-emerald-600">Saved template</span></>
-              ) : (
-                <><span aria-hidden="true">·</span><span>Current draft</span></>
-              )}
-            </div>
+            <p className={`mt-2 text-5xl font-bold tracking-tight ${
+              result.requiresEnterpriseReview ? "text-amber-800" : "text-white"
+            }`}>
+              {result.requiresEnterpriseReview
+                ? "Custom quotation"
+                : formatMoney(result.total, result.currency)}
+            </p>
+            <p className={`mt-2 text-sm ${
+              result.requiresEnterpriseReview ? "text-amber-600" : "text-slate-400"
+            }`}>
+              for {formatQuantity(result.quantity)} deployment locations
+            </p>
+            {result.requiresEnterpriseReview ? (
+              <p className="mt-1 text-xs text-amber-600">
+                This rollout size requires a custom enterprise quotation.
+              </p>
+            ) : null}
           </div>
 
-          {result.tierBreakdown.length > 0 ? (
-            <div className="divide-y divide-slate-100">
-              {result.tierBreakdown.map((row) => (
-                <div key={row.sequence} className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-slate-800">{row.label}</p>
-                    {row.enterprise_action === "request_quotation" ? (
-                      <p className="text-xs text-amber-600">Custom quotation required for this tier</p>
-                    ) : (
-                      <p className="font-mono text-xs text-slate-500">
-                        {formatQuantity(row.applicable_quantity)} ×{" "}
-                        {formatMoney(row.unit_price, result.currency)}
-                        {row.fixed_charge > 0
-                          ? ` + ${formatMoney(row.fixed_charge, result.currency)} fixed`
-                          : ""}
-                      </p>
-                    )}
-                  </div>
-                  <div className="shrink-0 text-right">
-                    {row.enterprise_action === "request_quotation" ? (
-                      <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-                        Quotation
-                      </span>
-                    ) : (
-                      <span className="font-mono text-sm font-semibold text-slate-900">
-                        {formatMoney(row.subtotal, result.currency)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="px-4 py-4 text-sm text-slate-400">No tiers matched this quantity.</div>
-          )}
-
-          <div className="border-t border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-700">Estimated total</p>
-                <p className="text-xs text-slate-400">
-                  Includes {result.includedAdminUsers} admin user seat
-                  {result.includedAdminUsers !== 1 ? "s" : ""}
-                </p>
-              </div>
-              <p className={`font-mono text-lg font-bold ${
-                result.requiresEnterpriseReview ? "text-amber-600" : "text-slate-900"
-              }`}>
-                {result.requiresEnterpriseReview
-                  ? "Quotation required"
-                  : formatMoney(result.total, result.currency)}
+          {/* Plain-language explanation */}
+          {explanation ? (
+            <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-4">
+              <p className="mb-2 text-sm font-semibold text-sky-900">
+                How this was calculated
               </p>
+              <p className="text-sm text-sky-800 leading-relaxed">{explanation}</p>
             </div>
-            {result.requiresEnterpriseReview ? (
-              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                This quantity requires a custom enterprise quotation. An account manager will follow up directly.
+          ) : null}
+
+          {/* Admin users */}
+          {result.includedAdminUsers > 0 ? (
+            <p className="text-xs text-slate-400 text-center">
+              Includes {result.includedAdminUsers} admin user seat{result.includedAdminUsers !== 1 ? "s" : ""}
+            </p>
+          ) : null}
+
+          {/* Expandable breakdown */}
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setBreakdownOpen((v) => !v)}
+              aria-expanded={breakdownOpen}
+              className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <span>View full pricing breakdown</span>
+              {breakdownOpen
+                ? <ChevronUp className="h-4 w-4 text-slate-400" />
+                : <ChevronDown className="h-4 w-4 text-slate-400" />}
+            </button>
+
+            {breakdownOpen ? (
+              <div className="border-t border-slate-100">
+                <div className="divide-y divide-slate-100">
+                  {result.tierBreakdown.map((row) => (
+                    <div key={row.sequence} className={`flex items-center justify-between gap-4 px-4 py-3 ${
+                      row.enterprise_action === "request_quotation" ? "bg-amber-50" : ""
+                    }`}>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-800">{row.label}</p>
+                        {row.enterprise_action === "request_quotation" ? (
+                          <p className="text-xs text-amber-600">Custom quotation required</p>
+                        ) : (
+                          <p className="font-mono text-xs text-slate-500">
+                            {formatQuantity(row.applicable_quantity)} locations × {formatMoney(row.unit_price, result.currency)}
+                            {row.fixed_charge > 0
+                              ? ` + ${formatMoney(row.fixed_charge, result.currency)} fixed`
+                              : ""}
+                          </p>
+                        )}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        {row.enterprise_action === "request_quotation" ? (
+                          <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+                            Quotation
+                          </span>
+                        ) : (
+                          <span className="font-mono text-sm font-semibold text-slate-900">
+                            {formatMoney(row.subtotal, result.currency)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>
         </div>
       ) : !loading ? (
-        <div className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">
-          Enter a quantity above and click{" "}
-          <strong className="font-medium text-slate-500">Run preview</strong> to see the breakdown.
+        <div className="rounded-2xl border border-dashed border-slate-200 py-14 text-center">
+          <p className="text-sm font-medium text-slate-400">Enter a rollout quantity to see the estimated quotation</p>
+          <p className="mt-1 text-xs text-slate-300">Results appear here instantly after calculation</p>
         </div>
       ) : null}
     </div>

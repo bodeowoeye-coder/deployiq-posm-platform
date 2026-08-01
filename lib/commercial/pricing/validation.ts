@@ -2,7 +2,7 @@ import type { PricingTemplate, PricingTier, PricingValidationError } from "./typ
 
 export function validatePricingTemplate(template: PricingTemplate): { isValid: boolean; errors: PricingValidationError[]; activeTiers: PricingTier[] } {
   const errors: PricingValidationError[] = [];
-  const validPricingMethods: string[] = ["progressive_tiered"];
+  const validPricingMethods: string[] = ["progressive_tiered", "volume_tiered", "flat_rate"];
   const validPricingMetrics: string[] = ["deployment_location"];
 
   if (!validPricingMethods.includes(template.pricing_method)) {
@@ -20,6 +20,23 @@ export function validatePricingTemplate(template: PricingTemplate): { isValid: b
     return { isValid: false, errors, activeTiers: [] };
   }
 
+  // ── Flat-rate: exactly one automatic pricing tier ──────────────────────────
+  if (template.pricing_method === "flat_rate") {
+    const autoTiers = activeTiers.filter((t) => t.enterprise_action !== "request_quotation");
+    if (autoTiers.length > 1) {
+      errors.push({ code: "invalid_configuration", message: "Flat-rate templates must contain exactly one automatic pricing tier." });
+      return { isValid: false, errors, activeTiers };
+    }
+    if (autoTiers[0] && autoTiers[0].unit_price < 0) {
+      errors.push({ code: "invalid_configuration", message: "Tier 1 has a negative unit price." });
+    }
+    if (autoTiers[0] && (autoTiers[0].fixed_charge ?? 0) < 0) {
+      errors.push({ code: "invalid_configuration", message: "Tier 1 has a negative fixed charge." });
+    }
+    return { isValid: errors.length === 0, errors, activeTiers };
+  }
+
+  // ── Progressive and volume: structural tier validation ────────────────────
   const seenSequences = new Set<number>();
   let previousTier: PricingTier | null = null;
 

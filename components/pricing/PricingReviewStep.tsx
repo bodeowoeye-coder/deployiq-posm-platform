@@ -7,7 +7,8 @@ import {
   hasValidationErrors,
   validateFormTiers,
 } from "@/lib/commercial/pricing/tierEditor";
-import { isEnterpriseOnlyForm } from "./wizardUtils";
+import { isEnterpriseOnlyForm, getPricingModelLabel, resolveProductDisplayLabel } from "./wizardUtils";
+import { PricingRuleExplanation } from "./PricingRuleExplanation";
 import type { FormState } from "./types";
 
 type Props = {
@@ -20,6 +21,27 @@ type Props = {
   onActivate: (templateId: string) => Promise<void>;
 };
 
+type CheckItem = {
+  label: string;
+  value: string;
+  warning?: boolean;
+};
+
+function ChecklistItem({ label, value, warning = false }: CheckItem) {
+  return (
+    <div className="flex items-start gap-4 py-3.5 border-b border-slate-100 last:border-0">
+      <CheckCircle2
+        className={`mt-0.5 h-4 w-4 shrink-0 ${warning ? "text-amber-400" : "text-emerald-500"}`}
+        aria-hidden="true"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-slate-400">{label}</p>
+        <p className="mt-0.5 text-sm font-medium text-slate-900">{value}</p>
+      </div>
+    </div>
+  );
+}
+
 export function PricingReviewStep({
   form, savedTemplateId, saving, activating, readOnly = false, onSaveDraft, onActivate,
 }: Props) {
@@ -29,92 +51,80 @@ export function PricingReviewStep({
   const sym = currencySymbol(form.currency);
   const canSave = !hasTierErrors && form.name.trim().length > 0;
 
+  // Determine enterprise threshold for checklist item
+  const enterpriseTier = form.tiers.find(
+    (t) => t.isEnterpriseTier || t.enterpriseAction === "request_quotation"
+  );
+  const quotationThreshold = enterpriseTier
+    ? `Above ${formatQuantity(enterpriseTier.minimumQuantity - 1)} locations`
+    : "None — fully automatic pricing";
+
+  const checklistItems: CheckItem[] = [
+    {
+      label: "Pricing rule name",
+      value: form.name || "—",
+      warning: !form.name.trim(),
+    },
+    {
+      label: "Product",
+      value: resolveProductDisplayLabel(form.productKey),
+    },
+    {
+      label: "Pricing model",
+      value: getPricingModelLabel(form.pricingMethod),
+    },
+    {
+      label: "Market",
+      value: [form.country, form.currency].filter(Boolean).join(" · ") || "—",
+    },
+    {
+      label: "Pricing method",
+      value: getPricingModelLabel(form.pricingMethod),
+    },
+    {
+      label: "Pricing bands",
+      value: `${form.tiers.length} band${form.tiers.length !== 1 ? "s" : ""}`,
+      warning: hasTierErrors,
+    },
+    {
+      label: "Default pricing rule",
+      value: form.isDefault ? "Yes — applied when no other rule matches" : "No",
+    },
+    {
+      label: "Quotation threshold",
+      value: quotationThreshold,
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      {/* ── Template summary ── */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 divide-y divide-slate-100">
-        <div className="bg-slate-50 px-4 py-3">
+      {/* Checklist */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        <div className="border-b border-slate-100 bg-slate-50 px-5 py-3.5">
           <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-            Template details
+            Pre-publication checklist
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 px-4 py-4 sm:grid-cols-3">
-          {[
-            { label: "Name", value: form.name || "—" },
-            { label: "Product", value: form.productKey },
-            { label: "Currency", value: form.currency },
-            { label: "Country", value: form.country || "—" },
-            { label: "Quotation validity", value: form.quotationValidityDays ? `${form.quotationValidityDays} days` : "—" },
-            { label: "Default template", value: form.isDefault ? "Yes" : "No" },
-          ].map(({ label, value }) => (
-            <div key={label}>
-              <p className="text-xs text-slate-400">{label}</p>
-              <p className="mt-0.5 text-sm font-medium capitalize text-slate-900">{value}</p>
-            </div>
+        <div className="px-5">
+          {checklistItems.map((item) => (
+            <ChecklistItem key={item.label} {...item} />
           ))}
         </div>
       </div>
 
-      {/* ── Tier summary ── */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 divide-y divide-slate-100">
-        <div className="bg-slate-50 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-            Pricing tiers ({form.tiers.length})
-          </p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50/50">
-              <tr className="text-left text-xs text-slate-400">
-                <th className="px-4 py-2.5 font-semibold">Tier</th>
-                <th className="px-4 py-2.5 font-semibold">From</th>
-                <th className="px-4 py-2.5 font-semibold">To</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Unit price</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Outcome</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {form.tiers.map((tier) => (
-                <tr key={tier.sequence} className="text-slate-700">
-                  <td className="px-4 py-2.5 font-medium">{tier.sequence}</td>
-                  <td className="px-4 py-2.5 font-mono">{formatQuantity(tier.minimumQuantity)}</td>
-                  <td className="px-4 py-2.5 font-mono">
-                    {tier.isEnterpriseTier ? (
-                      <span className="text-amber-600">No limit</span>
-                    ) : tier.maximumQuantity ? (
-                      formatQuantity(tier.maximumQuantity)
-                    ) : "—"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-mono">
-                    {tier.isEnterpriseTier ? "—" : `${sym}${formatQuantity(tier.unitPrice)}`}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {tier.isEnterpriseTier ? (
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
-                        Quotation
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                        Automatic
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {/* Pricing summary */}
+      <div>
+        <p className="mb-3 text-sm font-semibold text-slate-800">Pricing summary</p>
+        <PricingRuleExplanation tiers={form.tiers} currency={form.currency} />
       </div>
 
-      {/* ── Warnings ── */}
+      {/* Warnings */}
       {hasTierErrors ? (
         <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <p className="font-semibold">Tier validation errors</p>
-            <p className="mt-0.5 text-xs">
-              Go back to the Pricing tiers step and fix the highlighted errors before saving.
-            </p>
+            <p className="font-semibold">Pricing band errors</p>
+            <p className="mt-0.5 text-xs">Return to step 2 and resolve the highlighted errors before publishing.</p>
           </div>
         </div>
       ) : null}
@@ -123,10 +133,8 @@ export function PricingReviewStep({
         <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <p className="font-semibold">Enterprise-only template</p>
-            <p className="mt-0.5 text-xs">
-              All tiers require a custom quotation. No automatic pricing will be calculated for any quantity.
-            </p>
+            <p className="font-semibold">All bands require custom quotation</p>
+            <p className="mt-0.5 text-xs">No automatic pricing will be calculated. Every rollout triggers a quotation.</p>
           </div>
         </div>
       ) : null}
@@ -134,19 +142,19 @@ export function PricingReviewStep({
       {savedTemplateId && !readOnly ? (
         <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
-          Saved as draft. You can now activate this template.
+          Saved as draft. Ready to publish.
         </div>
       ) : null}
 
-      {/* ── Action buttons ── */}
+      {/* Actions */}
       {!readOnly ? (
-        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
+        <div className="space-y-3">
           {!savedTemplateId ? (
             <button
               type="button"
               onClick={() => { void onSaveDraft(); }}
               disabled={saving || !canSave}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {saving ? "Saving…" : "Save as draft"}
@@ -155,20 +163,20 @@ export function PricingReviewStep({
             <button
               type="button"
               onClick={() => { void onActivate(savedTemplateId); }}
-              disabled={activating}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+              disabled={activating || hasTierErrors}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
             >
               {activating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {activating ? "Activating…" : "Activate template"}
+              {activating ? "Publishing…" : "Publish pricing rule"}
             </button>
           )}
+          <p className="text-center text-xs text-slate-400">
+            {savedTemplateId
+              ? "Activating makes this rule available immediately during customer onboarding."
+              : "Draft rules are not used during customer onboarding until published."}
+          </p>
         </div>
       ) : null}
-
-      <p className="text-xs text-slate-400">
-        Activating makes this template available for client onboarding immediately.
-        Only one default template per product and currency combination can be active at a time.
-      </p>
     </div>
   );
 }

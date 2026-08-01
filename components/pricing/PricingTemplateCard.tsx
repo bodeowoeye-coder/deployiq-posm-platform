@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Archive, ChevronDown, ChevronUp, Copy, Eye, Loader2, Pencil, Plus, Power, PowerOff } from "lucide-react";
 import type { PricingTemplate } from "@/lib/commercial/pricing/types";
 import { formatMoney, formatQuantity } from "@/lib/commercial/pricing/tierEditor";
+import { getPricingModelLabel, resolveProductDisplayLabel } from "./wizardUtils";
 
 const STATUS_CONFIG: Record<string, { label: string; dot: string; border: string }> = {
   draft:    { label: "Draft",    dot: "bg-slate-400",   border: "border-slate-200" },
@@ -25,6 +26,42 @@ type Props = {
   onEdit: (template: PricingTemplate) => void;
   onLifecycle: (templateId: string, action: "activate" | "deactivate" | "archive" | "clone") => void;
 };
+
+/** One-line description of pricing logic for the library card. */
+function buildCardSummary(template: PricingTemplate): string {
+  const activeTiers = template.tiers.filter((t) => t.status !== "archived");
+  if (activeTiers.length === 0) return "No pricing bands defined.";
+
+  const sym =
+    template.currency === "NGN" ? "₦" :
+    template.currency === "USD" ? "$" :
+    template.currency === "GBP" ? "£" :
+    template.currency === "EUR" ? "€" :
+    `${template.currency} `;
+
+  const last = activeTiers[activeTiers.length - 1];
+  const enterprise = last.enterprise_action === "request_quotation";
+
+  // Build a price-range string like ₦500 → ₦450 → ₦400
+  const autoPriceTiers = activeTiers.filter(
+    (t) => t.enterprise_action !== "request_quotation"
+  );
+
+  if (autoPriceTiers.length === 0) {
+    return "All quantities require a custom quotation.";
+  }
+
+  const priceSteps = autoPriceTiers
+    .map((t) => `${sym}${t.unit_price.toLocaleString("en-US")}`)
+    .join(" → ");
+
+  if (enterprise) {
+    const threshold = formatQuantity(last.minimum_quantity - 1);
+    return `${priceSteps}; custom quotation above ${threshold} locations.`;
+  }
+
+  return `${priceSteps} per location.`;
+}
 
 export function PricingTemplateCard({ template, actionLoading, onEdit, onLifecycle }: Props) {
   const [expanded, setExpanded] = useState(false);
@@ -74,37 +111,45 @@ export function PricingTemplateCard({ template, actionLoading, onEdit, onLifecyc
   }
 
   return (
-    <div className={`overflow-hidden rounded-xl border bg-white transition-shadow hover:shadow-sm ${cfg.border}`}>
+    <div className={`overflow-hidden rounded-2xl border bg-white transition-shadow hover:shadow-md ${cfg.border}`}>
       {/* Header */}
-      <div className="flex items-start gap-3 px-4 py-3.5">
-        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${cfg.dot}`} aria-hidden="true" />
+      <div className="flex items-start gap-3 px-5 py-4">
+        <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${cfg.dot}`} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-semibold text-slate-900 truncate">{template.name}</h3>
-            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? STATUS_BADGE.draft}`}>
+            <h3 className="text-base font-semibold text-slate-900 truncate">{template.name}</h3>
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[status] ?? STATUS_BADGE.draft}`}>
               {cfg.label}
             </span>
             {template.is_default ? (
-              <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-700">Default</span>
+              <span className="rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-semibold text-orange-700">Default</span>
             ) : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-slate-400">
-            <span className="capitalize">{template.product_key}</span>
+            <span>{resolveProductDisplayLabel(template.product_key)}</span>
             <span aria-hidden="true">·</span>
             <span>{template.currency}</span>
             {template.country ? <><span aria-hidden="true">·</span><span>{template.country}</span></> : null}
             <span aria-hidden="true">·</span>
             <span>{template.tiers.length} tier{template.tiers.length !== 1 ? "s" : ""}</span>
+            <span aria-hidden="true">·</span>
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">{getPricingModelLabel(template.pricing_method)}</span>
             {template.updated_at ? (
               <><span aria-hidden="true">·</span><span>Updated {new Date(template.updated_at).toLocaleDateString()}</span></>
             ) : null}
           </div>
+          {/* One-line pricing summary */}
+          {template.tiers.length > 0 ? (
+            <p className="mt-1.5 text-xs text-slate-500 leading-snug">
+              {buildCardSummary(template)}
+            </p>
+          ) : null}
         </div>
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-label={expanded ? "Hide tier details" : "View tier details"}
-          className="ml-1 shrink-0 rounded p-1 text-slate-300 hover:bg-slate-50 hover:text-slate-500 transition-colors"
+          className="ml-1 shrink-0 rounded-lg p-1.5 text-slate-300 hover:bg-slate-50 hover:text-slate-500 transition-colors"
         >
           {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </button>

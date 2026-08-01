@@ -13,19 +13,23 @@ import {
 import {
   createDefaultFormState,
   formStateToApiBody,
+  hasMultipleAutoTiers,
+  resetTiersForFlatRate,
   templateToFormState,
 } from "./wizardUtils";
 import { PricingTemplateDetailsStep } from "./PricingTemplateDetailsStep";
 import { PricingTierTable } from "./PricingTierTable";
+import { FlatRateEditor } from "./FlatRateEditor";
+import { PricingModelSelector } from "./PricingModelSelector";
 import { PricingPreviewStep } from "./PricingPreviewStep";
 import { PricingReviewStep } from "./PricingReviewStep";
 import type { FormState, WizardStep } from "./types";
 
 const STEPS: { id: WizardStep; label: string; description: string }[] = [
-  { id: 1, label: "Template details",  description: "Name, product and currency" },
-  { id: 2, label: "Pricing tiers",     description: "Set quantity ranges and prices" },
-  { id: 3, label: "Preview",           description: "Test the pricing calculation" },
-  { id: 4, label: "Review",            description: "Save as draft and activate" },
+  { id: 1, label: "What are you pricing?",         description: "Choose product, market and targeting" },
+  { id: 2, label: "How should DeployIQ charge?",   description: "Define pricing bands and amounts" },
+  { id: 3, label: "Test your pricing",             description: "Confirm the calculation looks right" },
+  { id: 4, label: "Publish pricing rule",          description: "Review and make the rule available" },
 ];
 
 type Props = {
@@ -48,6 +52,8 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
   const [error, setError] = useState<string | null>(null);
   // Track unsaved changes: becomes true after any field edit
   const [isDirty, setIsDirty] = useState(false);
+  // Pending model switch when a reset confirmation is needed
+  const [pendingModelSwitch, setPendingModelSwitch] = useState<string | null>(null);
 
   const tierErrors = useMemo(() => validateFormTiers(form.tiers), [form.tiers]);
   const hasTierErrors = useMemo(() => hasValidationErrors(tierErrors), [tierErrors]);
@@ -62,6 +68,34 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
   function handleFormChange(patch: Partial<FormState>) {
     setForm((c) => ({ ...c, ...patch }));
     if (!isReadOnly) setIsDirty(true);
+  }
+
+  /** Handle pricing model selection — shows reset confirmation when needed. */
+  function handleModelChange(newMethod: string) {
+    if (newMethod === "flat_rate" && form.pricingMethod !== "flat_rate" && hasMultipleAutoTiers(form.tiers)) {
+      setPendingModelSwitch(newMethod);
+      return;
+    }
+    handleFormChange({ pricingMethod: newMethod });
+  }
+
+  function confirmResetToFlatRate() {
+    setForm((c) => ({
+      ...c,
+      pricingMethod: "flat_rate",
+      tiers: resetTiersForFlatRate(c.tiers),
+    }));
+    setIsDirty(true);
+    setPendingModelSwitch(null);
+  }
+
+  function keepCurrentBands() {
+    handleFormChange({ pricingMethod: pendingModelSwitch! });
+    setPendingModelSwitch(null);
+  }
+
+  function cancelModelSwitch() {
+    setPendingModelSwitch(null);
   }
 
   function requestClose(reload = false) {
@@ -135,6 +169,37 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
 
   return (
     <div className="mx-auto max-w-3xl space-y-0">
+      {/* ── Model-switch reset confirmation ── */}
+      {pendingModelSwitch ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-label="Switch to flat-rate pricing">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="text-base font-bold text-slate-900">Switch to Flat-Rate Pricing?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Flat-rate pricing uses one automatic rate. Reset the current pricing bands to a single flat-rate band?
+            </p>
+            <div className="mt-5 flex flex-col gap-2">
+              <button type="button" onClick={confirmResetToFlatRate}
+                className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-left text-sm font-semibold text-white hover:bg-slate-700 transition-colors">
+                Reset to Flat Rate
+                <span className="block text-xs font-normal text-slate-400 mt-0.5">
+                  Keeps the first band's price and fixed charge
+                </span>
+              </button>
+              <button type="button" onClick={keepCurrentBands}
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors">
+                Keep current bands
+                <span className="block text-xs font-normal text-slate-400 mt-0.5">
+                  Validation will prevent saving until corrected
+                </span>
+              </button>
+              <button type="button" onClick={cancelModelSwitch}
+                className="w-full rounded-xl px-4 py-2.5 text-center text-sm text-slate-400 hover:text-slate-600 transition-colors">
+                Cancel model change
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {/* ── Wizard header ── */}
       <div className="flex items-center justify-between gap-4 pb-4">
         <div className="flex items-center gap-3 min-w-0">
@@ -245,16 +310,37 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
             <PricingTemplateDetailsStep form={form} onChange={isReadOnly ? () => {} : handleFormChange} readOnly={isReadOnly} />
           )}
           {step === 2 && (
-            isReadOnly ? (
+          <div className="space-y-6">
+            {/* Pricing model selection */}
+            <div className="space-y-2.5">
+              <label className="block text-sm font-semibold text-slate-800">
+                Choose a pricing model
+              </label>
+              <PricingModelSelector
+                value={form.pricingMethod}
+                onChange={isReadOnly ? () => {} : handleModelChange}
+                readOnly={isReadOnly}
+              />
+            </div>
+            {/* Tier/rate builder */}
+            {isReadOnly ? (
               <ReadOnlyTierView form={form} />
-            ) : (
-              <PricingTierTable
+            ) : form.pricingMethod === "flat_rate" ? (
+              <FlatRateEditor
                 tiers={form.tiers}
                 currency={form.currency}
                 onChange={(tiers) => handleFormChange({ tiers })}
               />
-            )
-          )}
+            ) : (
+              <PricingTierTable
+                tiers={form.tiers}
+                currency={form.currency}
+                pricingMethod={form.pricingMethod}
+                onChange={(tiers) => handleFormChange({ tiers })}
+              />
+            )}
+          </div>
+        )}
           {step === 3 && (
             <PricingPreviewStep form={form} savedTemplateId={savedTemplateId} />
           )}

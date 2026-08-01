@@ -134,6 +134,141 @@ export function calculateAdministrativeUsers(quantity: number) {
 
 export const validatePricingTemplate = validatePricingTemplateFromModule;
 
+// ---------------------------------------------------------------------------
+// Shared result builder
+// ---------------------------------------------------------------------------
+
+function buildBaseResult(
+  quantity: number,
+  template: PricingTemplate,
+  quotationExpiry: string | null
+) {
+  return {
+    pricing_template_id: template.id,
+    pricing_template_name: template.name,
+    product_key: template.product_key,
+    country: template.country,
+    currency: template.currency,
+    pricing_metric: template.pricing_metric,
+    pricing_method: template.pricing_method,
+    quantity,
+    discount: 0 as const,
+    tax: 0 as const,
+    included_admin_users: calculateAdministrativeUsers(quantity),
+    quotation_expiry: quotationExpiry,
+    calculated_at: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Progressive pricing (marginal split across tiers)
+// ---------------------------------------------------------------------------
+
+function calculateProgressiveResult(
+  normalizedQuantity: number,
+  template: PricingTemplate,
+  activeTiers: PricingTier[]
+): PricingCalculationResult {
+  const resolvedTiers = activeTiers.sort((left, right) => left.sequence - right.sequence);
+  let remaining = normalizedQuantity;
+  let subtotal = 0;
+  let requiresEnterpriseReview = false;
+  const tierBreakdown: PricingTierBreakdown[] = [];
+  let currentMinimum = 1;
+
+  resolvedTiers.forEach((tier) => {
+    if (remaining <= 0) return;
+    const tierStart = Math.max(currentMinimum, tier.minimum_quantity);
+    const tierEnd = tier.maximum_quantity === null ? normalizedQuantity : Math.min(normalizedQuantity, tier.maximum_quantity);
+    if (tierEnd < tierStart) return;
+    const applicableQuantity = Math.min(remaining, Math.max(0, tierEnd - tierStart + 1));
+    if (applicableQuantity <= 0) return;
+
+    if (tier.enterprise_action === "request_quotation") {
+      requiresEnterpriseReview = true;
+      tierBreakdown.push({ sequence: tier.sequence, minimum_quantity: tier.minimum_quantity, maximum_quantity: tier.maximum_quantity, applicable_quantity: applicableQuantity, unit_price: tier.unit_price, fixed_charge: 0, subtotal: 0, enterprise_action: tier.enterprise_action, label: `Tier ${tier.sequence}` });
+      remaining -= applicableQuantity;
+      currentMinimum = (tier.maximum_quantity ?? normalizedQuantity) + 1;
+      return;
+    }
+
+    const tierFixedCharge = tier.fixed_charge ?? 0;
+    const tierSubtotal = applicableQuantity * tier.unit_price + tierFixedCharge;
+    subtotal += tierSubtotal;
+    tierBreakdown.push({ sequence: tier.sequence, minimum_quantity: tier.minimum_quantity, maximum_quantity: tier.maximum_quantity, applicable_quantity: applicableQuantity, unit_price: tier.unit_price, fixed_charge: tierFixedCharge, subtotal: tierSubtotal, enterprise_action: tier.enterprise_action, label: `Tier ${tier.sequence}` });
+    remaining -= applicableQuantity;
+    currentMinimum = (tier.maximum_quantity ?? normalizedQuantity) + 1;
+  });
+
+  const quotationExpiry = template.quotation_validity_days ? new Date(Date.now() + template.quotation_validity_days * 24 * 60 * 60 * 1000).toISOString() : null;
+  return { ...buildBaseResult(normalizedQuantity, template, quotationExpiry), tier_breakdown: tierBreakdown, subtotal, total: requiresEnterpriseReview ? 0 : subtotal, quotation_status: requiresEnterpriseReview ? "request_quotation" : "calculated", quotation_expiry: quotationExpiry, requires_enterprise_review: requiresEnterpriseReview, enterprise_action: requiresEnterpriseReview ? "request_quotation" : null };
+}
+
+// ---------------------------------------------------------------------------
+// Volume pricing (full quantity priced at qualifying tier rate)
+// ---------------------------------------------------------------------------
+
+function calculateVolumeResult(
+  normalizedQuantity: number,
+  template: PricingTemplate,
+  activeTiers: PricingTier[]
+): PricingCalculationResult {
+  const sortedTiers = activeTiers.sort((a, b) => a.sequence - b.sequence);
+  const quotationExpiry = template.quotation_validity_days ? new Date(Date.now() + template.quotation_validity_days * 24 * 60 * 60 * 1000).toISOString() : null;
+
+  // Find the single qualifying tier that covers the full quantity
+  const qualifying = sortedTiers.find((tier) => {
+    const min = tier.minimum_quantity;
+    const max = tier.maximum_quantity;
+    return normalizedQuantity >= min && (max === null || normalizedQuantity <= max);
+  });
+
+  if (!qualifying) {
+    throw new Error(`Quantity ${normalizedQuantity} is not covered by any tier in this template.`);
+  }
+
+  if (qualifying.enterprise_action === "request_quotation") {
+    return { ...buildBaseResult(normalizedQuantity, template, quotationExpiry), tier_breakdown: [{ sequence: qualifying.sequence, minimum_quantity: qualifying.minimum_quantity, maximum_quantity: qualifying.maximum_quantity, applicable_quantity: normalizedQuantity, unit_price: qualifying.unit_price, fixed_charge: 0, subtotal: 0, enterprise_action: qualifying.enterprise_action, label: `Tier ${qualifying.sequence}` }], subtotal: 0, total: 0, quotation_status: "request_quotation", quotation_expiry: quotationExpiry, requires_enterprise_review: true, enterprise_action: "request_quotation" };
+  }
+
+  const tierFixedCharge = qualifying.fixed_charge ?? 0;
+  const tierSubtotal = normalizedQuantity * qualifying.unit_price + tierFixedCharge;
+  return { ...buildBaseResult(normalizedQuantity, template, quotationExpiry), tier_breakdown: [{ sequence: qualifying.sequence, minimum_quantity: qualifying.minimum_quantity, maximum_quantity: qualifying.maximum_quantity, applicable_quantity: normalizedQuantity, unit_price: qualifying.unit_price, fixed_charge: tierFixedCharge, subtotal: tierSubtotal, enterprise_action: qualifying.enterprise_action, label: `Tier ${qualifying.sequence}` }], subtotal: tierSubtotal, total: tierSubtotal, quotation_status: "calculated", quotation_expiry: quotationExpiry, requires_enterprise_review: false, enterprise_action: null };
+}
+
+// ---------------------------------------------------------------------------
+// Flat-rate pricing (single unit price for all quantities)
+// ---------------------------------------------------------------------------
+
+function calculateFlatRateResult(
+  normalizedQuantity: number,
+  template: PricingTemplate,
+  activeTiers: PricingTier[]
+): PricingCalculationResult {
+  const sortedTiers = activeTiers.sort((a, b) => a.sequence - b.sequence);
+  const quotationExpiry = template.quotation_validity_days ? new Date(Date.now() + template.quotation_validity_days * 24 * 60 * 60 * 1000).toISOString() : null;
+
+  const autoTier = sortedTiers.find((t) => t.enterprise_action !== "request_quotation");
+  const enterpriseTier = sortedTiers.find((t) => t.enterprise_action === "request_quotation");
+
+  if (!autoTier) {
+    return { ...buildBaseResult(normalizedQuantity, template, quotationExpiry), tier_breakdown: enterpriseTier ? [{ sequence: enterpriseTier.sequence, minimum_quantity: enterpriseTier.minimum_quantity, maximum_quantity: enterpriseTier.maximum_quantity, applicable_quantity: normalizedQuantity, unit_price: 0, fixed_charge: 0, subtotal: 0, enterprise_action: "request_quotation", label: `Tier ${enterpriseTier.sequence}` }] : [], subtotal: 0, total: 0, quotation_status: "request_quotation", quotation_expiry: quotationExpiry, requires_enterprise_review: true, enterprise_action: "request_quotation" };
+  }
+
+  // Check if quantity exceeds the auto tier's range → enterprise
+  if (autoTier.maximum_quantity !== null && normalizedQuantity > autoTier.maximum_quantity && enterpriseTier) {
+    return { ...buildBaseResult(normalizedQuantity, template, quotationExpiry), tier_breakdown: [{ sequence: enterpriseTier.sequence, minimum_quantity: enterpriseTier.minimum_quantity, maximum_quantity: enterpriseTier.maximum_quantity, applicable_quantity: normalizedQuantity, unit_price: 0, fixed_charge: 0, subtotal: 0, enterprise_action: "request_quotation", label: `Tier ${enterpriseTier.sequence}` }], subtotal: 0, total: 0, quotation_status: "request_quotation", quotation_expiry: quotationExpiry, requires_enterprise_review: true, enterprise_action: "request_quotation" };
+  }
+
+  const tierFixedCharge = autoTier.fixed_charge ?? 0;
+  const tierSubtotal = normalizedQuantity * autoTier.unit_price + tierFixedCharge;
+  return { ...buildBaseResult(normalizedQuantity, template, quotationExpiry), tier_breakdown: [{ sequence: autoTier.sequence, minimum_quantity: autoTier.minimum_quantity, maximum_quantity: autoTier.maximum_quantity, applicable_quantity: normalizedQuantity, unit_price: autoTier.unit_price, fixed_charge: tierFixedCharge, subtotal: tierSubtotal, enterprise_action: autoTier.enterprise_action, label: `Tier ${autoTier.sequence}` }], subtotal: tierSubtotal, total: tierSubtotal, quotation_status: "calculated", quotation_expiry: quotationExpiry, requires_enterprise_review: false, enterprise_action: null };
+}
+
+// ---------------------------------------------------------------------------
+// Public dispatcher — routes by pricing_method
+// ---------------------------------------------------------------------------
+
 export function calculateProgressivePricing(
   quantity: number,
   template: PricingTemplate,
@@ -150,63 +285,16 @@ export function calculateProgressivePricing(
     throw new Error("Quantity must be a positive whole number.");
   }
 
-  const resolvedTiers = activeTiers.sort((left, right) => left.sequence - right.sequence);
-  let remaining = normalizedQuantity;
-  let subtotal = 0;
-  const tierBreakdown: PricingTierBreakdown[] = [];
-  let currentMinimum = 1;
+  const sortedActiveTiers = activeTiers.sort((a, b) => a.sequence - b.sequence);
 
-  resolvedTiers.forEach((tier) => {
-    if (remaining <= 0) return;
-
-    const tierStart = Math.max(currentMinimum, tier.minimum_quantity);
-    const tierEnd = tier.maximum_quantity === null ? normalizedQuantity : Math.min(normalizedQuantity, tier.maximum_quantity);
-    if (tierEnd < tierStart) return;
-
-    const applicableQuantity = Math.min(remaining, Math.max(0, tierEnd - tierStart + 1));
-    if (applicableQuantity <= 0) return;
-
-    const tierSubtotal = applicableQuantity * tier.unit_price;
-    subtotal += tierSubtotal;
-    tierBreakdown.push({
-      sequence: tier.sequence,
-      minimum_quantity: tier.minimum_quantity,
-      maximum_quantity: tier.maximum_quantity,
-      applicable_quantity: applicableQuantity,
-      unit_price: tier.unit_price,
-      fixed_charge: tier.fixed_charge ?? 0,
-      subtotal: tierSubtotal,
-      enterprise_action: tier.enterprise_action,
-      label: `Tier ${tier.sequence}`
-    });
-    remaining -= applicableQuantity;
-    currentMinimum = (tier.maximum_quantity ?? normalizedQuantity) + 1;
-  });
-
-  const requiresEnterpriseReview = normalizedQuantity > 50000;
-  const quotationExpiry = template.quotation_validity_days ? new Date(Date.now() + template.quotation_validity_days * 24 * 60 * 60 * 1000).toISOString() : null;
-
-  return {
-    pricing_template_id: template.id,
-    pricing_template_name: template.name,
-    product_key: template.product_key,
-    country: template.country,
-    currency: template.currency,
-    pricing_metric: template.pricing_metric,
-    pricing_method: template.pricing_method,
-    quantity: normalizedQuantity,
-    tier_breakdown: tierBreakdown,
-    subtotal,
-    discount: 0,
-    tax: 0,
-    total: requiresEnterpriseReview ? 0 : subtotal,
-    included_admin_users: calculateAdministrativeUsers(normalizedQuantity),
-    quotation_status: requiresEnterpriseReview ? "request_quotation" : "calculated",
-    quotation_expiry: quotationExpiry,
-    requires_enterprise_review: requiresEnterpriseReview,
-    calculated_at: new Date().toISOString(),
-    enterprise_action: requiresEnterpriseReview ? "request_quotation" : null
-  };
+  switch (template.pricing_method) {
+    case "volume_tiered":
+      return calculateVolumeResult(normalizedQuantity, template, sortedActiveTiers);
+    case "flat_rate":
+      return calculateFlatRateResult(normalizedQuantity, template, sortedActiveTiers);
+    default:
+      return calculateProgressiveResult(normalizedQuantity, template, sortedActiveTiers);
+  }
 }
 
 export async function resolveApplicablePricingTemplate(request: PricingCalculationRequest): Promise<{ template: PricingTemplate | null; error?: PricingValidationError }> {
