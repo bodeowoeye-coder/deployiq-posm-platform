@@ -68,6 +68,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ draft: updatedDraft });
     }
 
+    if (step === "enterprise-assistance") {
+      const updatedDraft = await updateOnboardingDraft({
+        resumeToken: draftToken,
+        currentStep: "account",
+        status: "account_pending",
+        draftData: {
+          ...existingDraft.draft_data,
+          enterpriseRequest: typeof body.enterpriseRequest === "object" ? body.enterpriseRequest : null,
+          enterpriseRequestedAt: new Date().toISOString(),
+        }
+      });
+      return NextResponse.json({ draft: updatedDraft });
+    }
+
     return NextResponse.json({ draft: existingDraft });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
