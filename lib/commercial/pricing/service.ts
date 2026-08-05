@@ -1,6 +1,10 @@
 import { createAdminSupabase } from "../../supabaseAdmin";
 import { buildPricingTemplatePayload as buildPricingTemplatePayloadFromModule } from "./payload";
 import { validatePricingTemplate as validatePricingTemplateFromModule } from "./validation";
+import { normaliseCountry, countriesMatch } from "./countryNormalisation";
+import { resolveCommercialModel, resolveAllowedPaymentMethods } from "./commercialModel";
+import { buildClonedTemplateInsert } from "./clone";
+import { getProductKeyLookupVariants, resolveProductKey } from "../products/catalogue";
 import type {
   EnterpriseReviewResult,
   PricingCalculationRequest,
@@ -31,6 +35,17 @@ function toStringOrNull(value: unknown): string | null {
   return null;
 }
 
+/**
+ * Convert a value to a trimmed string, or null.
+ * Empty strings are treated as null — they mean "no restriction" for optional
+ * scope fields (country, region, customer_segment, campaign_type).
+ * This handles templates that stored "" rather than NULL.
+ */
+function toOptionalStringOrNull(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  return null;
+}
+
 function parseDateString(value: unknown): string | null {
   if (typeof value === "string" && value) return value;
   return null;
@@ -40,20 +55,26 @@ function normalizeTemplateRecord(record: Record<string, unknown>): PricingTempla
   const tiers = Array.isArray(record.tiers) ? (record.tiers as Record<string, unknown>[]).map(normalizeTierRecord) : [];
   return {
     id: toStringOrNull(record.id),
-    product_key: String(record.product_key ?? ""),
+    product_key: resolveProductKey(String(record.product_key ?? "")),
     name: String(record.name ?? ""),
     description: toStringOrNull(record.description),
     currency: String(record.currency ?? ""),
-    country: toStringOrNull(record.country),
-    region: toStringOrNull(record.region),
-    customer_segment: toStringOrNull(record.customer_segment),
-    campaign_type: toStringOrNull(record.campaign_type),
+    country: toOptionalStringOrNull(record.country),
+    region: toOptionalStringOrNull(record.region),
+    customer_segment: toOptionalStringOrNull(record.customer_segment),
+    campaign_type: toOptionalStringOrNull(record.campaign_type),
     pricing_metric: String(record.pricing_metric ?? "deployment_location") as PricingTemplate["pricing_metric"],
     pricing_method: String(record.pricing_method ?? "progressive_tiered") as PricingTemplate["pricing_method"],
     status: String(record.status ?? "draft") as PricingTemplateStatus,
     is_default: Boolean(record.is_default),
     effective_from: parseDateString(record.effective_from),
     effective_to: parseDateString(record.effective_to),
+    commercial_model: toOptionalStringOrNull(record.commercial_model),
+    billing_behaviour: toOptionalStringOrNull(record.billing_behaviour),
+    renewal_required: typeof record.renewal_required === "boolean" ? record.renewal_required : false,
+    allowed_payment_methods: Array.isArray(record.allowed_payment_methods)
+      ? (record.allowed_payment_methods as string[])
+      : null,
     quotation_validity_days: toNumber(record.quotation_validity_days),
     created_by: toStringOrNull(record.created_by),
     updated_by: toStringOrNull(record.updated_by),
@@ -110,7 +131,8 @@ function isWithinEffectiveWindow(template: PricingTemplate, calculationDate: str
 }
 
 function matchesScope(template: PricingTemplate, scope: PricingScope): boolean {
-  const countryMatches = template.country === null || template.country === scope.country;
+  // Use normalised comparison so "Nigeria", "NG", "NGA" all resolve to the same country.
+  const countryMatches = countriesMatch(template.country, scope.country);
   const regionMatches = template.region === null || template.region === scope.region;
   const segmentMatches = template.customer_segment === null || template.customer_segment === scope.customer_segment;
   const campaignMatches = template.campaign_type === null || template.campaign_type === scope.campaign_type;
@@ -157,6 +179,10 @@ function buildBaseResult(
     included_admin_users: calculateAdministrativeUsers(quantity),
     quotation_expiry: quotationExpiry,
     calculated_at: new Date().toISOString(),
+    commercial_model: template.commercial_model ?? null,
+    billing_behaviour: template.billing_behaviour ?? null,
+    renewal_required: template.renewal_required ?? false,
+    allowed_payment_methods: template.allowed_payment_methods ?? null,
   };
 }
 
@@ -299,13 +325,15 @@ export function calculateProgressivePricing(
 
 export async function resolveApplicablePricingTemplate(request: PricingCalculationRequest): Promise<{ template: PricingTemplate | null; error?: PricingValidationError }> {
   const supabase = createAdminSupabase();
-  const scope = createScopeFromRequest(request);
+  // Normalise legacy product keys (assets → assets_audit, etc.) before querying
+  const canonicalProductKey = resolveProductKey(request.productKey);
+  const scope = createScopeFromRequest({ ...request, productKey: canonicalProductKey });
   const calculationDate = request.calculationDate ?? new Date().toISOString();
 
   const { data, error } = await supabase
     .from("commercial_pricing_templates")
     .select("*, commercial_pricing_tiers(*)")
-    .eq("product_key", request.productKey)
+    .in("product_key", getProductKeyLookupVariants(canonicalProductKey))
     .eq("currency", request.currency ?? "NGN")
     .eq("status", "active")
     .is("archived_at", null)
@@ -318,12 +346,30 @@ export async function resolveApplicablePricingTemplate(request: PricingCalculati
   const templateRows = (data ?? []) as Array<Record<string, unknown>>;
   const candidates = templateRows
     .map((record) => normalizeTemplateRecord({ ...record, tiers: Array.isArray(record.commercial_pricing_tiers) ? (record.commercial_pricing_tiers as Record<string, unknown>[]).map(normalizeTierRecord) : [] }))
-    .filter((template) => template.status === "active" && !template.archived_at && template.product_key === request.productKey && template.currency === (request.currency ?? "NGN") && isWithinEffectiveWindow(template, calculationDate));
+    .filter((template) => template.status === "active" && !template.archived_at && resolveProductKey(template.product_key) === canonicalProductKey && template.currency === (request.currency ?? "NGN") && isWithinEffectiveWindow(template, calculationDate));
 
   const scopedCandidates = candidates.filter((template) => matchesScope(template, scope));
-  const exactCandidates = scopedCandidates.filter((template) => template.country === scope.country && template.region === scope.region && template.customer_segment === scope.customer_segment && template.campaign_type === scope.campaign_type);
-  const countryCandidates = scopedCandidates.filter((template) => template.country === scope.country && template.region === null && template.customer_segment === null && template.campaign_type === null);
-  const defaultCandidates = scopedCandidates.filter((template) => template.is_default && template.country === null);
+
+  // Normalise scope country for comparisons in the bucket filters below.
+  const normalisedScopeCountry = normaliseCountry(scope.country);
+
+  const exactCandidates = scopedCandidates.filter(
+    (template) =>
+      normaliseCountry(template.country) === normalisedScopeCountry &&
+      template.region                === scope.region &&
+      template.customer_segment     === scope.customer_segment &&
+      template.campaign_type        === scope.campaign_type,
+  );
+  const countryCandidates = scopedCandidates.filter(
+    (template) =>
+      normaliseCountry(template.country) === normalisedScopeCountry &&
+      template.region === null &&
+      template.customer_segment === null &&
+      template.campaign_type === null,
+  );
+  const defaultCandidates = scopedCandidates.filter(
+    (template) => template.is_default && normaliseCountry(template.country) === null,
+  );
 
   const selectedCandidates = exactCandidates.length > 0
     ? exactCandidates
@@ -333,14 +379,28 @@ export async function resolveApplicablePricingTemplate(request: PricingCalculati
         ? defaultCandidates
         : scopedCandidates.filter((template) => template.is_default);
 
-  const activeCandidates = sortCandidates(selectedCandidates.filter((template) => template.is_default || matchesScope(template, scope)));
+  // selectedCandidates already passed matchesScope; the is_default check is kept
+  // for sorting priority but must not silently drop non-default templates.
+  const activeCandidates = sortCandidates(
+    selectedCandidates.filter((template) => template.is_default || matchesScope(template, scope)),
+  );
 
   if (!activeCandidates.length) {
     return { template: null, error: createTemplateResolutionError("No applicable pricing template is available.") };
   }
 
   if (activeCandidates.length > 1) {
-    return { template: null, error: { code: "configuration_conflict", message: "Multiple applicable pricing templates were found.", details: {} } };
+    // Multiple candidates at the same precedence level.
+    // sortCandidates already places is_default=true first; pick the winner
+    // rather than blocking the customer with an enterprise-review response.
+    // A configuration warning is logged but not surfaced to the customer.
+    const winner = activeCandidates[0];
+    console.warn(
+      `[pricing] Multiple candidates for product=${scope.product_key} country=${scope.country} ` +
+      `currency=${scope.currency}: selected ${winner.id} (${winner.name}). ` +
+      `Admin should deactivate duplicate templates.`,
+    );
+    return { template: winner };
   }
 
   return { template: activeCandidates[0] };
@@ -459,6 +519,10 @@ function buildSyntheticTemplateForValidation(
     effective_from: payload.effective_from,
     effective_to: payload.effective_to,
     quotation_validity_days: payload.quotation_validity_days,
+    commercial_model: (payload as Record<string, unknown>).commercial_model as string | null ?? null,
+    billing_behaviour: (payload as Record<string, unknown>).billing_behaviour as string | null ?? null,
+    renewal_required: ((payload as Record<string, unknown>).renewal_required as boolean | null) ?? false,
+    allowed_payment_methods: ((payload as Record<string, unknown>).allowed_payment_methods as string[] | null) ?? null,
     created_by: null,
     updated_by: null,
     activated_by: null,
@@ -723,40 +787,18 @@ export async function archiveTemplate(templateId: string, userId: string | null)
   return updated;
 }
 
-export async function cloneTemplate(templateId: string, userId: string | null): Promise<PricingTemplate> {
+export async function cloneTemplate(
+  templateId: string,
+  userId: string | null,
+  destinationProductKey?: string | null
+): Promise<PricingTemplate> {
   const source = await getPricingTemplateById(templateId);
   if (!source) throw new Error("Pricing template not found.");
   const supabase = createAdminSupabase();
   const now = new Date().toISOString();
   const { data: cloneData, error: cloneError } = await supabase
     .from("commercial_pricing_templates")
-    .insert({
-      product_key: source.product_key,
-      name: `${source.name} (Copy)`,
-      description: source.description,
-      currency: source.currency,
-      country: source.country,
-      region: source.region,
-      customer_segment: source.customer_segment,
-      campaign_type: source.campaign_type,
-      pricing_metric: source.pricing_metric,
-      pricing_method: source.pricing_method,
-      status: "draft",
-      is_default: false,
-      effective_from: source.effective_from,
-      effective_to: source.effective_to,
-      quotation_validity_days: source.quotation_validity_days,
-      created_by: userId,
-      updated_by: userId,
-      activated_by: null,
-      activated_at: null,
-      deactivated_by: null,
-      deactivated_at: null,
-      archived_by: null,
-      archived_at: null,
-      created_at: now,
-      updated_at: now
-    })
+    .insert(buildClonedTemplateInsert(source, userId, now, destinationProductKey))
     .select()
     .single();
   if (cloneError) throw cloneError;

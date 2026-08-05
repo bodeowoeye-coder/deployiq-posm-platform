@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 
     if (step === "product") {
       const product = getCommercialProduct(typeof body.productKey === "string" ? (body.productKey as any) : "retail");
-      if (!product || product.availability !== "available") {
+      if (!product || product.availability !== "instant_setup") {
         return NextResponse.json({ error: "The selected product is not currently available." }, { status: 400 });
       }
       const updatedDraft = await updateOnboardingDraft({

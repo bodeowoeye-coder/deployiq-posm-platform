@@ -32,6 +32,19 @@ export async function POST(request: Request) {
       draft?.selected_product ??
       (typeof body.productKey === "string" ? body.productKey : "retail");
 
+    if (draft?.draft_data?.pricingReady === false) {
+      return NextResponse.json(
+        {
+          requiresEnterpriseReview: true,
+          enterpriseReason:
+            "Standard online pricing is not yet available for this solution. Our assisted sales team will prepare a tailored commercial plan.",
+          quantity,
+          productKey,
+        },
+        { status: 200 }
+      );
+    }
+
     const country = typeof body.country === "string" ? body.country : draft?.draft_data?.country as string | undefined ?? null;
     const currency = typeof body.currency === "string" ? body.currency : (country ? currencyForCountry(country) : "NGN");
 
@@ -47,6 +60,26 @@ export async function POST(request: Request) {
       calculationDate: null,
       onboardingDraftId,
     });
+
+    // DEV-ONLY diagnostic — removed in production via NODE_ENV guard
+    if (process.env.NODE_ENV === "development") {
+      const scope = { productKey, currency, country, region: null, customerSegment: null, campaignType: null };
+      if (!templateResolution.template) {
+        console.info("[quotation-template-resolution] No eligible template found", {
+          scope,
+          error: templateResolution.error?.message,
+        });
+      } else {
+        console.info("[quotation-template-resolution] Template resolved", {
+          scope,
+          templateId: templateResolution.template.id,
+          templateName: templateResolution.template.name,
+          status: templateResolution.template.status,
+          isDefault: templateResolution.template.is_default,
+          tierCount: templateResolution.template.tiers?.length ?? 0,
+        });
+      }
+    }
 
     if (!templateResolution.template) {
       // No active template — enterprise path

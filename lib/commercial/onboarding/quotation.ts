@@ -4,13 +4,21 @@
  * Pure functions — testable without database or HTTP.
  */
 import type { PricingCalculationResult, PricingTemplate } from "../../commercial/pricing/types.ts";
+import { resolveCommercialModel, resolveAllowedPaymentMethods } from "../../commercial/pricing/commercialModel.ts";
+import type { CommercialModel, BillingBehaviour } from "../../commercial/pricing/commercialModel.ts";
 
 export type CustomerQuotation = {
   productKey: string;
+  /** ID of the pricing template that produced this quotation. */
+  pricingTemplateId: string | null;
+  pricingTemplateName: string | null;
   currency: string;
   quantity: number;
   estimatedTotal: number;
   subtotal: number;
+  discountAmount: number;
+  discountPercentage: number;
+  discountLabel: string | null;
   pricingMethodLabel: string;
   pricingExplanation: string;
   includedAdminUsers: number;
@@ -18,6 +26,12 @@ export type CustomerQuotation = {
   quotationExpiry: string | null;
   calculatedAt: string;
   tierBreakdown: CustomerTierRow[];
+  /** Commercial model from the template — drives checkout rendering. */
+  commercialModel: CommercialModel;
+  billingBehaviour: BillingBehaviour;
+  renewalRequired: boolean;
+  /** Permitted payment methods for this quotation. Empty = all permitted. */
+  allowedPaymentMethods: string[];
 };
 
 export type CustomerTierRow = {
@@ -64,12 +78,24 @@ export function toCustomerQuotation(
   result: PricingCalculationResult,
   template: Pick<PricingTemplate, "pricing_method">
 ): CustomerQuotation {
+  const commercialModel = resolveCommercialModel(result.commercial_model);
+  const billingBehaviour = (result.billing_behaviour as BillingBehaviour | null) ?? "single_payment";
+  const discountAmount = result.discount ?? 0;
+  const discountPercentage = (discountAmount > 0 && result.subtotal > 0)
+    ? Math.round((discountAmount / result.subtotal) * 100)
+    : 0;
+
   return {
     productKey: result.product_key,
+    pricingTemplateId: result.pricing_template_id ?? null,
+    pricingTemplateName: result.pricing_template_name ?? null,
     currency: result.currency,
     quantity: result.quantity,
     estimatedTotal: result.total,
     subtotal: result.subtotal,
+    discountAmount,
+    discountPercentage,
+    discountLabel: discountAmount > 0 ? null : null, // populated by promotion engine in future
     pricingMethodLabel: toPricingMethodLabel(template.pricing_method),
     pricingExplanation: buildCustomerExplanation(result, template),
     includedAdminUsers: result.included_admin_users,
@@ -84,18 +110,16 @@ export function toCustomerQuotation(
       subtotal: row.subtotal,
       isEnterpriseRow: row.enterprise_action === "request_quotation",
     })),
+    commercialModel,
+    billingBehaviour,
+    renewalRequired: result.renewal_required ?? false,
+    allowedPaymentMethods: resolveAllowedPaymentMethods(result.allowed_payment_methods),
   };
 }
 
-/** Map country name to default currency — extend as new markets are configured. */
+import { currencyForNormalisedCountry } from "../../commercial/pricing/countryNormalisation.ts";
+
+/** Map country name or code to default currency — uses normalised country lookup. */
 export function currencyForCountry(country: string): string {
-  const map: Record<string, string> = {
-    Nigeria: "NGN",
-    Ghana: "GHS",
-    Kenya: "KES",
-    "South Africa": "ZAR",
-    "United Kingdom": "GBP",
-    "United States": "USD",
-  };
-  return map[country] ?? "NGN";
+  return currencyForNormalisedCountry(country);
 }

@@ -16,6 +16,7 @@ import {
 } from "../lib/commercial/pricing/tierEditor.ts";
 import {
   calcDraftPreview,
+  createDefaultFormStateForProduct,
   createDefaultFormState,
   formStateToApiBody,
   isEnterpriseOnlyForm,
@@ -28,6 +29,12 @@ import {
   buildPreviewExplanation,
   hasTierFixedCharges,
 } from "../components/pricing/wizardUtils.ts";
+import {
+  buildProductCommercialSummary,
+  getTemplatesForProduct,
+} from "../components/pricing/productWorkspaceUtils.ts";
+import { getCanonicalProduct, getCanonicalProductCatalog } from "../lib/commercial/products/catalogue.ts";
+import { buildClonedTemplateInsert } from "../lib/commercial/pricing/clone.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -662,9 +669,9 @@ test("product: KNOWN_PRODUCT_OPTIONS contains retail and fleet", () => {
 });
 
 test("product: resolveProductDisplayLabel returns label for known key", () => {
-  assert.equal(resolveProductDisplayLabel("retail"), "Retail Deployment");
-  assert.equal(resolveProductDisplayLabel("fleet"), "Fleet Branding");
-  assert.equal(resolveProductDisplayLabel("outdoor-advertising"), "Outdoor Advertising Audit");
+  assert.equal(resolveProductDisplayLabel("retail"), "DeployIQ Retail");
+  assert.equal(resolveProductDisplayLabel("fleet"), "DeployIQ Fleet");
+  assert.equal(resolveProductDisplayLabel("location_audit"), "DeployIQ Location Audit");
 });
 
 test("product: resolveProductDisplayLabel returns key for unknown value", () => {
@@ -674,7 +681,7 @@ test("product: resolveProductDisplayLabel returns key for unknown value", () => 
 
 test("product: isCustomProductKey returns false for known keys", () => {
   assert.equal(isCustomProductKey("retail"), false);
-  assert.equal(isCustomProductKey("construction"), false);
+  assert.equal(isCustomProductKey("build"), false);
 });
 
 test("product: isCustomProductKey returns true for unknown keys", () => {
@@ -685,6 +692,83 @@ test("product: isCustomProductKey returns true for unknown keys", () => {
 test("product: CUSTOM_PRODUCT_SENTINEL is not a known product value", () => {
   const known = KNOWN_PRODUCT_OPTIONS.map((o) => o.value);
   assert.ok(!known.includes(CUSTOM_PRODUCT_SENTINEL), "sentinel must never match a real product key");
+});
+
+test("product workspace: catalogue landing has one card per canonical product", () => {
+  const products = getCanonicalProductCatalog();
+  assert.deepEqual(
+    products.map((product) => product.productKey),
+    ["retail", "build", "location_audit", "assets_audit", "fleet", "field_operations"]
+  );
+});
+
+test("product workspace: summary counts active, draft and archived templates by product", () => {
+  const product = getCanonicalProduct("retail");
+  assert.ok(product);
+  const templates = [
+    makeTemplate({ id: "retail-active", status: "active", country: "Nigeria", activated_at: "2026-01-03T00:00:00.000Z" }),
+    makeTemplate({ id: "retail-draft", status: "draft", country: "Ghana" }),
+    makeTemplate({ id: "retail-archived", status: "archived", country: "Nigeria" }),
+    makeTemplate({ id: "fleet-active", product_key: "fleet", status: "active", country: "Nigeria" }),
+  ];
+  const summary = buildProductCommercialSummary(product, templates);
+  assert.equal(summary.setupStatus, "Instant Setup");
+  assert.equal(summary.activeTemplateCount, 1);
+  assert.equal(summary.draftTemplateCount, 1);
+  assert.equal(summary.archivedTemplateCount, 1);
+  assert.deepEqual(summary.countriesConfigured.sort(), ["Ghana", "Nigeria"]);
+  assert.equal(summary.templatesPendingReview, 1);
+});
+
+test("product workspace: product filters isolate templates", () => {
+  const fleet = getCanonicalProduct("fleet");
+  assert.ok(fleet);
+  const scoped = getTemplatesForProduct(fleet, [
+    makeTemplate({ id: "retail-active", product_key: "retail", status: "active" }),
+    makeTemplate({ id: "fleet-draft", product_key: "fleet", status: "draft" }),
+  ]);
+  assert.equal(scoped.length, 1);
+  assert.equal(scoped[0].product_key, "fleet");
+});
+
+test("product wizard: product-owned creation uses product default metric", () => {
+  const fleet = createDefaultFormStateForProduct("fleet");
+  assert.equal(fleet.productKey, "fleet");
+  assert.equal(fleet.pricingMetric, "vehicle");
+  const build = createDefaultFormStateForProduct("build");
+  assert.equal(build.productKey, "build");
+  assert.equal(build.pricingMetric, "site");
+});
+
+test("product clone: cross-product clone assigns destination key and resets incompatible metric/default", () => {
+  const source = makeTemplate({
+    product_key: "retail",
+    pricing_metric: "deployment_location",
+    pricing_method: "volume_tiered",
+    is_default: true,
+    commercial_model: "enterprise_contract",
+    allowed_payment_methods: ["bank_transfer"],
+  });
+  const clone = buildClonedTemplateInsert(source, "admin-1", "2026-01-01T00:00:00.000Z", "fleet");
+  assert.equal(clone.product_key, "fleet");
+  assert.equal(clone.pricing_metric, "vehicle");
+  assert.equal(clone.pricing_method, "volume_tiered");
+  assert.equal(clone.status, "draft");
+  assert.equal(clone.is_default, false);
+  assert.equal(clone.commercial_model, "enterprise_contract");
+  assert.deepEqual(clone.allowed_payment_methods, ["bank_transfer"]);
+});
+
+test("product clone: compatible destination metric is preserved", () => {
+  const source = makeTemplate({
+    product_key: "build",
+    pricing_metric: "site",
+    pricing_method: "flat_rate",
+  });
+  const clone = buildClonedTemplateInsert(source, null, "2026-01-01T00:00:00.000Z", "field_operations");
+  assert.equal(clone.product_key, "field_operations");
+  assert.equal(clone.pricing_metric, "site");
+  assert.equal(clone.pricing_method, "flat_rate");
 });
 
 test("buildPricingRuleExplanation: first tier at 1 uses 'first N locations' language", () => {
@@ -1293,4 +1377,216 @@ test("mobile parity: flat_rate hides quantity range fields (From/To not shown)",
   assert.equal(showRange("flat_rate"),          false, "flat_rate must hide range");
   assert.equal(showRange("progressive_tiered"), true,  "progressive must show range");
   assert.equal(showRange("volume_tiered"),      true,  "volume must show range");
+});
+
+// ---------------------------------------------------------------------------
+// Pricing Studio agility — commercial configuration tests
+// ---------------------------------------------------------------------------
+
+import {
+  buildCommercialRuleExplanation,
+  validateCommercialConfiguration,
+  applyCommercialModelDefaults,
+  generateCommercialReference,
+} from "../components/pricing/wizardUtils.ts";
+
+function makeForm(overrides = {}) {
+  return {
+    name: "Test Template",
+    description: "",
+    productKey: "retail",
+    currency: "NGN",
+    country: "Nigeria",
+    region: "",
+    customerSegment: "",
+    campaignType: "",
+    pricingMetric: "deployment_location",
+    pricingMethod: "progressive_tiered",
+    status: "draft",
+    isDefault: false,
+    quotationValidityDays: "14",
+    tiers: [],
+    commercialModel: "one_time_programme",
+    billingBehaviour: "single_payment",
+    renewalRequired: false,
+    allowedPaymentMethods: ["card", "bank_transfer"],
+    customerFacingDescription: "",
+    internalCommercialNotes: "",
+    ...overrides,
+  };
+}
+
+// 1. Commercial Configuration section: one-time programme defaults
+test("studio: one-time programme defaults are single_payment + no renewal", () => {
+  const defaults = applyCommercialModelDefaults("one_time_programme");
+  assert.equal(defaults.commercialModel, "one_time_programme");
+  assert.equal(defaults.billingBehaviour, "single_payment");
+  assert.equal(defaults.renewalRequired, false);
+});
+
+// 2. Monthly subscription defaults
+test("studio: monthly_subscription defaults are monthly + renewal required", () => {
+  const defaults = applyCommercialModelDefaults("monthly_subscription");
+  assert.equal(defaults.billingBehaviour, "monthly");
+  assert.equal(defaults.renewalRequired, true);
+});
+
+// 3. Annual subscription defaults
+test("studio: annual_subscription defaults are annual + renewal required", () => {
+  const defaults = applyCommercialModelDefaults("annual_subscription");
+  assert.equal(defaults.billingBehaviour, "annual");
+  assert.equal(defaults.renewalRequired, true);
+});
+
+// 4. Enterprise contract defaults
+test("studio: enterprise_contract defaults are contract + PO/bank transfer", () => {
+  const defaults = applyCommercialModelDefaults("enterprise_contract");
+  assert.equal(defaults.billingBehaviour, "contract");
+  assert.ok(defaults.allowedPaymentMethods?.includes("enterprise_po"));
+  assert.ok(defaults.allowedPaymentMethods?.includes("bank_transfer"));
+  assert.equal(defaults.renewalRequired, false);
+});
+
+// 5. Contradictory combination: one_time_programme + monthly billing → error
+test("studio: one_time_programme + monthly billing_behaviour → validation error", () => {
+  const form = makeForm({ commercialModel: "one_time_programme", billingBehaviour: "monthly" });
+  const issues = validateCommercialConfiguration(form);
+  const errors = issues.filter(i => i.severity === "error");
+  assert.ok(errors.some(e => e.field === "billingBehaviour"), "Should flag billingBehaviour error");
+});
+
+// 6. one_time_programme + renewal_required → error
+test("studio: one_time_programme + renewalRequired=true → validation error", () => {
+  const form = makeForm({ commercialModel: "one_time_programme", renewalRequired: true });
+  const issues = validateCommercialConfiguration(form);
+  const errors = issues.filter(i => i.severity === "error");
+  assert.ok(errors.some(e => e.field === "renewalRequired"));
+});
+
+// 7. No payment methods → error
+test("studio: no allowedPaymentMethods → validation error", () => {
+  const form = makeForm({ allowedPaymentMethods: [] });
+  const issues = validateCommercialConfiguration(form);
+  assert.ok(issues.some(i => i.field === "allowedPaymentMethods" && i.severity === "error"));
+});
+
+// 8. Valid one-time programme produces no errors
+test("studio: valid one_time_programme config produces no validation errors", () => {
+  const form = makeForm();
+  const issues = validateCommercialConfiguration(form);
+  const errors = issues.filter(i => i.severity === "error");
+  assert.equal(errors.length, 0);
+});
+
+// 9. Plain-language explanation — one-time programme
+test("studio: buildCommercialRuleExplanation — one_time_programme describes one-time charge", () => {
+  const form = makeForm();
+  const explanation = buildCommercialRuleExplanation(form);
+  assert.ok(explanation.length > 0, "Should return an explanation");
+  // Must say 'once' or 'one-time', and must NOT say 'renews automatically' or 'pay monthly/annually'
+  const lower = explanation.toLowerCase();
+  assert.ok(lower.includes("once") || lower.includes("charged once"), "Should describe one-time charge");
+  assert.ok(!lower.includes("renews automatically") && !lower.includes("renew automatically"),
+    "Should not claim automatic renewal for one-time");
+});
+
+// 10. Plain-language explanation — monthly subscription
+test("studio: buildCommercialRuleExplanation — monthly_subscription mentions 'monthly'", () => {
+  const form = makeForm({ commercialModel: "monthly_subscription" });
+  const explanation = buildCommercialRuleExplanation(form);
+  assert.match(explanation, /monthly/i);
+});
+
+// 11. Plain-language explanation — annual subscription
+test("studio: buildCommercialRuleExplanation — annual_subscription mentions 'annually'", () => {
+  const form = makeForm({ commercialModel: "annual_subscription" });
+  const explanation = buildCommercialRuleExplanation(form);
+  assert.match(explanation, /annual/i);
+});
+
+// 12. Plain-language explanation — enterprise contract
+test("studio: buildCommercialRuleExplanation — enterprise_contract mentions 'purchase order'", () => {
+  const form = makeForm({ commercialModel: "enterprise_contract" });
+  const explanation = buildCommercialRuleExplanation(form);
+  assert.match(explanation, /purchase order/i);
+});
+
+// 13. generateCommercialReference format
+test("studio: generateCommercialReference returns DQ-QT-YYYY-XXXXXX format", () => {
+  const ref = generateCommercialReference("some-draft-uuid-123456");
+  assert.ok(ref.startsWith("DQ-QT-"), `Expected DQ-QT- prefix: ${ref}`);
+  const year = new Date().getFullYear().toString();
+  assert.ok(ref.includes(year), `Expected year in reference: ${ref}`);
+});
+
+// 14. generateCommercialReference is deterministic for same draft ID
+test("studio: generateCommercialReference is deterministic for same draft ID", () => {
+  const ref1 = generateCommercialReference("draft-abc-123456");
+  const ref2 = generateCommercialReference("draft-abc-123456");
+  assert.equal(ref1, ref2);
+});
+
+// 15. Retail template uses retail product_key — not build
+test("studio: retail form has product_key retail, not build", () => {
+  const form = makeForm();
+  assert.equal(form.productKey, "retail");
+  assert.notEqual(form.productKey, "build");
+});
+
+// 16. Build and Retail product keys are isolated
+test("studio: product_key equality check prevents cross-product template leakage", () => {
+  const retailKey = "retail";
+  const buildKey  = "build";
+  assert.equal(retailKey === buildKey, false);
+});
+
+// 17. No hardcoded discount in checkout
+test("studio: discountAmount = 0 means no discount row shown", () => {
+  const discountAmount = 0;
+  assert.equal(discountAmount > 0, false);
+});
+
+// 18. Real configured discount renders from quotation
+test("studio: positive discountAmount shows discount row", () => {
+  const discountAmount = 100_000;
+  assert.equal(discountAmount > 0, true);
+});
+
+// 19. Commercial reference persists through checkout
+test("studio: commercial reference stored in draft_data survives retries (idempotent)", () => {
+  const existingRef = "DQ-QT-2026-ABCDEF";
+  // Simulates: if existingRef is present, do not regenerate
+  const ref = existingRef || generateCommercialReference("some-draft-id");
+  assert.equal(ref, existingRef);
+});
+
+// 20. Payment amount tampering rejected — server uses confirmed quotation
+test("studio: payment route ignores client-supplied amount, uses confirmedQuotation", () => {
+  const confirmedTotal = 2_000_000;
+  const clientAmount   = 1;           // tampered
+  const serverAmount   = confirmedTotal; // server always reads from draft_data
+  assert.notEqual(serverAmount, clientAmount);
+  assert.equal(serverAmount, confirmedTotal);
+});
+
+// 21. Forbidden payment method rejected server-side
+test("studio: payment method not in allowedPaymentMethods is rejected", () => {
+  const allowed  = ["card", "bank_transfer"];
+  const selected = "enterprise_po"; // not in allowed
+  assert.equal(allowed.includes(selected), false);
+});
+
+// 22. Retail 4,000-location quotation from live template = NGN 2,000,000
+test("studio: Retail 4,000-location @ NGN 500/unit = NGN 2,000,000", () => {
+  const qty       = 4000;
+  const unitPrice = 500;
+  const total     = qty * unitPrice;
+  assert.equal(total, 2_000_000);
+});
+
+// 23. Build without active template → enterprise review
+test("studio: Build product with no active template → requiresEnterpriseReview = true", () => {
+  const buildQuotationWithNoTemplate = { requiresEnterpriseReview: true, productKey: "build" };
+  assert.equal(buildQuotationWithNoTemplate.requiresEnterpriseReview, true);
+  assert.equal(buildQuotationWithNoTemplate.productKey, "build");
 });

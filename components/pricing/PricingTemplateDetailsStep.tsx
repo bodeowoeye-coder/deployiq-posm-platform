@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Lock } from "lucide-react";
 import { ProductPricingSelector } from "./ProductPricingSelector";
 import { resolveProductDisplayLabel } from "./wizardUtils";
 import type { FormState } from "./types";
@@ -10,6 +10,7 @@ type Props = {
   form: FormState;
   onChange: (patch: Partial<FormState>) => void;
   readOnly?: boolean;
+  productLocked?: boolean;
 };
 
 const CURRENCY_OPTIONS = [
@@ -45,7 +46,7 @@ function SectionHeading({
   );
 }
 
-export function PricingTemplateDetailsStep({ form, onChange, readOnly = false }: Props) {
+export function PricingTemplateDetailsStep({ form, onChange, readOnly = false, productLocked = false }: Props) {
   const [showTargeting, setShowTargeting] = useState(
     !!(form.region || form.customerSegment || form.campaignType)
   );
@@ -112,11 +113,25 @@ export function PricingTemplateDetailsStep({ form, onChange, readOnly = false }:
             helper={readOnly ? undefined : "Choose the type of deployments this pricing rule covers."}
           />
         </legend>
-        <ProductPricingSelector
-          value={form.productKey}
-          onChange={(key) => onChange({ productKey: key })}
-          readOnly={readOnly}
-        />
+        {productLocked ? (
+          <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+            <div>
+              <p className="text-sm font-semibold text-slate-800">
+                {resolveProductDisplayLabel(form.productKey)}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                This template belongs to this product.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <ProductPricingSelector
+            value={form.productKey}
+            onChange={(key) => onChange({ productKey: key })}
+            readOnly={readOnly}
+          />
+        )}
       </fieldset>
 
       <hr className="border-slate-100" />

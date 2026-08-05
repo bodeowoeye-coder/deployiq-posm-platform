@@ -10,15 +10,6 @@ type Props = {
   readOnly?: boolean;
 };
 
-const DESCRIPTIONS: Record<string, string> = {
-  retail:               "Standard retail site and outlet campaigns",
-  fleet:                "Vehicle wrapping and fleet marking",
-  "asset-verification": "Physical asset auditing and verification",
-  construction:         "Site progress and compliance monitoring",
-  "outdoor-advertising":"Billboard and outdoor media auditing",
-  "event-activation":   "Event setup and activation tracking",
-};
-
 export function ProductPricingSelector({ value, onChange, readOnly = false }: Props) {
   const isCustom = isCustomProductKey(value);
   const [customInput, setCustomInput] = useState(isCustom ? value : "");
@@ -62,7 +53,7 @@ export function ProductPricingSelector({ value, onChange, readOnly = false }: Pr
                 {opt.label}
               </span>
               <span className="mt-0.5 block text-xs leading-snug text-slate-400">
-                {DESCRIPTIONS[opt.value] ?? ""}
+                {opt.description}
               </span>
             </button>
           );

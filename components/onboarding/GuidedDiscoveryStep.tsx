@@ -100,6 +100,22 @@ export function GuidedDiscoveryStep({ initialData, onSubmit, onBack, loading }: 
     setErrors((c) => ({ ...c, capabilities: undefined }));
   }
 
+  const allIds = WORKSPACE_CAPABILITIES.map((c) => c.id);
+  const selectedCount = form.capabilities.length;
+  const allSelected = selectedCount === allIds.length;
+  const noneSelected = selectedCount === 0;
+  // aria-checked: true=all, false=none, mixed=some
+  const selectAllChecked: boolean | "mixed" = allSelected ? true : noneSelected ? false : "mixed";
+
+  function handleSelectAll() {
+    if (allSelected) {
+      setForm((c) => ({ ...c, capabilities: [] }));
+    } else {
+      setForm((c) => ({ ...c, capabilities: allIds.slice() }));
+    }
+    setErrors((c) => ({ ...c, capabilities: undefined }));
+  }
+
   return (
     <form onSubmit={handleSubmit} noValidate>
       <div className="space-y-8">
@@ -223,6 +239,44 @@ export function GuidedDiscoveryStep({ initialData, onSubmit, onBack, loading }: 
               Which capabilities does your programme require?{" "}
               <span className="text-rose-500" aria-hidden="true">*</span>
             </legend>
+
+            {/* Select all / Clear all */}
+            <div className="mb-3 flex items-center gap-2.5">
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={selectAllChecked}
+                aria-label={allSelected ? "Clear all capabilities" : "Select all capabilities"}
+                onClick={handleSelectAll}
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-orange-300 ${
+                  allSelected
+                    ? "border-orange-500 bg-orange-500"
+                    : selectAllChecked === "mixed"
+                    ? "border-orange-400 bg-orange-100"
+                    : "border-slate-300 bg-white"
+                }`}
+              >
+                {allSelected ? (
+                  <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : selectAllChecked === "mixed" ? (
+                  <svg className="h-3 w-3 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 12h14" />
+                  </svg>
+                ) : null}
+              </button>
+              <span
+                className="cursor-pointer text-sm font-medium text-slate-700 select-none"
+                onClick={handleSelectAll}
+              >
+                {allSelected ? "Clear all" : "Select all capabilities"}
+              </span>
+              {!noneSelected && !allSelected ? (
+                <span className="text-xs text-slate-400">({selectedCount} of {allIds.length} selected)</span>
+              ) : null}
+            </div>
+
             <div className="grid gap-2.5 sm:grid-cols-2">
               {WORKSPACE_CAPABILITIES.map((cap) => {
                 const selected = form.capabilities.includes(cap.id);

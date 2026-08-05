@@ -12,9 +12,19 @@ import { EnterpriseAssistanceStep } from "./EnterpriseAssistanceStep";
 import { IdentityOrganisationStep, type IdentityOrgData } from "./IdentityOrganisationStep";
 import { IdentityAdminStep, type IdentityAdminData } from "./IdentityAdminStep";
 import { IdentityVerificationStep } from "./IdentityVerificationStep";
+import { CheckoutBoundaryStep } from "./CheckoutBoundaryStep";
+import { CommercialPlanStep } from "./CommercialPlanStep";
+import type { CommercialPlanResult } from "./CommercialPlanStep";
+import { CheckoutReviewStep } from "./CheckoutReviewStep";
+import { CheckoutPaymentStep } from "./CheckoutPaymentStep";
+import { CheckoutSuccessStep } from "./CheckoutSuccessStep";
+import { EnterpriseSuccessStep } from "./EnterpriseSuccessStep";
+import { CheckoutTransferPendingStep } from "./CheckoutTransferPendingStep";
 import type { RecommendationResult } from "@/lib/commercial/onboarding/recommendation";
+import { shouldRequestQuotation } from "@/lib/commercial/onboarding/flow";
 import type { CustomerQuotation } from "@/lib/commercial/onboarding/quotation";
 import { currencyForCountry } from "@/lib/commercial/onboarding/quotation";
+import type { BillingCycle, PaymentMethod } from "@/lib/commercial/checkout/types";
 
 type OnboardingStep =
   | "objective"
@@ -27,9 +37,17 @@ type OnboardingStep =
   | "next-steps"
   | "identity-organisation"
   | "identity-admin"
-  | "identity-verification";
+  | "identity-verification"
+  | "checkout-boundary"
+  | "commercial-plan"
+  | "checkout-review"
+  | "checkout-payment"
+  | "checkout-success"
+  | "checkout-enterprise"
+  | "checkout-transfer-pending"
+  | "provision-boundary";
 
-const PROGRESS_STEPS = ["Your goal", "Requirements", "Recommendation", "Your path", "Your workspace"];
+const PROGRESS_STEPS = ["Your goal", "Requirements", "Recommendation", "Your path", "Your workspace", "Activate Workspace"];
 
 const PROGRESS_INDEX: Partial<Record<OnboardingStep, number>> = {
   objective: 0,
@@ -42,6 +60,14 @@ const PROGRESS_INDEX: Partial<Record<OnboardingStep, number>> = {
   "identity-organisation": 4,
   "identity-admin": 4,
   "identity-verification": 4,
+  "checkout-boundary": 4,
+  "commercial-plan": 5,
+  "checkout-review": 5,
+  "checkout-payment": 5,
+  "checkout-success": 5,
+  "checkout-enterprise": 5,
+  "checkout-transfer-pending": 5,
+  "provision-boundary": 5,
 };
 
 export function OnboardingShell() {
@@ -78,7 +104,13 @@ export function OnboardingShell() {
     acceptedTerms: false,
     acceptedPrivacy: false,
   });
+  const [identityVerified, setIdentityVerified] = useState(false);
   const [debugOtp, setDebugOtp] = useState<string | null>(null);
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>("annual");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("card");
+  const [paymentReference, setPaymentReference] = useState<string | null>(null);
+  const [enterprisePONumber, setEnterprisePONumber] = useState<string | null>(null);
+  const [readyForProvisioning, setReadyForProvisioning] = useState(false);
 
   useEffect(() => {
     const token = searchParams.get("token");
@@ -168,6 +200,10 @@ export function OnboardingShell() {
   // Commercial Decision: self-service path
   async function handleContinueSetup() {
     if (!recommendation) return;
+    if (!shouldRequestQuotation(recommendation)) {
+      setStep("enterprise");
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
@@ -210,6 +246,11 @@ export function OnboardingShell() {
     else if (step === "identity-organisation") setStep("decision");
     else if (step === "identity-admin") setStep("identity-organisation");
     else if (step === "identity-verification") setStep("identity-admin");
+    else if (step === "checkout-boundary") setStep("identity-verification");
+    else if (step === "commercial-plan") setStep("checkout-boundary");
+    else if (step === "checkout-review") setStep("commercial-plan");
+    else if (step === "checkout-payment") setStep("checkout-review");
+    else if (step === "checkout-transfer-pending") setStep("checkout-review");
   }
 
   /** Reset all state and start a completely fresh onboarding journey. */
@@ -229,7 +270,13 @@ export function OnboardingShell() {
     setResumeToken(null);
     setIdentityOrg({ organisationName: "", workspaceName: "", workspaceSlug: "", country: "", timezone: "" });
     setIdentityAdmin({ firstName: "", lastName: "", email: "", mobile: "", acceptedTerms: false, acceptedPrivacy: false });
+    setIdentityVerified(false);
     setDebugOtp(null);
+    setBillingCycle("annual");
+    setPaymentMethod("card");
+    setPaymentReference(null);
+    setEnterprisePONumber(null);
+    setReadyForProvisioning(false);
     router.replace("/onboarding");
   }
 
@@ -270,11 +317,14 @@ export function OnboardingShell() {
     setError(null);
     setLoading(true);
     try {
+      // Send combined org + admin payload matching the route's expected shape.
+      // Org fields go at root; admin fields go under adminData.
       const identityRes = await fetch("/api/acquisition/identity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           resumeToken,
+          // Re-include org fields so the route can validate and persist the full record.
           organisationName: identityOrg.organisationName,
           workspaceName: identityOrg.workspaceName,
           workspaceSlug: identityOrg.workspaceSlug,
@@ -297,6 +347,7 @@ export function OnboardingShell() {
         setError(identityPayload.error ?? "Could not save account details.");
         return;
       }
+      // Trigger OTP send
       const verifyRes = await fetch("/api/acquisition/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -317,13 +368,17 @@ export function OnboardingShell() {
   }
 
   function handleVerificationComplete() {
-    setStep("setup");
+    setIdentityVerified(true);
+    setStep("checkout-boundary");
   }
 
   const progressIndex = PROGRESS_INDEX[step] ?? 0;
-  const identitySteps: OnboardingStep[] = ["identity-organisation", "identity-admin", "identity-verification"];
-  const isWideStep = identitySteps.includes(step);
-  const showProgress = step !== "enterprise" && step !== "setup" && step !== "next-steps";
+  const identitySteps: OnboardingStep[] = ["identity-organisation", "identity-admin", "identity-verification", "checkout-boundary"];
+  const checkoutSteps: OnboardingStep[] = ["commercial-plan", "checkout-review", "checkout-payment", "checkout-success", "checkout-enterprise", "checkout-transfer-pending", "provision-boundary"];
+  const isWideStep = identitySteps.includes(step) || checkoutSteps.includes(step);
+  const showProgress = step !== "enterprise" && step !== "setup" && step !== "next-steps"
+    && step !== "checkout-success" && step !== "checkout-enterprise"
+    && step !== "checkout-transfer-pending" && step !== "provision-boundary";
 
   if (resuming) {
     return (
@@ -367,7 +422,7 @@ export function OnboardingShell() {
         <OnboardingProgress steps={PROGRESS_STEPS} currentIndex={progressIndex} />
       ) : null}
 
-      {/* Main content */}
+      {/* Main content — wider for identity and checkout steps */}
       <main className={`mx-auto px-4 py-8 sm:py-12 ${
         isWideStep ? "max-w-5xl" : "max-w-2xl"
       }`}>
@@ -469,7 +524,161 @@ export function OnboardingShell() {
           />
         )}
 
-        {/* CO-1B Placeholder */}
+        {/* CO-1B: Checkout Boundary */}
+        {step === "checkout-boundary" && (
+          <CheckoutBoundaryStep
+            orgData={identityOrg}
+            adminData={identityAdmin}
+            recommendation={recommendation}
+            quotation={quotation}
+            onContinue={() => setStep("commercial-plan")}
+          />
+        )}
+
+        {/* Commercial Plan — live quotation configurator */}
+        {step === "commercial-plan" && recommendation ? (
+          <CommercialPlanStep
+            initialRecommendation={recommendation}
+            initialQuotation={quotation}
+            discovery={discovery}
+            objectiveId={objectiveId}
+            resumeToken={resumeToken}
+            orgName={identityOrg.organisationName}
+            workspaceSlug={identityOrg.workspaceSlug}
+            onConfirm={async (result: CommercialPlanResult) => {
+              // Apply confirmed plan to shell state
+              setQuotation(result.quotation);
+              setRecommendation(result.recommendation);
+              setBillingCycle(result.billingCycle);
+              setDiscovery((d) => ({
+                ...d,
+                rolloutQuantity: String(result.quantity),
+                capabilities: result.capabilities,
+              }));
+              // Persist confirmed quotation and generate commercial reference server-side
+              if (resumeToken) {
+                try {
+                  await fetch("/api/acquisition/checkout/confirm-plan", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ resumeToken, quotation: result.quotation }),
+                  });
+                } catch {
+                  // Non-blocking — plan proceeds; reference will be generated at payment
+                }
+              }
+              setStep("checkout-review");
+            }}
+            onBack={goBack}
+          />
+        ) : null}
+
+        {/* CO-1C: Checkout Review */}
+        {step === "checkout-review" && (
+          <CheckoutReviewStep
+            orgData={identityOrg}
+            adminData={identityAdmin}
+            recommendation={recommendation}
+            quotation={quotation}
+            initialBillingCycle={billingCycle}
+            resumeToken={resumeToken}
+            loading={loading}
+            onProceed={(cycle, method) => {
+              setBillingCycle(cycle);
+              setPaymentMethod(method);
+              setStep("checkout-payment");
+            }}
+            onBack={goBack}
+          />
+        )}
+
+        {/* CO-1C: Checkout Payment */}
+        {step === "checkout-payment" && (
+          <CheckoutPaymentStep
+            orgData={identityOrg}
+            recommendation={recommendation}
+            quotation={quotation}
+            billingCycle={billingCycle}
+            paymentMethod={paymentMethod}
+            resumeToken={resumeToken}
+            onPaymentSuccess={(ref) => {
+              setPaymentReference(ref);
+              setReadyForProvisioning(true);
+              setStep("checkout-success");
+            }}
+            onTransferSubmitted={(ref) => {
+              setPaymentReference(ref);
+              setReadyForProvisioning(false);
+              setStep("checkout-transfer-pending");
+            }}
+            onEnterpriseSubmitted={() => setStep("checkout-enterprise")}
+            onBack={goBack}
+          />
+        )}
+
+        {/* CO-1C: Card Payment Success — subscription active, provisioning anticipation */}
+        {step === "checkout-success" && (
+          <CheckoutSuccessStep
+            paymentReference={paymentReference ?? ""}
+            orgName={identityOrg.organisationName}
+            productName={recommendation?.productName ?? "DeployIQ"}
+            onContinue={async () => {
+              // Server-side eligibility guard before entering provision-boundary
+              if (!resumeToken) {
+                if (readyForProvisioning) setStep("provision-boundary");
+                return;
+              }
+              setLoading(true);
+              try {
+                const res = await fetch(
+                  `/api/acquisition/checkout/eligibility?token=${encodeURIComponent(resumeToken)}`
+                );
+                const payload = await res.json();
+                if (res.ok && payload.readyForProvisioning) {
+                  setReadyForProvisioning(true);
+                  setStep("provision-boundary");
+                } else {
+                  setError("Your workspace is not yet eligible for setup. Please check your activation status.");
+                  setStep("checkout-review");
+                }
+              } catch {
+                // Network fallback — trust local state set during card payment
+                if (readyForProvisioning) {
+                  setStep("provision-boundary");
+                } else {
+                  setError("Unable to confirm eligibility. Please try again.");
+                }
+              } finally {
+                setLoading(false);
+              }
+            }}
+          />
+        )}
+
+        {/* CO-1C: Bank Transfer Pending — awaiting finance verification */}
+        {step === "checkout-transfer-pending" && (
+          <CheckoutTransferPendingStep
+            paymentReference={paymentReference ?? ""}
+            quotation={quotation}
+            billingCycle={billingCycle}
+            productName={recommendation?.productName ?? "DeployIQ"}
+            orgName={identityOrg.organisationName}
+            workspaceSlug={identityOrg.workspaceSlug}
+            onBack={() => setStep("checkout-review")}
+          />
+        )}
+
+        {/* CO-1C: Enterprise PO Submitted — commercial review in progress */}
+        {step === "checkout-enterprise" && (
+          <EnterpriseSuccessStep
+            orgName={identityOrg.organisationName}
+            poNumber={enterprisePONumber ?? ""}
+            onBack={() => setStep("checkout-review")}
+          />
+        )}
+
+
+        {/* Legacy setup placeholder (accessed via quotation path) */}
         {step === "setup" && (
           <SetupPlaceholder
             productName={recommendation?.productName ?? "DeployIQ"}

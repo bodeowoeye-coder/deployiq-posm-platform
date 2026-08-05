@@ -15,6 +15,18 @@ export type FormState = {
   isDefault: boolean;
   quotationValidityDays: string;
   tiers: TierFormItem[];
+  /** Commercial engagement model. */
+  commercialModel: string;
+  /** Billing behaviour (single_payment | monthly | annual | contract). */
+  billingBehaviour: string;
+  /** Whether this model auto-renews. */
+  renewalRequired: boolean;
+  /** Permitted payment method codes. */
+  allowedPaymentMethods: string[];
+  /** Short plain-language description shown to customers in quotation and Commercial Plan. */
+  customerFacingDescription: string;
+  /** Admin-only notes — never shown to customers. */
+  internalCommercialNotes: string;
 };
 
 export type PreviewTierRow = {
@@ -40,4 +52,4 @@ export type PreviewResult = {
   requiresEnterpriseReview: boolean;
 };
 
-export type WizardStep = 1 | 2 | 3 | 4;
+export type WizardStep = 1 | 2 | 3 | 4 | 5;

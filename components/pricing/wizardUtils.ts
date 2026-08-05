@@ -3,7 +3,7 @@
  * No React, no fetch — fully testable with node --test.
  * Relative imports with .ts extension for compatibility with node --test runner.
  */
-import type { PricingTemplate } from "../../lib/commercial/pricing/types.ts";
+import { getCanonicalProductCatalog } from "../../lib/commercial/products/catalogue.ts";
 import {
   createFirstTier,
   currencySymbol,
@@ -11,6 +11,35 @@ import {
   type TierFormItem,
 } from "../../lib/commercial/pricing/tierEditor.ts";
 import type { FormState, PreviewResult, PreviewTierRow } from "./types.ts";
+import type { PricingTemplate } from "../../lib/commercial/pricing/types.ts";
+
+// ---------------------------------------------------------------------------
+// Canonical product options — derived from the shared product catalogue
+// ---------------------------------------------------------------------------
+
+/**
+ * Product options for the Pricing Studio "What are you pricing?" selector.
+ * Derived from the canonical product catalogue — single source of truth.
+ */
+export const KNOWN_PRODUCT_OPTIONS = getCanonicalProductCatalog().map((p) => ({
+  value: p.productKey,
+  label: p.productName,
+  description: p.description,
+  metrics: p.supportedPricingMetrics,
+  defaultMetric: p.defaultPricingMetric,
+}));
+
+/** Return supported pricing metrics for a given product key. */
+export function getSupportedMetricsForProduct(productKey: string): { value: string; label: string }[] {
+  const product = KNOWN_PRODUCT_OPTIONS.find((o) => o.value === productKey);
+  return product ? (product.metrics as { value: string; label: string }[])
+    : [{ value: "deployment_location", label: "Deployment location" }];
+}
+
+/** Return the default pricing metric for a given product key. */
+export function getDefaultMetricForProduct(productKey: string): string {
+  return KNOWN_PRODUCT_OPTIONS.find((o) => o.value === productKey)?.defaultMetric ?? "deployment_location";
+}
 
 // ---------------------------------------------------------------------------
 // Pricing model catalogue (UI-layer, maps to pricing_method values)
@@ -74,15 +103,6 @@ export function resetTiersForFlatRate(tiers: TierFormItem[]): TierFormItem[] {
   }];
 }
 
-export const KNOWN_PRODUCT_OPTIONS = [
-  { value: "retail",               label: "Retail Deployment" },
-  { value: "fleet",                label: "Fleet Branding" },
-  { value: "asset-verification",   label: "Asset Verification" },
-  { value: "construction",         label: "Construction Monitoring" },
-  { value: "outdoor-advertising",  label: "Outdoor Advertising Audit" },
-  { value: "event-activation",     label: "Event Activation Monitoring" },
-] as const;
-
 /** Sentinel value used in the product selector to indicate a custom product key. */
 export const CUSTOM_PRODUCT_SENTINEL = "__custom__";
 
@@ -111,6 +131,22 @@ export function createDefaultFormState(): FormState {
     isDefault: false,
     quotationValidityDays: "14",
     tiers: [createFirstTier()],
+    commercialModel: "one_time_programme",
+    billingBehaviour: "single_payment",
+    renewalRequired: false,
+    allowedPaymentMethods: ["card", "bank_transfer"],
+    customerFacingDescription: "",
+    internalCommercialNotes: "",
+  };
+}
+
+export function createDefaultFormStateForProduct(productKey: string): FormState {
+  const canonical = KNOWN_PRODUCT_OPTIONS.find((option) => option.value === productKey);
+  const resolvedProductKey = canonical?.value ?? productKey;
+  return {
+    ...createDefaultFormState(),
+    productKey: resolvedProductKey,
+    pricingMetric: canonical?.defaultMetric ?? getDefaultMetricForProduct(resolvedProductKey),
   };
 }
 
@@ -138,6 +174,12 @@ export function templateToFormState(template: PricingTemplate): FormState {
       isEnterpriseTier: t.enterprise_action === "request_quotation",
       enterpriseAction: t.enterprise_action,
     })),
+    commercialModel: template.commercial_model ?? "one_time_programme",
+    billingBehaviour: template.billing_behaviour ?? "single_payment",
+    renewalRequired: template.renewal_required ?? false,
+    allowedPaymentMethods: Array.isArray(template.allowed_payment_methods) ? template.allowed_payment_methods : ["card", "bank_transfer"],
+    customerFacingDescription: (template as Record<string, unknown>).customer_facing_description as string ?? "",
+    internalCommercialNotes: (template as Record<string, unknown>).internal_commercial_notes as string ?? "",
   };
 }
 
@@ -281,6 +323,12 @@ export function formStateToApiBody(
     status: form.status,
     isDefault: form.isDefault,
     quotationValidityDays: form.quotationValidityDays ? Number(form.quotationValidityDays) : null,
+    commercialModel: form.commercialModel || "one_time_programme",
+    billingBehaviour: form.billingBehaviour || "single_payment",
+    renewalRequired: form.renewalRequired ?? false,
+    allowedPaymentMethods: form.allowedPaymentMethods?.length
+      ? form.allowedPaymentMethods
+      : ["card", "bank_transfer"],
     tiers: form.tiers.map((tier) => ({
       sequence: tier.sequence,
       minimumQuantity: tier.minimumQuantity,
@@ -412,4 +460,145 @@ export function buildPreviewExplanation(
 /** Returns true if any tier has a non-zero fixed charge. */
 export function hasTierFixedCharges(tiers: TierFormItem[]): boolean {
   return tiers.some((t) => t.fixedCharge > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Commercial Configuration — plain-language explanation generator
+// ---------------------------------------------------------------------------
+
+const METRIC_LABELS: Record<string, string> = {
+  deployment_location: "deployment location",
+  site:                "site",
+  project:             "project",
+  phase:               "phase",
+  milestone:           "milestone",
+  managed_value:       "managed value",
+};
+
+const METHOD_LABELS: Record<string, string> = {
+  card:          "card",
+  bank_transfer: "bank transfer",
+  enterprise_po: "enterprise purchase order",
+};
+
+function describePaymentMethods(methods: string[]): string {
+  if (!methods.length) return "no payment methods are currently configured";
+  const labels = methods.map((m) => METHOD_LABELS[m] ?? m);
+  if (labels.length === 1) return labels[0];
+  const last = labels.pop()!;
+  return `${labels.join(", ")} and ${last}`;
+}
+
+/**
+ * Generate a plain-English explanation of what the commercial configuration means.
+ * Pure function — no side effects. Designed to update live as form fields change.
+ */
+export function buildCommercialRuleExplanation(form: FormState): string {
+  const metric = METRIC_LABELS[form.pricingMetric] ?? form.pricingMetric ?? "unit";
+  const methods = describePaymentMethods(form.allowedPaymentMethods ?? []);
+
+  switch (form.commercialModel) {
+    case "one_time_programme":
+      return `Customers are charged once for each ${metric} in this programme. No automatic renewal applies. ${form.allowedPaymentMethods?.length ? `Available payment methods: ${methods}.` : "No payment methods are currently configured."}`;
+
+    case "monthly_subscription":
+      return `Customers pay monthly for continued access. The subscription renews automatically each month unless cancelled. Available payment methods: ${methods}.`;
+
+    case "annual_subscription":
+      return `Customers pay annually for continued access. The subscription renews automatically each year unless cancelled. Available payment methods: ${methods}.`;
+
+    case "enterprise_contract":
+      return `Pricing is handled through an assisted commercial agreement. Customers submit a purchase order or complete bank-transfer arrangements before workspace activation. Available payment methods: ${methods}.`;
+
+    default:
+      return "Select a Commercial Model to see an explanation of what this rule means.";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Commercial Configuration — compatibility validation
+// ---------------------------------------------------------------------------
+
+export type CommercialValidationIssue = {
+  field: string;
+  severity: "error" | "warning";
+  message: string;
+};
+
+/**
+ * Validate the commercial configuration for contradictory or incomplete settings.
+ * Returns an array of issues (errors block activation; warnings are advisory).
+ */
+export function validateCommercialConfiguration(form: FormState): CommercialValidationIssue[] {
+  const issues: CommercialValidationIssue[] = [];
+  const { commercialModel, billingBehaviour, renewalRequired, allowedPaymentMethods } = form;
+
+  // Contradictory combinations
+  if (commercialModel === "one_time_programme" && billingBehaviour !== "single_payment") {
+    issues.push({ field: "billingBehaviour", severity: "error", message: "One-time programme must use Single Payment billing behaviour." });
+  }
+  if (commercialModel === "one_time_programme" && renewalRequired) {
+    issues.push({ field: "renewalRequired", severity: "error", message: "One-time programme must not require renewal." });
+  }
+  if (commercialModel === "monthly_subscription" && billingBehaviour !== "monthly") {
+    issues.push({ field: "billingBehaviour", severity: "error", message: "Monthly Subscription must use Monthly billing behaviour." });
+  }
+  if (commercialModel === "annual_subscription" && billingBehaviour !== "annual") {
+    issues.push({ field: "billingBehaviour", severity: "error", message: "Annual Subscription must use Annual billing behaviour." });
+  }
+  if ((commercialModel === "monthly_subscription" || commercialModel === "annual_subscription") && !renewalRequired) {
+    issues.push({ field: "renewalRequired", severity: "warning", message: "Subscriptions should typically require renewal." });
+  }
+
+  // Payment method checks
+  const methods = allowedPaymentMethods ?? [];
+  if (methods.length === 0) {
+    issues.push({ field: "allowedPaymentMethods", severity: "error", message: "At least one payment method must be configured." });
+  }
+  if (commercialModel === "enterprise_contract" && !methods.includes("enterprise_po") && !methods.includes("bank_transfer")) {
+    issues.push({ field: "allowedPaymentMethods", severity: "warning", message: "Enterprise contracts should include Enterprise PO or Bank Transfer." });
+  }
+
+  // Pricing metric check
+  if (!form.pricingMetric) {
+    issues.push({ field: "pricingMetric", severity: "error", message: "A charging metric is required." });
+  }
+
+  return issues;
+}
+
+/**
+ * Apply the canonical defaults for a commercial model when it changes.
+ * Returns a partial FormState update (other fields unchanged).
+ */
+export function applyCommercialModelDefaults(model: string): Partial<FormState> {
+  switch (model) {
+    case "one_time_programme":
+      return { commercialModel: model, billingBehaviour: "single_payment", renewalRequired: false, allowedPaymentMethods: ["card", "bank_transfer"] };
+    case "monthly_subscription":
+      return { commercialModel: model, billingBehaviour: "monthly", renewalRequired: true, allowedPaymentMethods: ["card", "bank_transfer"] };
+    case "annual_subscription":
+      return { commercialModel: model, billingBehaviour: "annual", renewalRequired: true, allowedPaymentMethods: ["card", "bank_transfer"] };
+    case "enterprise_contract":
+      return { commercialModel: model, billingBehaviour: "contract", renewalRequired: false, allowedPaymentMethods: ["enterprise_po", "bank_transfer"] };
+    default:
+      return { commercialModel: model };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Commercial reference generation (client-side, idempotent)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a human-readable commercial quotation reference.
+ * Format: DQ-QT-{YEAR}-{6 CHARS FROM DRAFT ID}
+ * Never re-generated if an existing reference is in draft_data.
+ */
+export function generateCommercialReference(draftId: string | null): string {
+  const year = new Date().getFullYear();
+  const suffix = draftId
+    ? draftId.replace(/[^A-Z0-9]/gi, "").slice(-6).toUpperCase().padEnd(6, "0")
+    : Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `DQ-QT-${year}-${suffix}`;
 }

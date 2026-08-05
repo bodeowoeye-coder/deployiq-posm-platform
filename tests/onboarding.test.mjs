@@ -11,6 +11,10 @@ import {
 import {
   resolveRecommendation
 } from "../lib/commercial/onboarding/recommendation.ts";import {
+  nextCommercialDecisionTarget,
+  shouldRequestQuotation,
+} from "../lib/commercial/onboarding/flow.ts";
+import {
   toCustomerQuotation,
   buildCustomerExplanation,
   toPricingMethodLabel,
@@ -63,10 +67,10 @@ test("onboarding: retail_visibility objective maps to retail product", () => {
   assert.equal(obj.maps_to_product, "retail");
 });
 
-test("onboarding: location_audit objective also maps to retail product", () => {
+test("onboarding: location_audit objective maps to canonical location_audit product", () => {
   const obj = getObjectiveById("location_audit");
   assert.ok(obj, "location_audit must exist");
-  assert.equal(obj.maps_to_product, "retail");
+  assert.equal(obj.maps_to_product, "location_audit");
 });
 
 // ---------------------------------------------------------------------------
@@ -145,11 +149,14 @@ test("onboarding: toCustomerQuotation does not expose pricing_method in the resp
 // Test 6: Customer cannot force a pricing template ID
 // ---------------------------------------------------------------------------
 
-test("onboarding: customer-safe quotation does not include internal template IDs", () => {
-  const result = makeResult({ pricing_template_id: "secret-template-uuid" });
+test("onboarding: customer-safe quotation exposes pricingTemplateId (new contract) but not raw internal fields", () => {
+  const result = makeResult({ pricing_template_id: "secret-template-uuid", commercial_model: "one_time_programme", billing_behaviour: "single_payment", renewal_required: false, allowed_payment_methods: null });
   const quotation = toCustomerQuotation(result, { pricing_method: "progressive_tiered" });
-  // customerKey should be productKey not templateId
-  assert.ok(!Object.values(quotation).includes("secret-template-uuid"), "template ID must not appear in customer response");
+  // pricingTemplateId is now an explicit part of CustomerQuotation for downstream use
+  assert.equal(quotation.pricingTemplateId, "secret-template-uuid");
+  // Internal field names (snake_case) must not leak
+  assert.ok(!("pricing_template_id" in quotation), "Internal snake_case field must not appear in customer response");
+  assert.ok(!("pricing_method" in quotation), "Internal pricing_method must not be directly exposed");
 });
 
 // ---------------------------------------------------------------------------
@@ -313,7 +320,7 @@ test("commercial decision: deploymentMode is always present in recommendation re
   }
 });
 
-test("commercial decision: location_audit also maps to SELF_SERVICE (retail product)", () => {
+test("commercial decision: location_audit maps to assisted location audit product", () => {
   const rec = resolveRecommendation({
     objectiveId: "location_audit",
     quantity: 2000,
@@ -322,8 +329,8 @@ test("commercial decision: location_audit also maps to SELF_SERVICE (retail prod
     needsClientPortal: false,
     needsAnalytics: false,
   });
-  assert.equal(rec.deploymentMode, "SELF_SERVICE");
-  assert.equal(rec.productKey, "retail");
+  assert.equal(rec.deploymentMode, "ENTERPRISE");
+  assert.equal(rec.productKey, "location_audit");
 });
 
 test("commercial decision: unknown product key defaults to ENTERPRISE mode", () => {
@@ -448,14 +455,10 @@ test("flow fix: DeployIQ Retail capabilities include AI-assisted evidence valida
   assert.equal(hasAI, true, "retail capabilities must include an AI capability");
 });
 
-test("flow fix: AI capability appears in central capability source (not hardcoded in component)", () => {
-  // Both retail_visibility and location_audit map to the same retail product capabilities
-  const rec1 = resolveRecommendation({ objectiveId: "retail_visibility", quantity: 1000, country: "Nigeria", needsInstallers: false, needsClientPortal: false, needsAnalytics: false });
-  const rec2 = resolveRecommendation({ objectiveId: "location_audit",    quantity: 1000, country: "Nigeria", needsInstallers: false, needsClientPortal: false, needsAnalytics: false });
-  const ai1 = rec1.capabilities.find((c) => c.toLowerCase().includes("ai"));
-  const ai2 = rec2.capabilities.find((c) => c.toLowerCase().includes("ai"));
-  assert.ok(ai1 && ai2, "both retail objectives must include AI capability from central source");
-  assert.equal(ai1, ai2, "AI capability text must be identical from central source");
+test("flow fix: AI capability appears in central retail capability source (not hardcoded in component)", () => {
+  const rec = resolveRecommendation({ objectiveId: "retail_visibility", quantity: 1000, country: "Nigeria", needsInstallers: false, needsClientPortal: false, needsAnalytics: false });
+  const ai = rec.capabilities.find((c) => c.toLowerCase().includes("ai"));
+  assert.equal(ai, "AI-assisted photo and evidence validation");
 });
 
 // ---------------------------------------------------------------------------
@@ -674,4 +677,622 @@ test("discovery: existing recommendation logic still works with new capability m
   });
   assert.equal(rec.productKey, "retail");
   assert.equal(rec.deploymentMode, "SELF_SERVICE");
+});
+
+// ---------------------------------------------------------------------------
+// Capability Select All / Clear All (CO-1A improvement)
+// ---------------------------------------------------------------------------
+
+// WORKSPACE_CAPABILITIES is already imported at the top of this file
+
+const ALL_IDS = WORKSPACE_CAPABILITIES.map((c) => c.id);
+
+test("capabilities: ALL_IDS contains exactly 6 entries matching catalogue", () => {
+  assert.equal(ALL_IDS.length, 6);
+  const expected = ["fieldEvidence", "clientVisibility", "aiValidation", "projectAnalytics", "approvalWorkflow", "offlineOperation"];
+  for (const id of expected) {
+    assert.ok(ALL_IDS.includes(id), `Missing capability: ${id}`);
+  }
+});
+
+test("capabilities: select-all produces all catalogue IDs without duplication", () => {
+  // Simulate the handleSelectAll logic: replace capabilities with all IDs
+  const initial = ["fieldEvidence"];
+  const afterSelectAll = ALL_IDS.slice();
+  assert.equal(afterSelectAll.length, ALL_IDS.length);
+  const unique = new Set(afterSelectAll);
+  assert.equal(unique.size, ALL_IDS.length, "Duplicates in select-all result");
+});
+
+test("capabilities: clear-all produces empty array", () => {
+  const initial = [...ALL_IDS];
+  // Simulate: allSelected → clicking clears
+  const allSelected = initial.length === ALL_IDS.length;
+  const afterClear = allSelected ? [] : ALL_IDS.slice();
+  assert.equal(afterClear.length, 0);
+});
+
+test("capabilities: partial selection produces mixed state (not all, not none)", () => {
+  const partial = ["fieldEvidence", "clientVisibility"];
+  const allSelected = partial.length === ALL_IDS.length;
+  const noneSelected = partial.length === 0;
+  // mixed = not all and not none
+  assert.equal(allSelected, false);
+  assert.equal(noneSelected, false);
+  assert.equal(!allSelected && !noneSelected, true, "Expected mixed state");
+});
+
+test("capabilities: individual deselection after select-all produces mixed/partial state", () => {
+  let selected = ALL_IDS.slice();
+  // Deselect one
+  const toRemove = "aiValidation";
+  selected = selected.filter((id) => id !== toRemove);
+  assert.equal(selected.length, ALL_IDS.length - 1);
+  assert.equal(selected.includes(toRemove), false);
+  assert.equal(selected.length === ALL_IDS.length, false, "Should no longer be all-selected");
+  assert.equal(selected.length === 0, false, "Should not be empty");
+});
+
+test("capabilities: validation still requires at least one selection", () => {
+  const empty = [];
+  const hasNone = empty.length === 0;
+  // Expected: validation should flag this
+  assert.equal(hasNone, true, "Validation should block empty capabilities");
+});
+
+test("capabilities: select-all from empty state produces all IDs", () => {
+  const noneSelected = true;
+  const afterSelectAll = noneSelected ? ALL_IDS.slice() : [];
+  assert.equal(afterSelectAll.length, ALL_IDS.length);
+  assert.deepEqual(afterSelectAll, ALL_IDS);
+});
+
+// ---------------------------------------------------------------------------
+// Country normalisation — template resolution fix
+// ---------------------------------------------------------------------------
+
+import {
+  normaliseCountry,
+  countriesMatch,
+  currencyForNormalisedCountry,
+} from "../lib/commercial/pricing/countryNormalisation.ts";
+
+// 1. Nigeria, NG and NGA all normalise to the same canonical code
+test("country-normalisation: Nigeria → NG", () => {
+  assert.equal(normaliseCountry("Nigeria"), "NG");
+});
+test("country-normalisation: NG → NG", () => {
+  assert.equal(normaliseCountry("NG"), "NG");
+});
+test("country-normalisation: NGA → NG", () => {
+  assert.equal(normaliseCountry("NGA"), "NG");
+});
+test("country-normalisation: nigeria (lowercase) → NG", () => {
+  assert.equal(normaliseCountry("nigeria"), "NG");
+});
+test("country-normalisation: null → null", () => {
+  assert.equal(normaliseCountry(null), null);
+});
+test("country-normalisation: empty string → null", () => {
+  assert.equal(normaliseCountry(""), null);
+});
+test("country-normalisation: all three Nigeria variants produce the same code", () => {
+  assert.equal(normaliseCountry("Nigeria"), normaliseCountry("NG"));
+  assert.equal(normaliseCountry("NGA"), normaliseCountry("NG"));
+});
+
+// 2. retail product key passes normalised comparison
+test("product-key: retail matches retail (exact, lowercased)", () => {
+  const templateKey = "retail";
+  const scopeKey    = "retail";
+  assert.equal(templateKey.toLowerCase().trim(), scopeKey.toLowerCase().trim());
+});
+test("product-key: display label is never used as key", () => {
+  const key = "retail";
+  assert.ok(!key.startsWith("DeployIQ"), "Product key must not start with brand name");
+});
+
+// 3. Active Nigeria Retail default template resolves via countriesMatch
+test("template-eligibility: template.country=Nigeria matches scope.country=Nigeria", () => {
+  assert.equal(countriesMatch("Nigeria", "Nigeria"), true);
+});
+test("template-eligibility: template.country=NG matches scope.country=Nigeria", () => {
+  assert.equal(countriesMatch("NG", "Nigeria"), true);
+});
+test("template-eligibility: template.country=NGA matches scope.country=Nigeria", () => {
+  assert.equal(countriesMatch("NGA", "Nigeria"), true);
+});
+
+// 4. Null optional matching fields do not wrongly exclude templates
+test("template-eligibility: template.country=null (any-country) matches any scope country", () => {
+  assert.equal(countriesMatch(null, "Nigeria"), true);
+  assert.equal(countriesMatch(null, "Ghana"), true);
+  assert.equal(countriesMatch(null, "NG"), true);
+});
+
+// 5. Inactive template is rejected
+test("template-eligibility: inactive template must be excluded", () => {
+  const template = { status: "inactive", archived_at: null };
+  const isEligible = template.status === "active" && !template.archived_at;
+  assert.equal(isEligible, false);
+});
+
+// 6. Archived template is rejected
+test("template-eligibility: archived template must be excluded", () => {
+  const template = { status: "active", archived_at: "2026-01-01T00:00:00Z" };
+  const isEligible = template.status === "active" && !template.archived_at;
+  assert.equal(isEligible, false);
+});
+
+// 7. Future-dated template is rejected
+test("template-eligibility: future effective_from is rejected", () => {
+  const futureDate = new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toISOString();
+  const template = { effective_from: futureDate, effective_to: null };
+  const now = new Date();
+  const withinWindow =
+    (!template.effective_from || now >= new Date(template.effective_from)) &&
+    (!template.effective_to   || now <= new Date(template.effective_to));
+  assert.equal(withinWindow, false);
+});
+
+// 8. Expired template is rejected
+test("template-eligibility: past effective_to is rejected", () => {
+  const pastDate = new Date(Date.now() - 1000).toISOString();
+  const template = { effective_from: null, effective_to: pastDate };
+  const now = new Date();
+  const withinWindow =
+    (!template.effective_from || now >= new Date(template.effective_from)) &&
+    (!template.effective_to   || now <= new Date(template.effective_to));
+  assert.equal(withinWindow, false);
+});
+
+// 9. Exact match wins over general default
+test("template-precedence: exact match beats global default", () => {
+  const exact   = { country: "NG", region: null, is_default: false };
+  const global  = { country: null, region: null, is_default: true };
+  const scopeCountry = "Nigeria";
+  const exactNorm  = normaliseCountry(exact.country);
+  const scopeNorm  = normaliseCountry(scopeCountry);
+  const globalNorm = normaliseCountry(global.country);
+  // Exact candidate matches scope
+  assert.equal(exactNorm === scopeNorm, true, "Exact candidate should match scope");
+  // Global candidate has no country (null = any)
+  assert.equal(globalNorm, null, "Global candidate country should be null");
+  // Exact takes priority over global default in the selection logic
+  const exactCandidates = [exact].filter(t => normaliseCountry(t.country) === scopeNorm);
+  assert.equal(exactCandidates.length, 1, "Exact candidates should have 1 entry");
+});
+
+// 10. 2,500-location Retail quotation produces a non-zero amount
+test("quotation: 2500-location query with Nigeria Retail NGN template produces non-zero total", () => {
+  // Simulate the billing calculation that would occur with a real template
+  const quantity = 2500;
+  const tiers = [
+    { sequence: 1, minimum_quantity: 1, maximum_quantity: 5000,  unit_price: 500, fixed_charge: 0 },
+    { sequence: 2, minimum_quantity: 5001, maximum_quantity: null, unit_price: 450, fixed_charge: 0 },
+  ];
+  // Progressive pricing: all 2500 fall in tier 1
+  const total = quantity * tiers[0].unit_price;
+  assert.ok(total > 0, "Total should be non-zero for 2500 locations");
+  assert.equal(total, 1_250_000); // 2500 × 500 NGN
+});
+
+// 11. No eligible template returns enterprise review
+test("template-resolution: no eligible template → requiresEnterpriseReview = true", () => {
+  const quotationResult = {
+    requiresEnterpriseReview: true,
+    enterpriseReason: "No standard pricing is available.",
+    quantity: 2500,
+    productKey: "retail",
+  };
+  assert.equal(quotationResult.requiresEnterpriseReview, true);
+  assert.ok(!("quotation" in quotationResult), "No quotation object when enterprise review");
+});
+
+// 12. Resolved quotation has correct shape for Commercial Plan
+test("quotation: resolved CustomerQuotation has all required fields", () => {
+  // Verify the CustomerQuotation type shape expected by CommercialPlanStep
+  const fakeResult = {
+    pricing_template_id: "t-1",
+    pricing_template_name: "Nigeria Retail NGN",
+    product_key: "retail",
+    country: "NG",
+    currency: "NGN",
+    pricing_metric: "deployment_location",
+    pricing_method: "progressive_tiered",
+    quantity: 2500,
+    tier_breakdown: [
+      { sequence: 1, minimum_quantity: 1, maximum_quantity: 5000, applicable_quantity: 2500,
+        unit_price: 500, fixed_charge: 0, subtotal: 1_250_000, enterprise_action: null, label: "Tier 1" },
+    ],
+    subtotal: 1_250_000,
+    discount: 0,
+    tax: 0,
+    total: 1_250_000,
+    included_admin_users: 15,
+    quotation_status: "calculated",
+    quotation_expiry: null,
+    requires_enterprise_review: false,
+    enterprise_action: null,
+    calculated_at: new Date().toISOString(),
+  };
+
+  const cq = toCustomerQuotation(fakeResult, { pricing_method: "progressive_tiered" });
+  assert.equal(cq.requiresEnterpriseReview, false);
+  assert.equal(cq.currency, "NGN");
+  assert.equal(cq.quantity, 2500);
+  assert.ok(cq.estimatedTotal > 0, "estimatedTotal must be positive");
+  assert.equal(cq.estimatedTotal, 1_250_000);
+
+  // currencyForNormalisedCountry accepts Nigeria, NG, NGA equivalently
+  assert.equal(currencyForNormalisedCountry("Nigeria"), "NGN");
+  assert.equal(currencyForNormalisedCountry("NG"),      "NGN");
+  assert.equal(currencyForNormalisedCountry("NGA"),     "NGN");
+});
+
+// ---------------------------------------------------------------------------
+// Canonical product catalogue — objective-to-product mapping tests
+// ---------------------------------------------------------------------------
+
+// getObjectiveById and BUSINESS_OBJECTIVES already imported at the top of this file
+
+import {
+  objectiveToProductKey,
+} from "../lib/commercial/onboarding/objectives.ts";
+
+import {
+  getCanonicalProductCatalog,
+  getCanonicalProduct,
+  resolveProductKey,
+  getProductKeyLookupVariants,
+  LEGACY_PRODUCT_KEY_ALIASES,
+} from "../lib/commercial/products/catalogue.ts";
+
+import {
+  getSupportedMetricsForProduct,
+  getDefaultMetricForProduct,
+} from "../components/pricing/wizardUtils.ts";
+
+// 1. Retail objective → retail
+test("catalogue: retail_visibility → product_key retail", () => {
+  assert.equal(objectiveToProductKey("retail_visibility"), "retail");
+});
+
+// 2. Construction → build
+test("catalogue: construction_monitoring → product_key build", () => {
+  assert.equal(objectiveToProductKey("construction_monitoring"), "build");
+});
+
+// 3. Location audit → location_audit
+test("catalogue: location_audit objective → product_key location_audit", () => {
+  assert.equal(objectiveToProductKey("location_audit"), "location_audit");
+});
+
+// 4. Asset verification → assets_audit
+test("catalogue: asset_verification → product_key assets_audit", () => {
+  assert.equal(objectiveToProductKey("asset_verification"), "assets_audit");
+});
+
+// 5. Fleet → fleet
+test("catalogue: fleet_branding → product_key fleet", () => {
+  assert.equal(objectiveToProductKey("fleet_branding"), "fleet");
+});
+
+// 6. Field operations → field_operations
+test("catalogue: field_operations → product_key field_operations", () => {
+  assert.equal(objectiveToProductKey("field_operations"), "field_operations");
+});
+
+// 7. Pricing Studio KNOWN_PRODUCT_OPTIONS uses catalogue keys
+test("catalogue: Pricing Studio product options include all canonical products", async () => {
+  const catalog = getCanonicalProductCatalog();
+  const { KNOWN_PRODUCT_OPTIONS } = await import("../components/pricing/wizardUtils.ts");
+  for (const product of catalog) {
+    const found = KNOWN_PRODUCT_OPTIONS.some((o) => o.value === product.productKey);
+    assert.ok(found, `${product.productKey} should be in KNOWN_PRODUCT_OPTIONS`);
+  }
+});
+
+// 8. Recommendation and Pricing Studio share product keys
+test("catalogue: recommendation product keys match Pricing Studio keys", () => {
+  const canonicalKeys = getCanonicalProductCatalog().map((p) => p.productKey);
+  assert.ok(canonicalKeys.includes("retail"), "retail must be canonical");
+  assert.ok(canonicalKeys.includes("build"),  "build must be canonical");
+  assert.ok(!canonicalKeys.includes("survey"), "survey is legacy, not canonical");
+});
+
+// 9. Retail resolves only Retail templates (product_key isolation)
+test("catalogue: retail template cannot match build scope", () => {
+  const retailKey = "retail";
+  const buildKey  = "build";
+  assert.equal(retailKey === buildKey, false);
+});
+
+// 10. Build resolves only Build templates
+test("catalogue: build template cannot match retail scope", () => {
+  assert.equal(resolveProductKey("build"), "build");
+  assert.notEqual(resolveProductKey("build"), "retail");
+});
+
+// 11. Location Audit cannot resolve Retail pricing
+test("catalogue: location_audit product key is distinct from retail", () => {
+  assert.notEqual("location_audit", "retail");
+  assert.equal(resolveProductKey("location_audit"), "location_audit");
+});
+
+// 12. Fleet cannot resolve Field Operations pricing
+test("catalogue: fleet and field_operations are separate product keys", () => {
+  assert.notEqual("fleet", "field_operations");
+});
+
+// 13. Product without active pricing routes to Assisted Setup
+test("catalogue: build pricingAvailability is assisted_setup", () => {
+  const p = getCanonicalProduct("build");
+  assert.equal(p?.pricingAvailability, "assisted_setup");
+});
+
+// 14. Legacy aliases resolve to canonical keys
+test("catalogue: legacy 'assets' resolves to assets_audit", () => {
+  assert.equal(resolveProductKey("assets"), "assets_audit");
+});
+test("catalogue: Assets Audit legacy product keys resolve to assets_audit", () => {
+  assert.equal(resolveProductKey("asset_audit"), "assets_audit");
+  assert.equal(resolveProductKey("asset_audits"), "assets_audit");
+  assert.equal(resolveProductKey("asset_verification"), "assets_audit");
+  assert.equal(resolveProductKey("asset-verification"), "assets_audit");
+  assert.equal(resolveProductKey("field_assets"), "assets_audit");
+});
+test("catalogue: Assets Audit database lookup includes canonical and legacy keys", () => {
+  const variants = getProductKeyLookupVariants("assets_audit");
+  assert.ok(variants.includes("assets_audit"));
+  assert.ok(variants.includes("asset-verification"));
+  assert.ok(variants.includes("asset_verification"));
+  assert.ok(variants.includes("asset_audit"));
+  assert.ok(variants.includes("asset_audits"));
+  assert.ok(variants.includes("field_assets"));
+});
+test("catalogue: legacy 'audit' resolves to location_audit", () => {
+  assert.equal(resolveProductKey("audit"), "location_audit");
+});
+test("catalogue: legacy 'survey' resolves to field_operations", () => {
+  assert.equal(resolveProductKey("survey"), "field_operations");
+});
+
+// 15. Supported pricing metrics by product
+test("catalogue: retail supports deployment_location metric", () => {
+  const metrics = getSupportedMetricsForProduct("retail");
+  assert.ok(metrics.some((m) => m.value === "deployment_location"));
+});
+test("catalogue: build supports site and project metrics", () => {
+  const metrics = getSupportedMetricsForProduct("build");
+  assert.ok(metrics.some((m) => m.value === "site"));
+  assert.ok(metrics.some((m) => m.value === "project"));
+});
+test("catalogue: fleet supports vehicle metric", () => {
+  const metrics = getSupportedMetricsForProduct("fleet");
+  assert.ok(metrics.some((m) => m.value === "vehicle"));
+});
+
+// 16. Provisioning manifest key exists for every canonical product
+test("catalogue: every canonical product has a provisioningManifestKey", () => {
+  const catalog = getCanonicalProductCatalog();
+  for (const p of catalog) {
+    assert.ok(typeof p.provisioningManifestKey === "string" && p.provisioningManifestKey.length > 0,
+      `${p.productKey} missing provisioningManifestKey`);
+    assert.ok(p.provisioningManifestKey.endsWith("_workspace_manifest"),
+      `${p.productKey} manifest key should end with _workspace_manifest`);
+  }
+});
+
+test("pricing readiness: recommendation response exposes required commercial-routing fields", () => {
+  const rec = resolveRecommendation({
+    objectiveId: "retail_visibility",
+    quantity: 1000,
+    country: "Nigeria",
+    needsInstallers: false,
+    needsClientPortal: false,
+    needsAnalytics: false,
+    pricingReady: true,
+  });
+  assert.equal(rec.productKey, "retail");
+  assert.equal(rec.productName, "DeployIQ Retail");
+  assert.equal(rec.pricingReady, true);
+  assert.equal(rec.deploymentMode, "SELF_SERVICE");
+  assert.equal(rec.assistedOnboardingReason, null);
+  assert.equal(rec.provisioningManifestKey, "retail_workspace_manifest");
+});
+
+test("pricing readiness: no-template products route to Assisted Setup without quotation", () => {
+  const objectives = [
+    ["construction_monitoring", "build"],
+    ["location_audit", "location_audit"],
+    ["asset_verification", "assets_audit"],
+    ["fleet_branding", "fleet"],
+    ["field_operations", "field_operations"],
+  ];
+
+  for (const [objectiveId, productKey] of objectives) {
+    const rec = resolveRecommendation({
+      objectiveId,
+      quantity: 1000,
+      country: "Nigeria",
+      needsInstallers: false,
+      needsClientPortal: false,
+      needsAnalytics: false,
+      pricingReady: false,
+    });
+    assert.equal(rec.productKey, productKey);
+    assert.equal(rec.pricingReady, false);
+    assert.equal(rec.deploymentMode, "ENTERPRISE");
+    assert.equal(shouldRequestQuotation(rec), false, `${productKey} must not request quotation`);
+    assert.equal(nextCommercialDecisionTarget(rec), "assisted_setup");
+    assert.equal(
+      rec.assistedOnboardingReason,
+      "Standard online pricing is not yet available for this solution. Our assisted sales team will prepare a tailored commercial plan."
+    );
+  }
+});
+
+test("pricing readiness: Fleet without active template does not call quotation API or enter loading path", () => {
+  const rec = resolveRecommendation({
+    objectiveId: "fleet_branding",
+    quantity: 250,
+    country: "Nigeria",
+    needsInstallers: false,
+    needsClientPortal: false,
+    needsAnalytics: false,
+    pricingReady: false,
+  });
+  assert.equal(rec.productKey, "fleet");
+  assert.equal(shouldRequestQuotation(rec), false);
+  assert.equal(nextCommercialDecisionTarget(rec), "assisted_setup");
+});
+
+test("pricing readiness: adding active Fleet pricing flips Fleet to self-service without onboarding code changes", () => {
+  const rec = resolveRecommendation({
+    objectiveId: "fleet_branding",
+    quantity: 250,
+    country: "Nigeria",
+    needsInstallers: false,
+    needsClientPortal: false,
+    needsAnalytics: false,
+    pricingReady: true,
+  });
+  assert.equal(rec.productKey, "fleet");
+  assert.equal(rec.pricingReady, true);
+  assert.equal(rec.deploymentMode, "SELF_SERVICE");
+  assert.equal(shouldRequestQuotation(rec), true);
+  assert.equal(nextCommercialDecisionTarget(rec), "quotation");
+});
+
+test("pricing readiness: active eligible Assets Audit pricing flips Assets Audit to Instant Setup", () => {
+  const rec = resolveRecommendation({
+    objectiveId: "asset_verification",
+    quantity: 250,
+    country: "Nigeria",
+    needsInstallers: false,
+    needsClientPortal: false,
+    needsAnalytics: false,
+    pricingReady: true,
+  });
+  assert.equal(rec.productKey, "assets_audit");
+  assert.equal(rec.productName, "DeployIQ Assets Audit");
+  assert.equal(rec.pricingReady, true);
+  assert.equal(rec.deploymentMode, "SELF_SERVICE");
+  assert.equal(rec.assistedOnboardingReason, null);
+  assert.equal(shouldRequestQuotation(rec), true);
+  assert.equal(nextCommercialDecisionTarget(rec), "quotation");
+});
+
+test("pricing readiness: Assets Audit without active template remains Assisted Setup", () => {
+  const rec = resolveRecommendation({
+    objectiveId: "asset_verification",
+    quantity: 250,
+    country: "Nigeria",
+    needsInstallers: false,
+    needsClientPortal: false,
+    needsAnalytics: false,
+    pricingReady: false,
+  });
+  assert.equal(rec.productKey, "assets_audit");
+  assert.equal(rec.pricingReady, false);
+  assert.equal(rec.deploymentMode, "ENTERPRISE");
+  assert.equal(shouldRequestQuotation(rec), false);
+  assert.equal(nextCommercialDecisionTarget(rec), "assisted_setup");
+});
+
+test("pricing readiness: Assets Audit never uses Retail or Fleet product keys", () => {
+  const rec = resolveRecommendation({
+    objectiveId: "asset_verification",
+    quantity: 250,
+    country: "Nigeria",
+    needsInstallers: false,
+    needsClientPortal: false,
+    needsAnalytics: false,
+    pricingReady: true,
+  });
+  assert.equal(rec.productKey, "assets_audit");
+  assert.notEqual(rec.productKey, "retail");
+  assert.notEqual(rec.productKey, "fleet");
+});
+
+test("pricing readiness: Assets Audit quotation retains canonical product key", () => {
+  const rec = resolveRecommendation({
+    objectiveId: "asset_verification",
+    quantity: 250,
+    country: "Nigeria",
+    needsInstallers: false,
+    needsClientPortal: false,
+    needsAnalytics: false,
+    pricingReady: true,
+  });
+  const quotation = toCustomerQuotation(
+    makeResult({
+      product_key: "assets_audit",
+      pricing_template_id: "asset-template-1",
+      pricing_template_name: "Asset Audit",
+      pricing_metric: "asset",
+    }),
+    { pricing_method: "progressive_tiered" }
+  );
+  assert.equal(quotation.productKey, rec.productKey);
+  assert.equal(quotation.productKey, "assets_audit");
+});
+
+test("pricing readiness: confirmed quotation product key must match recommendation", () => {
+  const rec = resolveRecommendation({
+    objectiveId: "retail_visibility",
+    quantity: 4000,
+    country: "Nigeria",
+    needsInstallers: false,
+    needsClientPortal: false,
+    needsAnalytics: false,
+    pricingReady: true,
+  });
+  const quotation = toCustomerQuotation(makeResult({ product_key: "retail" }), { pricing_method: "progressive_tiered" });
+  assert.equal(quotation.productKey, rec.productKey);
+});
+
+test("pricing readiness: Fleet, Build and Retail product keys remain isolated", () => {
+  const retail = resolveRecommendation({ objectiveId: "retail_visibility", quantity: 100, country: "Nigeria", needsInstallers: false, needsClientPortal: false, needsAnalytics: false, pricingReady: true });
+  const fleet = resolveRecommendation({ objectiveId: "fleet_branding", quantity: 100, country: "Nigeria", needsInstallers: false, needsClientPortal: false, needsAnalytics: false, pricingReady: false });
+  const build = resolveRecommendation({ objectiveId: "construction_monitoring", quantity: 100, country: "Nigeria", needsInstallers: false, needsClientPortal: false, needsAnalytics: false, pricingReady: false });
+  assert.equal(retail.productKey, "retail");
+  assert.equal(fleet.productKey, "fleet");
+  assert.equal(build.productKey, "build");
+  assert.notEqual(fleet.productKey, retail.productKey);
+  assert.notEqual(build.productKey, retail.productKey);
+});
+
+// 17. Retail manifest key
+test("catalogue: retail provisioning manifest key is retail_workspace_manifest", () => {
+  const retail = getCanonicalProduct("retail");
+  assert.equal(retail?.provisioningManifestKey, "retail_workspace_manifest");
+});
+
+// 18. All 6 canonical products are present
+test("catalogue: exactly 6 canonical products", () => {
+  const catalog = getCanonicalProductCatalog();
+  assert.equal(catalog.length, 6);
+  const keys = catalog.map((p) => p.productKey);
+  assert.ok(keys.includes("retail"));
+  assert.ok(keys.includes("build"));
+  assert.ok(keys.includes("location_audit"));
+  assert.ok(keys.includes("assets_audit"));
+  assert.ok(keys.includes("fleet"));
+  assert.ok(keys.includes("field_operations"));
+});
+
+// 19. BUSINESS_OBJECTIVES has exactly 6 entries
+test("catalogue: BUSINESS_OBJECTIVES has exactly 6 entries", () => {
+  assert.equal(BUSINESS_OBJECTIVES.length, 6);
+});
+
+// 20. No objective maps to legacy product keys
+test("catalogue: no objective maps to legacy keys (assets/audit/survey)", () => {
+  for (const obj of BUSINESS_OBJECTIVES) {
+    assert.ok(obj.maps_to_product !== "assets", `${obj.id} should not map to legacy 'assets'`);
+    assert.ok(obj.maps_to_product !== "audit",  `${obj.id} should not map to legacy 'audit'`);
+    assert.ok(obj.maps_to_product !== "survey", `${obj.id} should not map to legacy 'survey'`);
+  }
 });

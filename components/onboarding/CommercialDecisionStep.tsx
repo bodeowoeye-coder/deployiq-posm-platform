@@ -35,7 +35,7 @@ export function CommercialDecisionStep({
   onTalkToSales,
   onBack,
 }: Props) {
-  if (recommendation.deploymentMode === "SELF_SERVICE") {
+  if (recommendation.deploymentMode === "SELF_SERVICE" && recommendation.pricingReady) {
     return <SelfServiceCard recommendation={recommendation} onContinue={onContinueSetup} onTalkToSales={onTalkToSales} onBack={onBack} />;
   }
   return <EnterpriseCard recommendation={recommendation} onRequestProposal={onRequestProposal} onBack={onBack} />;

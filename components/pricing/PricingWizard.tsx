@@ -11,8 +11,10 @@ import {
   validateFormTiers,
 } from "@/lib/commercial/pricing/tierEditor";
 import {
+  createDefaultFormStateForProduct,
   createDefaultFormState,
   formStateToApiBody,
+  getSupportedMetricsForProduct,
   hasMultipleAutoTiers,
   resetTiersForFlatRate,
   templateToFormState,
@@ -24,25 +26,33 @@ import { PricingModelSelector } from "./PricingModelSelector";
 import { PricingPreviewStep } from "./PricingPreviewStep";
 import { PricingReviewStep } from "./PricingReviewStep";
 import type { FormState, WizardStep } from "./types";
+import { PricingCommercialConfigStep } from "./PricingCommercialConfigStep";
+import { validateCommercialConfiguration } from "./wizardUtils";
 
 const STEPS: { id: WizardStep; label: string; description: string }[] = [
   { id: 1, label: "What are you pricing?",         description: "Choose product, market and targeting" },
-  { id: 2, label: "How should DeployIQ charge?",   description: "Define pricing bands and amounts" },
-  { id: 3, label: "Test your pricing",             description: "Confirm the calculation looks right" },
-  { id: 4, label: "Publish pricing rule",          description: "Review and make the rule available" },
+  { id: 2, label: "Commercial configuration",      description: "Define commercial model and billing rules" },
+  { id: 3, label: "How should DeployIQ charge?",   description: "Define pricing bands and amounts" },
+  { id: 4, label: "Test your pricing",             description: "Confirm the calculation looks right" },
+  { id: 5, label: "Publish pricing rule",          description: "Review and make the rule available" },
 ];
 
 type Props = {
   initialTemplate?: PricingTemplate | null;
   /** Active and archived templates open in read-only mode. */
   isReadOnly?: boolean;
+  lockedProductKey?: string;
   onClose: (reload?: boolean) => void;
 };
 
-export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: Props) {
+export function PricingWizard({ initialTemplate, isReadOnly = false, lockedProductKey, onClose }: Props) {
   const [step, setStep] = useState<WizardStep>(1);
   const [form, setForm] = useState<FormState>(() =>
-    initialTemplate ? templateToFormState(initialTemplate) : createDefaultFormState()
+    initialTemplate
+      ? { ...templateToFormState(initialTemplate), productKey: lockedProductKey ?? initialTemplate.product_key }
+      : lockedProductKey
+      ? createDefaultFormStateForProduct(lockedProductKey)
+      : createDefaultFormState()
   );
   const [savedTemplateId, setSavedTemplateId] = useState<string | null>(
     initialTemplate?.id ?? null
@@ -57,16 +67,29 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
 
   const tierErrors = useMemo(() => validateFormTiers(form.tiers), [form.tiers]);
   const hasTierErrors = useMemo(() => hasValidationErrors(tierErrors), [tierErrors]);
+  const commercialIssues = useMemo(() => validateCommercialConfiguration(form), [form.commercialModel, form.billingBehaviour, form.renewalRequired, form.allowedPaymentMethods, form.pricingMetric]);
+  const hasCommercialErrors = commercialIssues.some((i) => i.severity === "error");
 
   const stepReady: Record<WizardStep, boolean> = {
     1: form.name.trim().length > 0,
-    2: !hasTierErrors,
-    3: true,
+    2: !hasCommercialErrors,
+    3: !hasTierErrors,
     4: true,
+    5: true,
   };
 
   function handleFormChange(patch: Partial<FormState>) {
-    setForm((c) => ({ ...c, ...patch }));
+    setForm((current) => {
+      const next = { ...current, ...patch };
+      if (lockedProductKey) {
+        next.productKey = lockedProductKey;
+        const allowedMetrics = getSupportedMetricsForProduct(lockedProductKey).map((metric) => metric.value);
+        if (!allowedMetrics.includes(next.pricingMetric)) {
+          next.pricingMetric = allowedMetrics[0] ?? current.pricingMetric;
+        }
+      }
+      return next;
+    });
     if (!isReadOnly) setIsDirty(true);
   }
 
@@ -114,7 +137,7 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
   }
 
   function goNext() {
-    if (!stepReady[step] || step === 4) return;
+    if (!stepReady[step] || step === 5) return;
     setStep((s) => (s + 1) as WizardStep);
   }
 
@@ -123,7 +146,8 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
     setError(null);
     try {
       const isUpdate = !!savedTemplateId;
-      const body = formStateToApiBody(form, savedTemplateId);
+      const lockedForm = lockedProductKey ? { ...form, productKey: lockedProductKey } : form;
+      const body = formStateToApiBody(lockedForm, savedTemplateId);
       const response = await fetch("/api/admin/commercial/pricing-templates", {
         method: isUpdate ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -307,9 +331,17 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
         {/* Step content */}
         <div className="px-5 py-6">
           {step === 1 && (
-            <PricingTemplateDetailsStep form={form} onChange={isReadOnly ? () => {} : handleFormChange} readOnly={isReadOnly} />
+            <PricingTemplateDetailsStep
+              form={form}
+              onChange={isReadOnly ? () => {} : handleFormChange}
+              readOnly={isReadOnly}
+              productLocked={Boolean(lockedProductKey)}
+            />
           )}
           {step === 2 && (
+            <PricingCommercialConfigStep form={form} isReadOnly={isReadOnly} onChange={isReadOnly ? () => {} : handleFormChange} />
+          )}
+          {step === 3 && (
           <div className="space-y-6">
             {/* Pricing model selection */}
             <div className="space-y-2.5">
@@ -341,10 +373,10 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
             )}
           </div>
         )}
-          {step === 3 && (
+          {step === 4 && (
             <PricingPreviewStep form={form} savedTemplateId={savedTemplateId} />
           )}
-          {step === 4 && (
+          {step === 5 && (
             isReadOnly ? (
               <PricingReviewStep
                 form={form}
@@ -391,7 +423,7 @@ export function PricingWizard({ initialTemplate, isReadOnly = false, onClose }: 
               {isReadOnly ? "Close" : "Cancel"}
             </button>
 
-            {step < 4 ? (
+            {step < 5 ? (
               <button
                 type="button"
                 onClick={goNext}

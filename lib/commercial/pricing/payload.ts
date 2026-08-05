@@ -16,6 +16,10 @@ export function buildPricingTemplatePayload(input: {
   effectiveFrom?: string | null;
   effectiveTo?: string | null;
   quotationValidityDays?: number | null;
+  commercialModel?: string | null;
+  billingBehaviour?: string | null;
+  renewalRequired?: boolean;
+  allowedPaymentMethods?: string[] | null;
   tiers: Array<{
     sequence: number;
     minimumQuantity: number;
@@ -41,6 +45,10 @@ export function buildPricingTemplatePayload(input: {
     effective_from: input.effectiveFrom ?? null,
     effective_to: input.effectiveTo ?? null,
     quotation_validity_days: input.quotationValidityDays ?? null,
+    commercial_model: input.commercialModel ?? null,
+    billing_behaviour: input.billingBehaviour ?? null,
+    renewal_required: input.renewalRequired ?? false,
+    allowed_payment_methods: input.allowedPaymentMethods ?? null,
     tiers: input.tiers.map((tier) => ({
       sequence: tier.sequence,
       minimum_quantity: tier.minimumQuantity,
@@ -52,3 +60,4 @@ export function buildPricingTemplatePayload(input: {
     }))
   };
 }
+

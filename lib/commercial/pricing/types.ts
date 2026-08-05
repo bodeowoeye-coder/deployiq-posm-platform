@@ -1,7 +1,7 @@
 export type PricingTemplateStatus = "draft" | "active" | "inactive" | "archived";
 export type PricingTierStatus = "active" | "inactive" | "archived";
 export type PricingCalculationMethod = "progressive_tiered" | "volume_tiered" | "flat_rate";
-export type PricingMetric = "deployment_location";
+export type PricingMetric = "deployment_location" | "site" | "project" | "phase" | "milestone" | "managed_value" | string;
 export type PricingEnterpriseAction = "request_quotation" | "no_automatic_checkout" | "custom_rate" | null;
 
 export type PricingScope = {
@@ -30,6 +30,14 @@ export type PricingTemplateRecord = {
   effective_from: string | null;
   effective_to: string | null;
   quotation_validity_days: number | null;
+  /** Commercial engagement model — configurable per template. null = legacy, treated as one_time_programme. */
+  commercial_model: string | null;
+  /** How the customer is charged. Derived from commercial_model by default. */
+  billing_behaviour: string | null;
+  /** Whether this model auto-renews. */
+  renewal_required: boolean;
+  /** JSON array of permitted payment method codes. null = all methods. */
+  allowed_payment_methods: string[] | null;
   created_by: string | null;
   updated_by: string | null;
   activated_by: string | null;
@@ -123,6 +131,11 @@ export type PricingCalculationResult = {
   requires_enterprise_review: boolean;
   calculated_at: string;
   enterprise_action?: PricingEnterpriseAction;
+  /** Commercial model from the template — propagated for checkout rendering. */
+  commercial_model: string | null;
+  billing_behaviour: string | null;
+  renewal_required: boolean;
+  allowed_payment_methods: string[] | null;
 };
 
 export type PricingSnapshot = {

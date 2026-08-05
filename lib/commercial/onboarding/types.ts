@@ -1,4 +1,18 @@
-export type OnboardingProductKey = "retail" | "build" | "assets" | "audit" | "survey";
+/**
+ * Canonical product keys. All new code must use these values.
+ * Legacy aliases (assets, audit, survey) are handled in catalogue.ts.
+ */
+export type OnboardingProductKey =
+  | "retail"
+  | "build"
+  | "location_audit"
+  | "assets_audit"
+  | "fleet"
+  | "field_operations"
+  // Legacy aliases — maintained for backward compatibility only
+  | "assets"
+  | "audit"
+  | "survey";
 export type OnboardingStep = "welcome" | "organisation" | "product" | "retail-setup" | "capacity" | "pricing" | "account" | "review" | "provisioning" | "success";
 export type OnboardingDraftStatus =
   | "started"

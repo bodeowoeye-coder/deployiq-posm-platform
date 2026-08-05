@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { resolveRecommendation } from "@/lib/commercial/onboarding/recommendation";
 import { getOnboardingDraftByToken, updateOnboardingDraft } from "@/lib/commercial/onboarding/service";
+import { currencyForCountry } from "@/lib/commercial/onboarding/quotation";
+import { resolveApplicablePricingTemplate } from "@/lib/commercial/pricing/service";
 
 export async function POST(request: Request) {
   try {
@@ -28,7 +30,28 @@ export async function POST(request: Request) {
     // Accept new capabilities array; derive legacy boolean flags for backwards compatibility
     const capabilities: string[] = Array.isArray(body.capabilities) ? body.capabilities : [];
 
-    // Server resolves recommendation — client cannot influence product selection
+    // Server resolves recommendation — client cannot influence product selection.
+    // First pass resolves the canonical product; pricing readiness is checked live below.
+    const baseRecommendation = resolveRecommendation({
+      objectiveId,
+      quantity,
+      country,
+      needsInstallers: capabilities.includes("fieldEvidence") || Boolean(body.needsInstallers),
+      needsClientPortal: capabilities.includes("clientVisibility") || Boolean(body.needsClientPortal),
+      needsAnalytics: capabilities.includes("projectAnalytics") || Boolean(body.needsAnalytics),
+    });
+    const currency = currencyForCountry(country);
+    const pricingResolution = await resolveApplicablePricingTemplate({
+      productKey: baseRecommendation.productKey,
+      quantity,
+      country,
+      currency,
+      region: null,
+      customerSegment: null,
+      campaignType: null,
+      calculationDate: null,
+      onboardingDraftId: null,
+    });
     const recommendation = resolveRecommendation({
       objectiveId,
       quantity,
@@ -36,6 +59,7 @@ export async function POST(request: Request) {
       needsInstallers: capabilities.includes("fieldEvidence") || Boolean(body.needsInstallers),
       needsClientPortal: capabilities.includes("clientVisibility") || Boolean(body.needsClientPortal),
       needsAnalytics: capabilities.includes("projectAnalytics") || Boolean(body.needsAnalytics),
+      pricingReady: Boolean(pricingResolution.template),
     });
 
     // Persist to draft if token provided
@@ -60,6 +84,8 @@ export async function POST(request: Request) {
             needsClientPortal: capabilities.includes("clientVisibility") || Boolean(body.needsClientPortal),
             needsAnalytics: capabilities.includes("projectAnalytics") || Boolean(body.needsAnalytics),
             recommendedProductKey: recommendation.productKey,
+            pricingReady: recommendation.pricingReady,
+            provisioningManifestKey: recommendation.provisioningManifestKey,
           },
           selectedProduct: recommendation.productKey,
         });
