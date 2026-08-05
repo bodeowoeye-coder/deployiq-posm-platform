@@ -9,6 +9,9 @@ import { RecommendationStep } from "./RecommendationStep";
 import { CommercialDecisionStep } from "./CommercialDecisionStep";
 import { LiveQuotationStep } from "./LiveQuotationStep";
 import { EnterpriseAssistanceStep } from "./EnterpriseAssistanceStep";
+import { IdentityOrganisationStep, type IdentityOrgData } from "./IdentityOrganisationStep";
+import { IdentityAdminStep, type IdentityAdminData } from "./IdentityAdminStep";
+import { IdentityVerificationStep } from "./IdentityVerificationStep";
 import type { RecommendationResult } from "@/lib/commercial/onboarding/recommendation";
 import type { CustomerQuotation } from "@/lib/commercial/onboarding/quotation";
 import { currencyForCountry } from "@/lib/commercial/onboarding/quotation";
@@ -21,9 +24,12 @@ type OnboardingStep =
   | "quotation"
   | "enterprise"
   | "setup"
-  | "next-steps";
+  | "next-steps"
+  | "identity-organisation"
+  | "identity-admin"
+  | "identity-verification";
 
-const PROGRESS_STEPS = ["Your goal", "Requirements", "Recommendation", "Your path"];
+const PROGRESS_STEPS = ["Your goal", "Requirements", "Recommendation", "Your path", "Your workspace"];
 
 const PROGRESS_INDEX: Partial<Record<OnboardingStep, number>> = {
   objective: 0,
@@ -33,6 +39,9 @@ const PROGRESS_INDEX: Partial<Record<OnboardingStep, number>> = {
   quotation: 3,
   setup: 3,
   "next-steps": 3,
+  "identity-organisation": 4,
+  "identity-admin": 4,
+  "identity-verification": 4,
 };
 
 export function OnboardingShell() {
@@ -54,6 +63,22 @@ export function OnboardingShell() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [identityOrg, setIdentityOrg] = useState<IdentityOrgData>({
+    organisationName: "",
+    workspaceName: "",
+    workspaceSlug: "",
+    country: "",
+    timezone: "",
+  });
+  const [identityAdmin, setIdentityAdmin] = useState<IdentityAdminData>({
+    firstName: "",
+    lastName: "",
+    email: "",
+    mobile: "",
+    acceptedTerms: false,
+    acceptedPrivacy: false,
+  });
+  const [debugOtp, setDebugOtp] = useState<string | null>(null);
 
   useEffect(() => {
     const token = searchParams.get("token");
@@ -164,8 +189,8 @@ export function OnboardingShell() {
       if (payload.quotation) {
         setQuotation(payload.quotation);
       }
-      // Proceed to CO-1B setup placeholder regardless of quotation status
-      setStep("setup");
+      // Proceed to CO-1B identity flow
+      setStep("identity-organisation");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to continue.");
     } finally {
@@ -182,6 +207,9 @@ export function OnboardingShell() {
     else if (step === "setup") setStep("decision");
     else if (step === "enterprise") setStep("decision");
     else if (step === "next-steps") setStep("setup");
+    else if (step === "identity-organisation") setStep("decision");
+    else if (step === "identity-admin") setStep("identity-organisation");
+    else if (step === "identity-verification") setStep("identity-admin");
   }
 
   /** Reset all state and start a completely fresh onboarding journey. */
@@ -199,10 +227,102 @@ export function OnboardingShell() {
     });
     setError(null);
     setResumeToken(null);
+    setIdentityOrg({ organisationName: "", workspaceName: "", workspaceSlug: "", country: "", timezone: "" });
+    setIdentityAdmin({ firstName: "", lastName: "", email: "", mobile: "", acceptedTerms: false, acceptedPrivacy: false });
+    setDebugOtp(null);
     router.replace("/onboarding");
   }
 
+  async function handleIdentityOrgSubmit(data: IdentityOrgData) {
+    setIdentityOrg(data);
+    if (!resumeToken) return;
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/acquisition/identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resumeToken,
+          organisationName: data.organisationName,
+          workspaceName: data.workspaceName,
+          workspaceSlug: data.workspaceSlug,
+          country: data.country,
+          timezone: data.timezone,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        setError(payload.error ?? "Could not save organisation details.");
+        return;
+      }
+      setStep("identity-admin");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to continue.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleIdentityAdminSubmit(data: IdentityAdminData) {
+    setIdentityAdmin(data);
+    if (!resumeToken) return;
+    setError(null);
+    setLoading(true);
+    try {
+      const identityRes = await fetch("/api/acquisition/identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resumeToken,
+          organisationName: identityOrg.organisationName,
+          workspaceName: identityOrg.workspaceName,
+          workspaceSlug: identityOrg.workspaceSlug,
+          country: identityOrg.country,
+          timezone: identityOrg.timezone,
+          adminData: {
+            firstName: data.firstName,
+            lastName: data.lastName,
+            email: data.email,
+            mobile: data.mobile,
+            acceptedTerms: data.acceptedTerms,
+            acceptedPrivacy: data.acceptedPrivacy,
+            acceptedTermsAt: data.acceptedTermsAt,
+            acceptedPrivacyAt: data.acceptedPrivacyAt,
+          },
+        }),
+      });
+      const identityPayload = await identityRes.json();
+      if (!identityRes.ok) {
+        setError(identityPayload.error ?? "Could not save account details.");
+        return;
+      }
+      const verifyRes = await fetch("/api/acquisition/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resumeToken }),
+      });
+      const verifyPayload = await verifyRes.json();
+      if (!verifyRes.ok) {
+        setError(verifyPayload.error ?? "Could not send verification code.");
+        return;
+      }
+      if (verifyPayload.debug_otp) setDebugOtp(verifyPayload.debug_otp);
+      setStep("identity-verification");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to continue.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleVerificationComplete() {
+    setStep("setup");
+  }
+
   const progressIndex = PROGRESS_INDEX[step] ?? 0;
+  const identitySteps: OnboardingStep[] = ["identity-organisation", "identity-admin", "identity-verification"];
+  const isWideStep = identitySteps.includes(step);
   const showProgress = step !== "enterprise" && step !== "setup" && step !== "next-steps";
 
   if (resuming) {
@@ -248,7 +368,9 @@ export function OnboardingShell() {
       ) : null}
 
       {/* Main content */}
-      <main className="mx-auto max-w-2xl px-4 py-8 sm:py-12">
+      <main className={`mx-auto px-4 py-8 sm:py-12 ${
+        isWideStep ? "max-w-5xl" : "max-w-2xl"
+      }`}>
         {error ? (
           <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
             {error}
@@ -306,6 +428,43 @@ export function OnboardingShell() {
             quantity={parseInt(discovery.rolloutQuantity, 10) || 0}
             country={discovery.country}
             resumeToken={resumeToken}
+            onBack={goBack}
+          />
+        )}
+
+        {/* CO-1B: Identity — Organisation */}
+        {step === "identity-organisation" && (
+          <IdentityOrganisationStep
+            initialData={identityOrg}
+            prefilledCountry={discovery.country}
+            recommendation={recommendation}
+            quotation={quotation}
+            onSubmit={handleIdentityOrgSubmit}
+            onBack={goBack}
+            adminPreview={{ firstName: identityAdmin.firstName, lastName: identityAdmin.lastName, email: identityAdmin.email }}
+          />
+        )}
+
+        {/* CO-1B: Identity — Admin */}
+        {step === "identity-admin" && (
+          <IdentityAdminStep
+            initialData={identityAdmin}
+            orgData={identityOrg}
+            recommendation={recommendation}
+            quotation={quotation}
+            onSubmit={handleIdentityAdminSubmit}
+            onBack={goBack}
+          />
+        )}
+
+        {/* CO-1B: Identity — Email Verification */}
+        {step === "identity-verification" && (
+          <IdentityVerificationStep
+            email={identityAdmin.email}
+            resumeToken={resumeToken ?? ""}
+            debugOtp={debugOtp}
+            onVerified={handleVerificationComplete}
+            onChangeEmail={() => setStep("identity-admin")}
             onBack={goBack}
           />
         )}
