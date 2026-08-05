@@ -18,6 +18,15 @@ export async function upsertPlatformProvisioningContext(input: {
   if (clientLookupError) throw clientLookupError;
 
   if (existingClient?.id) {
+    await adminSupabase
+      .from("client_profiles")
+      .upsert({
+        client_id: existingClient.id,
+        contact_person: input.contactPerson,
+        email: input.businessEmail,
+        phone: input.phoneNumber,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "client_id" });
     return { organisationId: existingClient.id, created: false };
   }
 
@@ -31,5 +40,14 @@ export async function upsertPlatformProvisioningContext(input: {
     .single();
 
   if (error) throw error;
+  await adminSupabase
+    .from("client_profiles")
+    .upsert({
+      client_id: data.id,
+      contact_person: input.contactPerson,
+      email: input.businessEmail,
+      phone: input.phoneNumber,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "client_id" });
   return { organisationId: data.id, created: true };
 }

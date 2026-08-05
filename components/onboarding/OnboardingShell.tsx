@@ -19,6 +19,7 @@ import { CheckoutReviewStep } from "./CheckoutReviewStep";
 import { CheckoutPaymentStep } from "./CheckoutPaymentStep";
 import { CheckoutSuccessStep } from "./CheckoutSuccessStep";
 import { EnterpriseSuccessStep } from "./EnterpriseSuccessStep";
+import { ProvisionBoundaryStep } from "./ProvisionBoundaryStep";
 import { CheckoutTransferPendingStep } from "./CheckoutTransferPendingStep";
 import type { RecommendationResult } from "@/lib/commercial/onboarding/recommendation";
 import { shouldRequestQuotation } from "@/lib/commercial/onboarding/flow";
@@ -111,6 +112,12 @@ export function OnboardingShell() {
   const [paymentReference, setPaymentReference] = useState<string | null>(null);
   const [enterprisePONumber, setEnterprisePONumber] = useState<string | null>(null);
   const [readyForProvisioning, setReadyForProvisioning] = useState(false);
+  const [provisioningError, setProvisioningError] = useState<{
+    message: string;
+    reference: string | null;
+    failedStage: string | null;
+    retryable: boolean;
+  } | null>(null);
 
   useEffect(() => {
     const token = searchParams.get("token");
@@ -205,6 +212,7 @@ export function OnboardingShell() {
       return;
     }
     setError(null);
+    setProvisioningError(null);
     setLoading(true);
     try {
       const token = await ensureDraft();
@@ -370,6 +378,43 @@ export function OnboardingShell() {
   function handleVerificationComplete() {
     setIdentityVerified(true);
     setStep("checkout-boundary");
+  }
+
+  async function handleProvisionWorkspace() {
+    if (!resumeToken) {
+      setError("Your setup session has expired. Please restart workspace setup.");
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/acquisition/provision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resumeToken }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        setProvisioningError({
+          message: payload.error ?? "Unable to finish workspace setup.",
+          reference: typeof payload.provisioningReference === "string" ? payload.provisioningReference : null,
+          failedStage: typeof payload.failedStage === "string" ? payload.failedStage : null,
+          retryable: payload.retryable !== false,
+        });
+        return;
+      }
+      setReadyForProvisioning(false);
+      setStep("next-steps");
+    } catch (err) {
+      setProvisioningError({
+        message: err instanceof Error ? err.message : "Unable to finish workspace setup.",
+        reference: null,
+        failedStage: null,
+        retryable: true,
+      });
+    } finally {
+      setLoading(false);
+    }
   }
 
   const progressIndex = PROGRESS_INDEX[step] ?? 0;
@@ -677,6 +722,23 @@ export function OnboardingShell() {
           />
         )}
 
+        {/* CO-1C: Provision Boundary — guarded: only reached via card payment success */}
+        {step === "provision-boundary" && (
+          <ProvisionBoundaryStep
+            orgData={identityOrg}
+            adminData={identityAdmin}
+            recommendation={recommendation}
+            quotation={quotation}
+            billingCycle={billingCycle}
+            paymentReference={paymentReference}
+            readyForProvisioning={readyForProvisioning}
+            provisioningError={provisioningError}
+            onReturnToActivation={() => setStep("checkout-review")}
+            onContinue={() => {
+              void handleProvisionWorkspace();
+            }}
+          />
+        )}
 
         {/* Legacy setup placeholder (accessed via quotation path) */}
         {step === "setup" && (
