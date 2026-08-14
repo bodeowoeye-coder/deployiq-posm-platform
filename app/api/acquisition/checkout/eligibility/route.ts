@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOnboardingDraftByToken } from "@/lib/commercial/onboarding/service";
+import { validateProvisioningEligibility } from "@/lib/acquisition/provisioning/validation";
 
 /**
  * GET /api/acquisition/checkout/eligibility?token=...
@@ -23,13 +24,19 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Acquisition session not found." }, { status: 404 });
     }
 
-    const readyForProvisioning = draft.draft_data?.readyForProvisioning === true;
+    const commercialReadyForProvisioning = draft.draft_data?.readyForProvisioning === true;
     const paymentStatus = (draft.draft_data?.paymentStatus as string | undefined) ?? "pending";
     const commercialStatus = (draft.draft_data?.commercialStatus as string | undefined) ?? "pending";
     const subscriptionStatus = (draft.draft_data?.subscriptionStatus as string | undefined) ?? "inactive";
+    const eligibility = validateProvisioningEligibility(draft);
+    const assistedProvisioningRequired = !eligibility.ok && eligibility.code === "provisioning_blueprint_not_enabled";
 
     return NextResponse.json({
-      readyForProvisioning,
+      readyForProvisioning: eligibility.ok,
+      commercialReadyForProvisioning,
+      assistedProvisioningRequired,
+      code: eligibility.ok ? null : eligibility.code,
+      message: eligibility.ok ? null : eligibility.message,
       paymentStatus,
       commercialStatus,
       subscriptionStatus,

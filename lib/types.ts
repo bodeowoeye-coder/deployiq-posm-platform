@@ -1,4 +1,4 @@
-export type SubmissionStatus = "Pending" | "Flagged" | "Approved" | "Rejected";
+export type SubmissionStatus = "Pending" | "Flagged" | "Approved" | "Rejected" | "Correction Requested";
 export type BrandMatchStatus = "Matched" | "Mismatch" | "Uncertain";
 export type AiConfidenceLevel = "High" | "Medium" | "Low";
 export type DuplicateStatus = "Unique" | "Possible Duplicate" | "Duplicate";

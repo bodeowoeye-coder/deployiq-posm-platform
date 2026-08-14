@@ -14,7 +14,10 @@ export async function POST(request: Request) {
       job: result.job,
       completed: result.completed,
       message: result.customerMessage,
+      workspaceReady: result.workspaceReady,
       workspaceUrl: result.workspaceUrl,
+      adminWorkspaceUrl: result.adminWorkspaceUrl,
+      workspaceDestination: result.workspaceDestination,
       ...(process.env.NODE_ENV === "development" && result.accountSetupLink
         ? { accountSetupLink: result.accountSetupLink }
         : {}),

@@ -108,14 +108,14 @@ async function getBuildProject(projectId: string) {
   const supabase = createAdminSupabase();
   const { data: project, error } = await supabase
     .from("projects")
-    .select("id, client_id, project_name, project_code, project_type, archived_at")
+    .select("id, client_id, project_name:name, archived_at")
     .eq("id", projectId)
     .maybeSingle();
 
   if (error) throw new AccessControlError(`Could not resolve project: ${error.message}`, 500);
   if (!project) throw new AccessControlError("Project not found.", 404);
 
-  return project as BuildProjectRow;
+  return { ...(project as Record<string, unknown>), project_code: null, project_type: null } as BuildProjectRow;
 }
 
 async function getWorkPackageByIdOrThrow(workPackageId: string) {

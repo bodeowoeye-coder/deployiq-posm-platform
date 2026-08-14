@@ -30,7 +30,7 @@ test.describe("Deployment location import deduplication", () => {
       }
     ];
 
-    const normalized = rows.map(normalizeRow).map((item) => {
+    const normalized = rows.map((row) => normalizeRow(row)).map((item) => {
       if ("error" in item) throw new Error(item.error);
       return item.data;
     });
@@ -73,7 +73,7 @@ test.describe("Deployment location import deduplication", () => {
       }
     ];
 
-    const normalized = rows.map(normalizeRow).map((item) => {
+    const normalized = rows.map((row) => normalizeRow(row)).map((item) => {
       if ("error" in item) throw new Error(item.error);
       return item.data;
     });

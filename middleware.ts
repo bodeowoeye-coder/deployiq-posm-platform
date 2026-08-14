@@ -7,9 +7,15 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url, { status: 303 });
   }
 
+  if (request.nextUrl.pathname === "/workspace/admin" || request.nextUrl.pathname.startsWith("/workspace/admin/")) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-deployiq-return-to", `${request.nextUrl.pathname}${request.nextUrl.search}`);
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/login"]
+  matcher: ["/login", "/workspace/admin/:path*"]
 };

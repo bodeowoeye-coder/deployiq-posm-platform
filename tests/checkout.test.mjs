@@ -23,6 +23,10 @@ import {
   resolveCheckoutActivationRoute,
 } from "../lib/commercial/checkout/routing.ts";
 
+import {
+  isProvisioningBlueprintEnabled,
+} from "../lib/acquisition/provisioning/registry.ts";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -277,6 +281,24 @@ test("provision boundary: enterprise PO does not proceed to provision-boundary",
   assert.equal(enterpriseDraft.readyForProvisioning, false);
 });
 
+test("provision boundary: Fleet commercial checkout does not imply provisioning execution", () => {
+  const fleetAfterPayment = {
+    productKey: "fleet",
+    paymentStatus: "succeeded",
+    commercialStatus: "payment_verified",
+    readyForProvisioning: true,
+  };
+  assert.equal(fleetAfterPayment.readyForProvisioning, true);
+  assert.equal(isProvisioningBlueprintEnabled(fleetAfterPayment.productKey), false);
+});
+
+test("provision boundary: assisted provisioning message is customer safe", () => {
+  const boundary = readFileSync(new URL("../components/onboarding/ProvisionBoundaryStep.tsx", import.meta.url), "utf8");
+  assert.match(boundary, /Your DeployIQ workspace is almost ready/);
+  assert.match(boundary, /We’re preparing your DeployIQ workspace in the background/);
+  assert.equal(boundary.includes("provisioningError?.message"), true);
+});
+
 // ---------------------------------------------------------------------------
 // CO-1C UX refinement — language and behaviour assertions
 // ---------------------------------------------------------------------------
@@ -452,6 +474,15 @@ test("ux: 'Set up my workspace' routes to provision-boundary — not a provision
   assert.ok(true, "No API call in ProvisioningAnticipation — verified by code review");
 });
 
+test("ux: provision boundary 'Set up my workspace' starts provisioning immediately", () => {
+  const boundary = readFileSync(new URL("../components/onboarding/ProvisionBoundaryStep.tsx", import.meta.url), "utf8");
+  const shell = readFileSync(new URL("../components/onboarding/OnboardingShell.tsx", import.meta.url), "utf8");
+  assert.match(boundary, /onClick=\{startProvisioning\}/);
+  assert.match(boundary, /await onContinue\(\)/);
+  assert.match(shell, /onContinue=\{handleProvisionWorkspace\}/);
+  assert.match(shell, /fetch\("\/api\/acquisition\/provision"/);
+});
+
 // ---------------------------------------------------------------------------
 // CO-1C Routing correction — provisioning eligibility guards
 // ---------------------------------------------------------------------------
@@ -578,11 +609,12 @@ test("routing: provision-boundary shows guard when readyForProvisioning=false", 
   assert.equal(canShowSetupExperience(true), true);
 });
 
-// 9b. provision-boundary guard: guard redirects back to checkout-review
-test("routing: provision-boundary guard routes back to checkout-review", () => {
-  const guardRedirectTarget = "checkout-review";
-  assert.equal(guardRedirectTarget, "checkout-review");
-  assert.notEqual(guardRedirectTarget, "provision-boundary");
+// 9b. provision-boundary guard: guard remains forward-only after payment
+test("routing: provision-boundary guard does not return to checkout-review", () => {
+  const boundary = readFileSync(new URL("../components/onboarding/ProvisionBoundaryStep.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(boundary, /Return to activation summary/);
+  assert.match(boundary, /Continue to Workspace/);
+  assert.match(boundary, /Refresh automatically/);
 });
 
 // 10. Eligibility API returns readyForProvisioning from draft data

@@ -16,6 +16,25 @@
   --app-background: #f7f5f2;
   --surface-muted: #f3f1ed;
   --surface-raised: #ffffff;
+  --cw-page: #f7f8fa;
+  --cw-sidebar: #e6ecf5;
+  --cw-header: #ffffff;
+  --cw-card: #ffffff;
+  --cw-subtle: #f8fafc;
+  --cw-border: #e2e8f0;
+  --cw-text: #0f172a;
+  --cw-text-secondary: #475569;
+  --cw-text-muted: #64748b;
+  --cw-accent: #ea580c;
+  --cw-accent-soft: #fff7ed;
+  --cw-success: #047857;
+  --cw-warning: #b45309;
+  --cw-danger: #be123c;
+  --cw-radius: 0.5rem;
+  --cw-shadow: 0 1px 2px rgb(15 23 42 / 0.05);
+  --cw-spacing: 1.5rem;
+  --cw-input-height: 2.5rem;
+  --cw-button-height: 2.5rem;
 }
 
 html[data-theme="dark"] {
@@ -28,6 +47,21 @@ html[data-theme="dark"] {
   --app-background: #1c1e23;
   --surface-muted: #25282e;
   --surface-raised: #24262b;
+  --cw-page: #111827;
+  --cw-sidebar: #172033;
+  --cw-header: #1b2433;
+  --cw-card: #1b2433;
+  --cw-subtle: #162033;
+  --cw-border: #334155;
+  --cw-text: #f8fafc;
+  --cw-text-secondary: #cbd5e1;
+  --cw-text-muted: #94a3b8;
+  --cw-accent: #fb923c;
+  --cw-accent-soft: rgb(234 88 12 / 0.16);
+  --cw-success: #34d399;
+  --cw-warning: #fbbf24;
+  --cw-danger: #fb7185;
+  --cw-shadow: 0 1px 2px rgb(0 0 0 / 0.22);
 }
 
 * {
@@ -177,6 +211,291 @@ html[data-theme="dark"] .admin-workspace-scope-select {
 html[data-theme="dark"] .admin-workspace-scope-select option {
   background-color: #17191e;
   color: #f8fafc;
+}
+
+.customer-workspace-shell {
+  --cw-font-scale: 1;
+  background: var(--cw-page);
+  color: var(--cw-text);
+}
+
+.customer-workspace-sidebar {
+  background: var(--cw-sidebar);
+  border-color: var(--cw-border);
+}
+
+.customer-workspace-header,
+.customer-workspace-footer,
+.workspace-card {
+  background: var(--cw-card);
+  border-color: var(--cw-border);
+}
+
+.workspace-card {
+  border-width: 1px;
+  border-radius: var(--cw-radius);
+  box-shadow: var(--cw-shadow);
+}
+
+.workspace-subtle-card {
+  background: var(--cw-subtle);
+  border: 1px solid var(--cw-border);
+  border-radius: var(--cw-radius);
+}
+
+.workspace-alert-card {
+  border: 1px solid var(--cw-border);
+  border-radius: var(--cw-radius);
+  background: var(--cw-subtle);
+  box-shadow: var(--cw-shadow);
+}
+
+.workspace-header-button {
+  display: inline-flex;
+  min-height: var(--cw-button-height);
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: var(--cw-radius);
+  border: 1px solid var(--cw-border);
+  background: var(--cw-card);
+  padding: 0 0.75rem;
+  color: var(--cw-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.workspace-header-button:hover,
+.workspace-settings-link:hover {
+  background: var(--cw-subtle);
+}
+
+.workspace-header-button:focus,
+.workspace-settings-link:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(254 215 170 / 0.8);
+}
+
+.workspace-eyebrow {
+  color: var(--cw-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-settings-link {
+  display: block;
+  min-height: var(--cw-button-height);
+  border-radius: var(--cw-radius);
+  border: 1px solid transparent;
+  padding: 0.625rem 0.75rem;
+  color: var(--cw-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.workspace-settings-link-active {
+  border-color: rgb(251 146 60 / 0.55);
+  background: var(--cw-accent-soft);
+  color: var(--cw-accent);
+  box-shadow: inset 0 0 0 1px rgb(251 146 60 / 0.28);
+}
+
+.workspace-menu {
+  background: var(--cw-card);
+  border: 1px solid var(--cw-border);
+  border-radius: var(--cw-radius);
+  box-shadow: 0 18px 40px rgb(15 23 42 / 0.16);
+}
+
+.workspace-menu-link {
+  display: block;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.625rem;
+  color: var(--cw-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.workspace-menu-link:hover,
+.workspace-menu-link:focus {
+  background: var(--cw-subtle);
+  color: var(--cw-text);
+  outline: none;
+}
+
+.workspace-button-primary,
+.workspace-button-secondary,
+.workspace-button-tertiary,
+.workspace-button-danger {
+  display: inline-flex;
+  min-height: var(--cw-button-height);
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--cw-radius);
+  padding: 0 1rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.workspace-button-primary {
+  background: var(--cw-accent);
+  color: #ffffff;
+}
+
+.workspace-button-secondary {
+  background: #162033;
+  color: #ffffff;
+}
+
+.workspace-button-tertiary {
+  border: 1px solid var(--cw-border);
+  color: var(--cw-text-secondary);
+}
+
+.workspace-button-danger {
+  background: var(--cw-danger);
+  color: #ffffff;
+}
+
+.workspace-input {
+  min-height: var(--cw-input-height);
+  border-radius: var(--cw-radius);
+  border: 1px solid var(--cw-border);
+  background: var(--cw-card);
+  color: var(--cw-text);
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+}
+
+.workspace-search-input {
+  min-height: var(--cw-input-height);
+  border-radius: var(--cw-radius);
+  border: 1px solid var(--cw-border);
+  background: var(--cw-card);
+  color: var(--cw-text);
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  box-shadow: none;
+}
+
+.workspace-search-input:hover {
+  border-color: #cbd5e1;
+}
+
+.workspace-search-input:focus {
+  outline: none;
+  border-color: var(--cw-accent);
+  box-shadow: 0 0 0 2px rgb(251 146 60 / 0.34);
+}
+
+.workspace-search-input:focus:not(:focus-visible) {
+  border-color: var(--cw-border);
+  box-shadow: none;
+}
+
+.workspace-search-input:focus-visible {
+  outline: none;
+  border-color: var(--cw-accent);
+  box-shadow: 0 0 0 2px rgb(251 146 60 / 0.48);
+}
+
+.workspace-search-results {
+  background: var(--cw-card);
+  border-color: var(--cw-border);
+  color: var(--cw-text);
+}
+
+html[data-theme="dark"] .customer-workspace-shell {
+  background: var(--cw-page);
+  color: var(--cw-text);
+}
+
+html[data-theme="dark"] .customer-workspace-sidebar {
+  background: var(--cw-sidebar);
+  border-color: var(--cw-border);
+}
+
+html[data-theme="dark"] .customer-workspace-header,
+html[data-theme="dark"] .customer-workspace-footer,
+html[data-theme="dark"] .workspace-card {
+  background: var(--cw-card);
+  border-color: var(--cw-border);
+}
+
+html[data-theme="dark"] .workspace-subtle-card {
+  background: var(--cw-subtle);
+  border-color: var(--cw-border);
+}
+
+html[data-theme="dark"] .workspace-header-button {
+  background: var(--cw-card);
+  border-color: var(--cw-border);
+  color: var(--cw-text-secondary);
+}
+
+html[data-theme="dark"] .workspace-header-button:hover,
+html[data-theme="dark"] .workspace-settings-link:hover {
+  background: #243044;
+}
+
+html[data-theme="dark"] .workspace-settings-link {
+  color: #cbd5e1;
+}
+
+html[data-theme="dark"] .workspace-settings-link-active {
+  background: var(--cw-accent-soft);
+  color: var(--cw-accent);
+  box-shadow: inset 0 0 0 1px rgb(251 146 60 / 0.55);
+}
+
+html[data-workspace-font-size="small"] .customer-workspace-shell {
+  --cw-font-scale: 0.92;
+}
+
+html[data-workspace-font-size="large"] .customer-workspace-shell {
+  --cw-font-scale: 1.1;
+}
+
+.customer-workspace-shell .text-xs {
+  font-size: calc(0.75rem * var(--cw-font-scale)) !important;
+}
+
+.customer-workspace-shell .text-sm {
+  font-size: calc(0.875rem * var(--cw-font-scale)) !important;
+}
+
+.customer-workspace-shell .text-base {
+  font-size: calc(1rem * var(--cw-font-scale)) !important;
+}
+
+.customer-workspace-shell .text-lg {
+  font-size: calc(1.125rem * var(--cw-font-scale)) !important;
+}
+
+.customer-workspace-shell .text-xl {
+  font-size: calc(1.25rem * var(--cw-font-scale)) !important;
+}
+
+.customer-workspace-shell .text-2xl {
+  font-size: calc(1.5rem * var(--cw-font-scale)) !important;
+}
+
+.customer-workspace-shell .text-3xl {
+  font-size: calc(1.875rem * var(--cw-font-scale)) !important;
+}
+
+.customer-workspace-shell button,
+.customer-workspace-shell input,
+.customer-workspace-shell select,
+.customer-workspace-shell textarea {
+  font-size: calc(0.875rem * var(--cw-font-scale));
+}
+
+html[data-workspace-density="compact"] .customer-workspace-shell .workspace-card,
+html[data-workspace-density="compact"] .customer-workspace-shell .workspace-subtle-card {
+  padding: 0.875rem !important;
 }
 
 button,

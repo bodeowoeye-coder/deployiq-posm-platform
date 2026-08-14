@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ArrowLeft, Loader2, CheckCircle2, MailOpen } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, MailOpen, Copy } from "lucide-react";
 import { OTP_RESEND_COOLDOWN_SECONDS } from "@/lib/acquisition/identity";
 
 type Props = {
   email: string;
   resumeToken: string;
   debugOtp?: string | null;
-  onVerified: () => void;
+  onVerified: (payload: { redirectTo?: string | null }) => void;
   onChangeEmail: () => void;
   onBack: () => void;
 };
@@ -28,6 +28,11 @@ export function IdentityVerificationStep({
   const [resending, setResending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
+  const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
+  const [passwordCopied, setPasswordCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [existingAccountAuthRequired, setExistingAccountAuthRequired] = useState(false);
+  const [verifiedRedirectTo, setVerifiedRedirectTo] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(OTP_RESEND_COOLDOWN_SECONDS);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -61,7 +66,18 @@ export function IdentityVerificationStep({
         return;
       }
       setVerified(true);
-      setTimeout(() => onVerified(), 1200);
+      setVerifiedRedirectTo(typeof payload.redirectTo === "string" ? payload.redirectTo : null);
+      setExistingAccountAuthRequired(payload.existingAccountAuthRequired === true);
+      if (typeof payload.debug_temporary_password === "string") {
+        setTemporaryPassword(payload.debug_temporary_password);
+      } else if (payload.passwordMethod === "generated" && payload.requiresTemporaryPasswordDelivery === true) {
+        setError("Temporary password delivery is not available yet. Please request a new verification code.");
+        setVerified(false);
+      } else if (payload.existingAccountAuthRequired === true) {
+        return;
+      } else {
+        setTimeout(() => onVerified({ redirectTo: typeof payload.redirectTo === "string" ? payload.redirectTo : null }), 1200);
+      }
     } catch {
       setError("Unable to verify. Please check your connection and try again.");
     } finally {
@@ -93,6 +109,19 @@ export function IdentityVerificationStep({
     }
   }
 
+  async function handleCopyTemporaryPassword() {
+    if (!temporaryPassword) return;
+    setCopyError(null);
+    try {
+      await navigator.clipboard.writeText(temporaryPassword);
+      setPasswordCopied(true);
+      window.setTimeout(() => setPasswordCopied(false), 2000);
+    } catch {
+      setPasswordCopied(false);
+      setCopyError("Unable to copy automatically. Select and copy the password manually.");
+    }
+  }
+
   if (verified) {
     return (
       <div className="flex flex-col items-center gap-6 py-16 text-center">
@@ -100,9 +129,50 @@ export function IdentityVerificationStep({
           <CheckCircle2 className="h-8 w-8 text-emerald-500" aria-hidden="true" />
         </div>
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Email verified</h2>
-          <p className="mt-1.5 text-sm text-slate-500">Taking you to the final step…</p>
+          <h2 className="text-2xl font-bold text-slate-900">
+            {temporaryPassword ? "Your temporary password" : "Email verified"}
+          </h2>
+          <p className="mt-1.5 text-sm text-slate-500">
+            {temporaryPassword
+              ? "Use this temporary password with your verified email to sign in. You will be required to create a new password immediately."
+              : existingAccountAuthRequired
+                ? "This email already has a DeployIQ account. Sign in with the existing password to continue setup."
+              : "Taking you to sign in and continue setup…"}
+          </p>
         </div>
+        {temporaryPassword ? (
+          <div className="w-full max-w-sm rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left">
+            <p className="text-xs font-semibold text-amber-800">Verified email</p>
+            <p className="mt-1 break-all text-sm font-medium text-slate-900">{email}</p>
+            <p className="mt-3 text-xs font-semibold text-amber-800">Temporary password</p>
+            <div className="mt-2 flex items-center gap-2 rounded-lg bg-white px-3 py-2">
+              <code className="min-w-0 flex-1 break-all text-sm font-semibold text-slate-900">{temporaryPassword}</code>
+              <button
+                type="button"
+                onClick={handleCopyTemporaryPassword}
+                className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                aria-label="Copy temporary password"
+              >
+                {passwordCopied ? <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
+                <span className="sr-only">{passwordCopied ? "Copied" : "Copy password"}</span>
+              </button>
+            </div>
+            {passwordCopied ? <p className="mt-2 text-xs font-semibold text-emerald-700">Copied</p> : null}
+            {copyError ? <p className="mt-2 text-xs text-rose-600" role="alert">{copyError}</p> : null}
+            <p className="mt-2 text-xs leading-relaxed text-amber-700">
+              This password is shown once in development. You will be asked to create a new password after signing in.
+            </p>
+          </div>
+        ) : null}
+        {temporaryPassword || existingAccountAuthRequired ? (
+          <button
+            type="button"
+            onClick={() => onVerified({ redirectTo: verifiedRedirectTo })}
+            className="rounded-xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-700"
+          >
+            Continue to sign in
+          </button>
+        ) : null}
       </div>
     );
   }

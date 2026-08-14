@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "test:playwright": "npx playwright test tests/gcpl-submission-validation.spec.ts",
+    "test:reset-onboarding": "node scripts/reset-onboarding-test.mjs",
     "seed:admin": "node scripts/seed-test-client.mjs admin",
     "seed:godrej-client": "node scripts/seed-test-client.mjs godrej-client",
     "seed:darling-client": "node scripts/seed-test-client.mjs darling-client",

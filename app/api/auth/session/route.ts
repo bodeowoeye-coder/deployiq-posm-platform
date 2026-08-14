@@ -1,35 +1,23 @@
 import { NextResponse } from "next/server";
-import { defaultRouteForRole, getCurrentAccessToken, getCurrentUserContext, inspectAuthCookiePresence, isAllowedReturnTo } from "@/lib/auth";
+import {
+  getAuthoritativeAccountSecurityState,
+  getCurrentAccessToken,
+  getCurrentUserContext,
+  inspectAuthCookiePresence,
+  isAllowedReturnTo,
+} from "@/lib/auth";
+import {
+  clearDeployIqAuthCookies,
+  setDeployIqSessionCookies,
+} from "@/lib/authSessionCookies";
+import {
+  defaultDestinationForResolvedUser,
+} from "@/lib/authDestinations";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { createUserSupabase } from "@/lib/supabaseUser";
 import { inspectSupabaseEnvironment } from "@/lib/supabaseEnv";
 
 export const dynamic = "force-dynamic";
-
-function isSecureCookie(request: Request) {
-  return process.env.NODE_ENV === "production" || new URL(request.url).protocol === "https:";
-}
-
-function setAuthCookie(response: NextResponse, request: Request, name: string, value: string, maxAge: number) {
-  response.cookies.set(name, value, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isSecureCookie(request),
-    path: "/",
-    maxAge
-  });
-}
-
-function clearAuthCookie(response: NextResponse, request: Request, name: string) {
-  response.cookies.set(name, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isSecureCookie(request),
-    path: "/",
-    maxAge: 0,
-    expires: new Date(0)
-  });
-}
 
 function nowMs() {
   return Number(process.hrtime.bigint()) / 1_000_000;
@@ -37,6 +25,55 @@ function nowMs() {
 
 function timingMs(start: number) {
   return Math.round((nowMs() - start) * 10) / 10;
+}
+
+function isAllowedSessionReturnTo(role: "admin" | "client" | "installer", clientId: string | null | undefined, returnTo: string | null) {
+  if (returnTo === "/client" && role === "client" && !clientId) return false;
+  return isAllowedReturnTo(role, returnTo);
+}
+
+function normalizePath(value: string | null | undefined) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return null;
+  try {
+    const url = new URL(value, "http://localhost");
+    return url.pathname.replace(/\/+$/, "") || "/";
+  } catch {
+    return null;
+  }
+}
+
+function returnToMatchesAuthoritativeDestination(authoritativeDestination: string, requestedReturnTo: string | null) {
+  const authoritativePath = normalizePath(authoritativeDestination);
+  const requestedPath = normalizePath(requestedReturnTo);
+  if (!authoritativePath || !requestedPath) return false;
+  if (authoritativePath === "/workspace/admin") return requestedPath === "/workspace/admin" || requestedPath.startsWith("/workspace/admin/");
+  if (authoritativePath === "/admin") return requestedPath === "/admin" || requestedPath.startsWith("/admin/");
+  if (authoritativePath === "/client") return requestedPath === "/client" || requestedPath.startsWith("/client/");
+  if (authoritativePath === "/submit") return requestedPath === "/submit" || requestedPath.startsWith("/installer/");
+  return requestedPath === authoritativePath;
+}
+
+async function resolveAuthoritativeSessionDestination(input: {
+  role: "admin" | "client" | "installer";
+  userId: string;
+  clientId?: string | null;
+  email?: string | null;
+  requestedReturnTo: string | null;
+}) {
+  const authoritativeDestination = await defaultDestinationForResolvedUser({
+    role: input.role,
+    userId: input.userId,
+    clientId: input.clientId,
+    email: input.email,
+  });
+  const returnToAllowed = isAllowedSessionReturnTo(input.role, input.clientId, input.requestedReturnTo);
+  const returnToCompatible = returnToAllowed && returnToMatchesAuthoritativeDestination(authoritativeDestination, input.requestedReturnTo);
+  return {
+    authoritativeDestination,
+    destination: returnToCompatible ? input.requestedReturnTo ?? authoritativeDestination : authoritativeDestination,
+    returnToAllowed,
+    returnToCompatible,
+  };
 }
 
 export async function POST(request: Request) {
@@ -102,7 +139,29 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid app role configured for this user." }, { status: 403 });
     }
 
-    const redirectTo = isAllowedReturnTo(resolvedRole, requestedReturnTo) ? requestedReturnTo : defaultRouteForRole(resolvedRole);
+    const destination = await resolveAuthoritativeSessionDestination({
+      role: resolvedRole,
+      userId: data.user.id,
+      clientId: role.client_id,
+      email: data.user.email,
+      requestedReturnTo,
+    });
+    const accountSecurity = await getAuthoritativeAccountSecurityState(data.user.id);
+    const redirectTo = accountSecurity.passwordChangeRequired
+      ? `/login/create-password?returnTo=${encodeURIComponent(destination.destination)}`
+      : destination.destination;
+    console.info("[auth-session-routing]", {
+      source: "POST",
+      userId: data.user.id,
+      resolvedRole,
+      clientId: role.client_id ?? null,
+      requestedReturnTo,
+      authoritativeDestination: destination.authoritativeDestination,
+      returnToAllowed: destination.returnToAllowed,
+      returnToCompatible: destination.returnToCompatible,
+      passwordChangeRequired: accountSecurity.passwordChangeRequired,
+      redirectTo,
+    });
 
     const response = NextResponse.json({
       ok: true,
@@ -111,8 +170,7 @@ export async function POST(request: Request) {
       redirectTo
     });
     response.headers.set("Cache-Control", "private, no-store");
-    setAuthCookie(response, request, "deployiq-access-token", accessToken, 60 * 60 * 24 * 7);
-    setAuthCookie(response, request, "deployiq-refresh-token", refreshToken, 60 * 60 * 24 * 7);
+    setDeployIqSessionCookies(response, request, { accessToken, refreshToken });
     console.info("[login-server-timing]", { stage: "session-create-total", durationMs: timingMs(totalStart) });
     return response;
   } catch (error) {
@@ -127,9 +185,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   const response = NextResponse.json({ ok: true });
   response.headers.set("Cache-Control", "no-store, max-age=0");
-  ["deployiq-access-token", "deployiq-refresh-token", "sb-access-token", "sb-refresh-token"].forEach((name) => {
-    clearAuthCookie(response, request, name);
-  });
+  clearDeployIqAuthCookies(response, request);
   return response;
 }
 
@@ -158,14 +214,25 @@ export async function GET(request: Request) {
   }
 
   const requestedReturnTo = new URL(request.url).searchParams.get("returnTo");
-  const redirectTo = isAllowedReturnTo(context.role.role, requestedReturnTo)
-    ? requestedReturnTo
-    : defaultRouteForRole(context.role.role);
+  const destination = await resolveAuthoritativeSessionDestination({
+    role: context.role.role,
+    userId: context.user.id,
+    clientId: context.role.client_id,
+    email: context.user.email,
+    requestedReturnTo,
+  });
+  const accountSecurity = await getAuthoritativeAccountSecurityState(context.user.id);
+  const redirectTo = accountSecurity.passwordChangeRequired
+    ? `/login/create-password?returnTo=${encodeURIComponent(destination.destination)}`
+    : destination.destination;
   console.info("[auth-session-redirect]", {
     userId: context.user.id,
     email: context.user.email ?? null,
     resolvedRole: context.role.role,
     requestedReturnTo,
+    authoritativeDestination: destination.authoritativeDestination,
+    returnToAllowed: destination.returnToAllowed,
+    returnToCompatible: destination.returnToCompatible,
     redirectTo
   });
   const profileStart = nowMs();
@@ -177,7 +244,7 @@ export async function GET(request: Request) {
   try {
     const assignedIds = Array.isArray(profile?.assigned_project_ids) ? (profile.assigned_project_ids as string[]) : [];
     if (assignedIds.length > 0) {
-      const { data: matching } = await createAdminSupabase().schema("public").from("projects").select("project_name").in("id", assignedIds).limit(1);
+      const { data: matching } = await createAdminSupabase().schema("public").from("projects").select("project_name:name").in("id", assignedIds).limit(1);
       if (matching && matching.length > 0) resolvedAssignedProjectName = matching[0].project_name ?? null;
     }
   } catch (err) {

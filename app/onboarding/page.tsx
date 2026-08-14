@@ -1,9 +1,21 @@
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
+import { getCurrentAccessToken, getCurrentUserContext, readAccountSecurityState } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export default function OnboardingPage() {
+export default async function OnboardingPage() {
+  const accessToken = await getCurrentAccessToken();
+  const context = await getCurrentUserContext();
+  if (accessToken && !context) {
+    redirect(`/login?returnTo=${encodeURIComponent("/onboarding")}`);
+  }
+  const accountSecurity = context ? readAccountSecurityState(context.user) : null;
+  if (accountSecurity?.passwordChangeRequired) {
+    redirect(`/login/create-password?returnTo=${encodeURIComponent("/onboarding")}`);
+  }
+
   return (
     <Suspense fallback={
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">

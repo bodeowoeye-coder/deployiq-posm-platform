@@ -1,4 +1,5 @@
 import { getCanonicalProductCatalog } from "../../commercial/products/catalogue.ts";
+import { getRetailWorkspaceManifest } from "./retailManifest.ts";
 
 export type ProvisioningStage =
   | "queued"
@@ -32,6 +33,11 @@ export const PROVISIONING_STAGES: ProvisioningStage[] = [
 export type ProductProvisioningManifest = {
   productKey: string;
   manifestKey: string;
+  manifestVersion?: string;
+  provisioningStatus: "enabled" | "placeholder";
+  isPlaceholder: boolean;
+  productName?: string;
+  productFamily?: string;
   enabledModules: string[];
   defaultNavigation: string[];
   roles: Array<{ key: string; label: string; permissions: string[] }>;
@@ -61,15 +67,26 @@ const BASE_ROLES: ProductProvisioningManifest["roles"] = [
 
 const MANIFEST_OVERRIDES: Record<string, Omit<ProductProvisioningManifest, "productKey" | "manifestKey">> = {
   retail: {
-    enabledModules: ["projects", "deployment_locations", "brands", "submissions", "reports", "notifications"],
-    defaultNavigation: ["Dashboard", "Projects", "Map", "Reports", "Account"],
-    roles: BASE_ROLES,
+    manifestVersion: getRetailWorkspaceManifest().identity.manifestVersion,
+    provisioningStatus: "enabled",
+    isPlaceholder: false,
+    productName: getRetailWorkspaceManifest().identity.productName,
+    productFamily: getRetailWorkspaceManifest().identity.productFamily,
+    enabledModules: Object.keys(getRetailWorkspaceManifest().modules),
+    defaultNavigation: getRetailWorkspaceManifest().navigation.map((item) => item.label),
+    roles: getRetailWorkspaceManifest().roles.map((role) => ({
+      key: role.key,
+      label: role.label,
+      permissions: role.permissions,
+    })),
     starterDashboard: {
-      title: "Retail deployment command centre",
-      widgets: ["deployment_progress", "submission_quality", "location_coverage", "approval_queue"],
+      title: getRetailWorkspaceManifest().defaults.dashboard.title,
+      widgets: getRetailWorkspaceManifest().defaults.dashboard.primaryActions,
     },
   },
   build: {
+    provisioningStatus: "placeholder",
+    isPlaceholder: true,
     enabledModules: ["build_sites", "work_packages", "activities", "quality_assurance", "reports"],
     defaultNavigation: ["Dashboard", "Sites", "Work Packages", "Reports", "Account"],
     roles: BASE_ROLES,
@@ -79,6 +96,8 @@ const MANIFEST_OVERRIDES: Record<string, Omit<ProductProvisioningManifest, "prod
     },
   },
   location_audit: {
+    provisioningStatus: "placeholder",
+    isPlaceholder: true,
     enabledModules: ["audit_locations", "submissions", "reports", "notifications"],
     defaultNavigation: ["Dashboard", "Audits", "Map", "Reports", "Account"],
     roles: BASE_ROLES,
@@ -88,6 +107,8 @@ const MANIFEST_OVERRIDES: Record<string, Omit<ProductProvisioningManifest, "prod
     },
   },
   assets_audit: {
+    provisioningStatus: "placeholder",
+    isPlaceholder: true,
     enabledModules: ["assets", "inspections", "submissions", "reports"],
     defaultNavigation: ["Dashboard", "Assets", "Inspections", "Reports", "Account"],
     roles: BASE_ROLES,
@@ -97,6 +118,8 @@ const MANIFEST_OVERRIDES: Record<string, Omit<ProductProvisioningManifest, "prod
     },
   },
   fleet: {
+    provisioningStatus: "placeholder",
+    isPlaceholder: true,
     enabledModules: ["fleet", "vehicles", "inspections", "reports"],
     defaultNavigation: ["Dashboard", "Fleet", "Vehicles", "Reports", "Account"],
     roles: BASE_ROLES,
@@ -106,6 +129,8 @@ const MANIFEST_OVERRIDES: Record<string, Omit<ProductProvisioningManifest, "prod
     },
   },
   field_operations: {
+    provisioningStatus: "placeholder",
+    isPlaceholder: true,
     enabledModules: ["projects", "sites", "field_tasks", "submissions", "reports"],
     defaultNavigation: ["Dashboard", "Projects", "Sites", "Tasks", "Reports", "Account"],
     roles: BASE_ROLES,
@@ -130,4 +155,9 @@ export function getProductProvisioningManifest(productKey: string): ProductProvi
 export function productMatchesManifest(productKey: string, manifestKey: string | null | undefined): boolean {
   const manifest = getProductProvisioningManifest(productKey);
   return Boolean(manifest && manifest.manifestKey === manifestKey);
+}
+
+export function isProvisioningBlueprintEnabled(productKey: string): boolean {
+  const manifest = getProductProvisioningManifest(productKey);
+  return Boolean(manifest && manifest.provisioningStatus === "enabled" && !manifest.isPlaceholder);
 }

@@ -16,6 +16,7 @@ export type InstallerDraft = {
 export type QueueSyncStatus = "Pending sync" | "Syncing" | "Synced" | "Failed";
 
 export type QueuedSubmissionFields = {
+  submissionEndpoint?: string;
   installerUserId: string | null;
   installerName: string;
   installerEmail?: string | null;
@@ -39,6 +40,15 @@ export type QueuedSubmissionFields = {
   gpsStatus?: "pending" | "captured" | "unavailable";
   capturedAt: string;
   submitAnyway: boolean;
+  workspaceId?: string | null;
+  campaignId?: string | null;
+  campaignLocationId?: string | null;
+  fieldAssignmentId?: string | null;
+  agencyId?: string | null;
+  installerId?: string | null;
+  beforePhotoReference?: string | null;
+  afterPhotoReference?: string | null;
+  notes?: string | null;
 };
 
 export type QueuedSubmission = {
@@ -299,5 +309,14 @@ export function buildQueuedSubmissionFormData(item: QueuedSubmissionRecord, subm
   formData.append("resolvedAddress", item.fields.resolvedAddress ?? "");
   formData.append("capturedAt", item.fields.capturedAt);
   formData.append("submitAnyway", String(submitAnywayOverride ?? item.fields.submitAnyway));
+  formData.append("workspaceId", item.fields.workspaceId ?? "");
+  formData.append("campaignId", item.fields.campaignId ?? "");
+  formData.append("campaignLocationId", item.fields.campaignLocationId ?? "");
+  formData.append("fieldAssignmentId", item.fields.fieldAssignmentId ?? "");
+  formData.append("agencyId", item.fields.agencyId ?? "");
+  formData.append("installerId", item.fields.installerId ?? "");
+  formData.append("beforePhotoReference", item.fields.beforePhotoReference ?? "");
+  formData.append("afterPhotoReference", item.fields.afterPhotoReference ?? "");
+  formData.append("notes", item.fields.notes ?? "");
   return formData;
 }

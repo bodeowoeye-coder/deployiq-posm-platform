@@ -19,9 +19,6 @@ export type ProjectPortfolioCore = {
 export type ProjectCore = {
   id: string;
   client_id: string;
-  business_unit_id: string | null;
-  portfolio_id: string | null;
-  project_type: string | null;
   archived_at: string | null;
 };
 
@@ -77,7 +74,7 @@ export async function getProjectCore(projectId: string) {
   const supabase = createAdminSupabase();
   const { data, error } = await supabase
     .from("projects")
-    .select("id, client_id, business_unit_id, portfolio_id, project_type, archived_at")
+    .select("id, client_id, archived_at")
     .eq("id", projectId)
     .maybeSingle();
   if (error) throw new AccessControlError(`Could not resolve project: ${error.message}`, 500);

@@ -177,7 +177,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Please import at least one outlet row." }, { status: 400 });
     }
 
-    const normalized = rows.map(normalizeRow);
+    const normalized = rows.map((row) => normalizeRow(row));
     const firstError = normalized.find((item) => "error" in item);
     if (firstError && "error" in firstError) {
       return NextResponse.json({ error: firstError.error }, { status: 400 });

@@ -2,7 +2,7 @@ import type { CustomerQuotation } from "../../commercial/onboarding/quotation.ts
 import type { OnboardingDraft } from "../../commercial/onboarding/types.ts";
 import { objectiveToProductKey } from "../../commercial/onboarding/objectives.ts";
 import { resolveProductKey, getCanonicalProduct } from "../../commercial/products/catalogue.ts";
-import { getProductProvisioningManifest } from "./registry.ts";
+import { getProductProvisioningManifest, isProvisioningBlueprintEnabled } from "./registry.ts";
 
 export type ProvisioningEligibilityResult =
   | { ok: true; productKey: string; quotation: CustomerQuotation; workspaceSlug: string; commercialReference: string }
@@ -47,6 +47,21 @@ export function validateProvisioningProductChain(draft: OnboardingDraft, quotati
         manifestProductKey: manifest?.productKey ?? null,
         provisioningManifestKey: product?.provisioningManifestKey ?? null,
         manifestKey: manifest?.manifestKey ?? null,
+      },
+    };
+  }
+
+  if (!isProvisioningBlueprintEnabled(selectedProduct)) {
+    return {
+      ok: false as const,
+      code: "provisioning_blueprint_not_enabled",
+      message: "Workspace setup for this solution is handled by our assisted provisioning team.",
+      details: {
+        selectedProduct,
+        manifestProductKey: manifest.productKey,
+        manifestKey: manifest.manifestKey,
+        provisioningStatus: manifest.provisioningStatus,
+        isPlaceholder: manifest.isPlaceholder,
       },
     };
   }

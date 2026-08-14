@@ -4,7 +4,6 @@
 -- Existing tenant model remains public.clients + related product resources.
 -- This migration only adds an idempotent provisioning control plane.
 -- ---------------------------------------------------------------------------
-
 CREATE TABLE IF NOT EXISTS public.provisioning_jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   acquisition_draft_id uuid NOT NULL REFERENCES public.onboarding_drafts(id) ON DELETE CASCADE,

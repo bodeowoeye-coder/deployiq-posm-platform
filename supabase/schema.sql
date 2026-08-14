@@ -1324,7 +1324,7 @@ end;
 
 alter table public.submissions alter column status set default 'Pending';
 alter table public.submissions drop constraint if exists submissions_status_check;
-alter table public.submissions add constraint submissions_status_check check (status in ('Pending', 'Flagged', 'Approved', 'Rejected'));
+alter table public.submissions add constraint submissions_status_check check (status in ('Pending', 'Flagged', 'Approved', 'Rejected', 'Correction Requested'));
 
 insert into public.clients (name)
 values

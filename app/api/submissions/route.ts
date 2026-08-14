@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { extractBoardTextFromImage } from "@/lib/ai";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { STATUSES } from "@/lib/brands";
 import { getCurrentUserContext } from "@/lib/auth";
@@ -10,8 +9,6 @@ import {
   getAuthenticatedUserContext,
   requireAdmin
 } from "@/lib/accessControl";
-import { reviewBrandMatch } from "@/lib/brandReview";
-import { scoreBrandVerification } from "@/lib/confidence";
 import { detectDuplicate, fingerprintImage } from "@/lib/duplicates";
 import { buildAlertEvent } from "@/lib/alerts";
 import { getRegionForState, NIGERIA_STATES } from "@/lib/geography";
@@ -19,6 +16,7 @@ import { reverseGeocode } from "@/lib/reverseGeocoding";
 import type { Submission } from "@/lib/types";
 import { validateGCPLInsertedSubmission } from "@/lib/submissionValidation";
 import { isSubmissionRejectionReason } from "@/lib/submissionRejection";
+import { applySubmissionWorkflowTransition, insertCoreSubmission, runSubmissionOcrAndBrandReview } from "@/lib/core/submissionService";
 
 export const runtime = "nodejs";
 
@@ -462,27 +460,14 @@ export async function POST(request: Request) {
     } = supabase.storage.from(storageBucket).getPublicUrl(path);
 
     const ocrStart = nowMs();
-    const extractionPromise = extractBoardTextFromImage(publicUrl).then((extraction) => {
+    const ocrReviewPromise = runSubmissionOcrAndBrandReview({ supabase, imageUrl: publicUrl, selectedBrandName: resolvedBrandName }).then((review) => {
       console.info("[submit-server-timing]", {
         stage: "ocr-vision",
-        confidence: extraction.confidence,
+        confidence: review.extraction.confidence,
         durationMs: timingMs(ocrStart)
       });
-      return extraction;
+      return review;
     });
-
-    const brandLoadStart = nowMs();
-    const allBrandsPromise = supabase
-      .from("brands")
-      .select("brand_name")
-      .then((result) => {
-        console.info("[submit-server-timing]", {
-          stage: "brand-list-load",
-          ok: !result.error,
-          durationMs: timingMs(brandLoadStart)
-        });
-        return result;
-      });
 
     const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const recentLoadStart = nowMs();
@@ -521,10 +506,7 @@ export async function POST(request: Request) {
       return resolvedLocation;
     });
 
-    const [extraction, allBrandsResult] = await Promise.all([extractionPromise, allBrandsPromise]);
-    const allBrands = allBrandsResult.data ?? [];
-    const brandReview = reviewBrandMatch(resolvedBrandName, extraction, allBrands ?? []);
-    const confidence = scoreBrandVerification(extraction.confidence, brandReview.brandMatchStatus);
+    const { extraction, brandReview, confidence, autoApproved } = await ocrReviewPromise;
     const outletReview = reviewOutletMatch({
       visibleText: extraction.visibleText || null,
       outletName,
@@ -537,8 +519,8 @@ export async function POST(request: Request) {
       detectedBrand: brandReview.detectedBrandName,
       matchStatus: brandReview.brandMatchStatus,
       confidenceLevel: confidence.level,
-      durationMs: timingMs(brandLoadStart)
-    });
+        durationMs: timingMs(ocrStart)
+      });
 
     const requiresBrandReviewConfirmation =
       (brandReview.brandMatchStatus === "Mismatch" || brandReview.brandMatchStatus === "Uncertain") && !submitAnyway;
@@ -590,7 +572,6 @@ export async function POST(request: Request) {
       (recentData ?? []) as Submission[]
     );
     console.info("[submit-server-timing]", { stage: "duplicate-detection", status: duplicateReview.status, durationMs: timingMs(duplicateStart) });
-    const autoApproved = brandReview.brandMatchStatus === "Matched" && confidence.level === "High";
     const status =
       brandReview.brandMatchStatus === "Mismatch"
         ? "Flagged"
@@ -675,21 +656,15 @@ export async function POST(request: Request) {
       };
 
     const insertStart = nowMs();
-    let { data, error } = await supabase
-      .from("submissions")
-      .insert(submissionPayload)
-      .select()
-      .single();
+    let { data, error } = await insertCoreSubmission(supabase, submissionPayload);
     console.info("[submit-server-timing]", { stage: "database-insert", usedFallbackPayload: false, durationMs: timingMs(insertStart), ok: !error });
 
     if (error && isOptionalSubmissionColumnError(error)) {
       const fallbackInsertStart = nowMs();
-      const fallbackPayload = stripOptionalSubmissionColumns(submissionPayload);
-      const fallbackResult = await supabase
-        .from("submissions")
-        .insert(fallbackPayload)
-        .select()
-        .single();
+      const fallbackResult = await insertCoreSubmission(supabase, submissionPayload, {
+        isOptionalColumnError: isOptionalSubmissionColumnError,
+        stripOptionalColumns: stripOptionalSubmissionColumns,
+      });
       data = fallbackResult.data;
       error = fallbackResult.error;
       console.info("[submit-server-timing]", { stage: "database-insert", usedFallbackPayload: true, durationMs: timingMs(fallbackInsertStart), ok: !error });
@@ -995,35 +970,25 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "No changes supplied." }, { status: 400 });
     }
 
-    const { data: existing } = await supabase.from("submissions").select("status").eq("id", id).maybeSingle();
+    if (status) {
+      const result = await applySubmissionWorkflowTransition({
+        supabase,
+        submissionId: id,
+        actorUserId: context.user_id,
+        action: "set_status",
+        status,
+        rejectionReason,
+        approvalComments,
+        extraUpdates: updates,
+        insertAlertEvent: true,
+      });
+      return NextResponse.json(result);
+    }
+
     const { data, error } = await supabase.from("submissions").update(updates).eq("id", id).select().single();
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    if (status && existing?.status !== status) {
-      await supabase.from("submission_status_history").insert({
-        submission_id: id,
-        previous_status: existing?.status ?? null,
-        new_status: status,
-        changed_by: context.user_id,
-        comment: rejectionReason || approvalComments || null
-      });
-
-      if (status === "Rejected") {
-        await supabase.from("alert_events").insert(
-          buildAlertEvent({
-            alertType: "submission_rejected",
-            submission: {
-              ...(data as Submission),
-              duplicate_status: (data as Submission).duplicate_status ?? "Unique"
-            },
-            severity: "medium",
-            message: rejectionReason || "Submission was rejected by an administrator."
-          })
-        );
-      }
     }
 
     return NextResponse.json({ submission: data });

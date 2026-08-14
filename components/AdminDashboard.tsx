@@ -100,7 +100,6 @@ const adminAccountSettingsItems: Array<{ view: DashboardView; label: string; sta
   { view: "create-project", label: "Create Project" },
   { view: "campaigns", label: "Campaign Management" },
   { view: "outlet-directory", label: "Outlet Directory" },
-  { view: "installer-portal", label: "Installer Portal" },
   { view: "user-management", label: "User Management" },
   { view: "agencies", label: "Agencies" },
   { view: "regions", label: "Regions & Territories", status: "coming-soon" },
@@ -238,7 +237,6 @@ function adminViewTitle(view: DashboardView) {
     "create-project": "Create Project",
     campaigns: "Campaign Management",
     "outlet-directory": "Outlet Directory",
-    "installer-portal": "Installer Portal",
     "user-management": "User Management",
     agencies: "Agencies",
     regions: "Regions & Territories",
@@ -265,7 +263,6 @@ function adminViewDescription(view: DashboardView) {
     "create-project": "Project configuration and campaign setup.",
     campaigns: "Campaign planning and lifecycle management.",
     "outlet-directory": "Import and view approved Godrej pilot outlet records.",
-    "installer-portal": "Operational utility access for the installer submission workflow.",
     "user-management": "User provisioning and access controls.",
     agencies: "Agency directory and assignment configuration.",
     regions: "Territory planning and regional configuration.",
@@ -1850,7 +1847,6 @@ export function AdminDashboard({
           </div>
         ) : null}
         {activeView === "outlet-directory" ? <OutletDirectoryPanel outlets={outletRecords} isLoading={outletsLoading} onImport={importOutletRows} onClear={clearOutletDirectory} /> : null}
-        {activeView === "installer-portal" ? <InstallerPortalPanel /> : null}
         {activeView === "clients" ? <ClientManagementPanel clients={clientRecords} clientProfiles={clientProfileRecords} users={userRecords} submissions={activeRecords} projects={projectRecords} onCreate={createClient} onSave={updateClientProfile} onArchive={archiveClient} onDelete={deleteClient} /> : null}
         {activeView === "user-management" ? <UserManagementPanel users={userRecords} clients={clientRecords.filter((client) => client.status !== "Inactive")} agencies={agencyRecords} projects={projectRecords} submissions={activeRecords} onCreate={createUser} onUpdate={updateUser} /> : null}
         {activeView === "installers" ? (
@@ -2318,23 +2314,6 @@ function AdminPlaceholder({ title, message }: { title: string; message: string }
     <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
       <h2 className="text-base font-bold leading-snug">{title}</h2>
       <p className="mt-2 text-sm leading-snug text-slate-600">{message}</p>
-    </div>
-  );
-}
-
-function InstallerPortalPanel() {
-  return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
-      <h2 className="text-base font-bold leading-snug">Installer Portal</h2>
-      <p className="mt-2 text-sm leading-snug text-slate-600">
-        Field execution is handled through the installer workflow. Use manual submission only for operational exceptions.
-      </p>
-      <a
-        href="/submit"
-        className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold transition hover:border-orange-200 hover:bg-orange-50"
-      >
-        Open manual submission
-      </a>
     </div>
   );
 }

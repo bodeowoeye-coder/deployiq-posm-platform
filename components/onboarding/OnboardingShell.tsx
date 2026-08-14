@@ -22,31 +22,33 @@ import { EnterpriseSuccessStep } from "./EnterpriseSuccessStep";
 import { ProvisionBoundaryStep } from "./ProvisionBoundaryStep";
 import { CheckoutTransferPendingStep } from "./CheckoutTransferPendingStep";
 import type { RecommendationResult } from "@/lib/commercial/onboarding/recommendation";
+import { resolveRecommendation } from "@/lib/commercial/onboarding/recommendation";
 import { shouldRequestQuotation } from "@/lib/commercial/onboarding/flow";
 import type { CustomerQuotation } from "@/lib/commercial/onboarding/quotation";
 import { currencyForCountry } from "@/lib/commercial/onboarding/quotation";
 import type { BillingCycle, PaymentMethod } from "@/lib/commercial/checkout/types";
+import { restoreCurrentOnboardingStep, type CurrentOnboardingStep } from "@/lib/commercial/onboarding/stepMapping";
+import { getCanonicalProduct } from "@/lib/commercial/products/catalogue";
 
-type OnboardingStep =
-  | "objective"
-  | "discovery"
-  | "recommendation"
-  | "decision"
-  | "quotation"
-  | "enterprise"
-  | "setup"
-  | "next-steps"
-  | "identity-organisation"
-  | "identity-admin"
-  | "identity-verification"
-  | "checkout-boundary"
-  | "commercial-plan"
-  | "checkout-review"
-  | "checkout-payment"
-  | "checkout-success"
-  | "checkout-enterprise"
-  | "checkout-transfer-pending"
-  | "provision-boundary";
+type OnboardingStep = CurrentOnboardingStep | "quotation" | "setup";
+type ResumePromptDraft = {
+  id: string;
+  resume_token: string;
+  status: string;
+  current_step: string;
+  draft_data: Record<string, unknown>;
+  selected_product?: string | null;
+  authenticated_user_id?: string | null;
+  last_updated_at?: string | null;
+  recoveryLabel?: {
+    productName: string;
+    organisationName: string;
+    title: string;
+  };
+};
+
+const ONBOARDING_RESUME_TOKEN_KEY = "deployiq:onboarding-resume-token";
+const ONBOARDING_STORAGE_KEYS = [ONBOARDING_RESUME_TOKEN_KEY];
 
 const PROGRESS_STEPS = ["Your goal", "Requirements", "Recommendation", "Your path", "Your workspace", "Activate Workspace"];
 
@@ -57,7 +59,7 @@ const PROGRESS_INDEX: Partial<Record<OnboardingStep, number>> = {
   decision: 3,
   quotation: 3,
   setup: 3,
-  "next-steps": 3,
+  "enterprise-submitted": 3,
   "identity-organisation": 4,
   "identity-admin": 4,
   "identity-verification": 4,
@@ -102,6 +104,7 @@ export function OnboardingShell() {
     lastName: "",
     email: "",
     mobile: "",
+    passwordMethod: "generated",
     acceptedTerms: false,
     acceptedPrivacy: false,
   });
@@ -112,30 +115,137 @@ export function OnboardingShell() {
   const [paymentReference, setPaymentReference] = useState<string | null>(null);
   const [enterprisePONumber, setEnterprisePONumber] = useState<string | null>(null);
   const [readyForProvisioning, setReadyForProvisioning] = useState(false);
+  const [activationStarted, setActivationStarted] = useState(false);
   const [provisioningError, setProvisioningError] = useState<{
     message: string;
     reference: string | null;
     failedStage: string | null;
     retryable: boolean;
   } | null>(null);
+  const [draftPersisted, setDraftPersisted] = useState(false);
+  const [resumePromptDraft, setResumePromptDraft] = useState<ResumePromptDraft | null>(null);
+  const [resumePromptDrafts, setResumePromptDrafts] = useState<ResumePromptDraft[]>([]);
+
+  function rememberResumeToken(token: string | null) {
+    if (!token || typeof window === "undefined") return;
+    window.localStorage.setItem(ONBOARDING_RESUME_TOKEN_KEY, token);
+  }
+
+  function forgetResumeToken() {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(ONBOARDING_RESUME_TOKEN_KEY);
+  }
+
+  function clearOnboardingBrowserState() {
+    if (typeof window === "undefined") return;
+    for (const key of ONBOARDING_STORAGE_KEYS) {
+      window.localStorage.removeItem(key);
+      window.sessionStorage.removeItem(key);
+    }
+  }
+
+  function applyDraft(draft: ResumePromptDraft) {
+    const data = draft.draft_data ?? {};
+    const savedCapabilities = Array.isArray(data.capabilities)
+      ? data.capabilities.filter((item: unknown): item is string => typeof item === "string")
+      : [];
+    setResumeToken(draft.resume_token);
+    const isAccountOwnedDraft = Boolean(draft.authenticated_user_id) || data.emailVerified === true;
+    if (isAccountOwnedDraft) forgetResumeToken();
+    else rememberResumeToken(draft.resume_token);
+    setDraftPersisted(true);
+    setResumePromptDraft(null);
+    setResumePromptDrafts([]);
+    if (data.country) setDiscovery((d) => ({ ...d, country: String(data.country ?? "") }));
+    if (data.industry) setDiscovery((d) => ({ ...d, industry: String(data.industry ?? "") }));
+    if (data.objectiveId) setObjectiveId(String(data.objectiveId ?? ""));
+    if (data.quantity) setDiscovery((d) => ({ ...d, rolloutQuantity: String(data.quantity ?? "") }));
+    if (data.adminCount) setDiscovery((d) => ({ ...d, adminCount: String(data.adminCount ?? "1") }));
+    if (savedCapabilities.length > 0) setDiscovery((d) => ({ ...d, capabilities: savedCapabilities }));
+    if (data.recommendation && typeof data.recommendation === "object") setRecommendation(data.recommendation as RecommendationResult);
+    else if (data.objectiveId) {
+      setRecommendation(resolveRecommendation({
+        objectiveId: String(data.objectiveId),
+        quantity: Number(data.quantity ?? 0),
+        country: String(data.country ?? ""),
+        needsInstallers: savedCapabilities.includes("fieldEvidence") || data.needsInstallers === true,
+        needsClientPortal: savedCapabilities.includes("clientVisibility") || data.needsClientPortal === true,
+        needsAnalytics: savedCapabilities.includes("projectAnalytics") || data.needsAnalytics === true,
+        pricingReady: data.pricingReady === true,
+      }));
+    }
+    if (data.confirmedQuotation && typeof data.confirmedQuotation === "object") setQuotation(data.confirmedQuotation as CustomerQuotation);
+    setIdentityOrg({
+      organisationName: String(data.organisationName ?? ""),
+      workspaceName: String(data.workspaceName ?? data.organisationName ?? ""),
+      workspaceSlug: String(data.workspaceSlug ?? ""),
+      country: String(data.country ?? ""),
+      timezone: String(data.timezone ?? ""),
+    });
+    setIdentityAdmin({
+      firstName: String(data.adminFirstName ?? ""),
+      lastName: String(data.adminLastName ?? ""),
+      email: String(data.adminEmail ?? ""),
+      mobile: String(data.adminMobile ?? ""),
+      passwordMethod: data.passwordMethod === "customer_created" ? "customer_created" : "generated",
+      acceptedTerms: data.acceptedTerms === true,
+      acceptedPrivacy: data.acceptedPrivacy === true,
+    });
+    setIdentityVerified(data.emailVerified === true);
+    setReadyForProvisioning(data.readyForProvisioning === true);
+    if (typeof data.paymentReference === "string") setPaymentReference(data.paymentReference);
+    setStep(restoreCurrentOnboardingStep(draft as any));
+    const provisioningStatus = typeof data.provisioningStatus === "string" ? data.provisioningStatus : "";
+    const hasStartedActivation = Boolean(
+      data.activationStartedAt
+      || data.provisioningJobId
+      || ["running", "pending", "queued", "failed", "delayed"].includes(provisioningStatus)
+      || ["provisioning", "provisioning_pending", "activation_pending", "provisioning_delayed", "failed"].includes(draft.status)
+    );
+    setActivationStarted(hasStartedActivation && provisioningStatus !== "completed");
+    if (provisioningStatus === "failed") {
+      setReadyForProvisioning(false);
+      setProvisioningError({
+        message: typeof data.provisioningFailureMessage === "string"
+          ? data.provisioningFailureMessage
+          : "We could not finish workspace setup automatically. Your activation is safe and our team can resume it.",
+        reference: typeof data.commercialReference === "string" ? data.commercialReference : null,
+        failedStage: typeof data.provisioningFailedStage === "string" ? data.provisioningFailedStage : null,
+        retryable: true,
+      });
+    } else {
+      setProvisioningError(null);
+    }
+  }
 
   useEffect(() => {
     const token = searchParams.get("token");
-    if (!token) return;
-    setResumeToken(token);
+    const storedToken = typeof window !== "undefined" ? window.localStorage.getItem(ONBOARDING_RESUME_TOKEN_KEY) : null;
+    if (!token && !storedToken) {
+      setResuming(true);
+      fetch("/api/onboarding/latest")
+        .then((res) => res.ok ? res.json() : null)
+        .then((payload) => {
+          if (Array.isArray(payload?.drafts) && payload.drafts.length > 0) setResumePromptDrafts(payload.drafts);
+          else if (payload?.draft) setResumePromptDraft(payload.draft);
+          else if (payload?.activationPending && typeof payload.redirectTo === "string") window.location.assign(payload.redirectTo);
+          else if (payload?.blockedByPasswordChange && typeof payload.redirectTo === "string") window.location.assign(payload.redirectTo);
+        })
+        .catch(() => {})
+        .finally(() => setResuming(false));
+      return;
+    }
+    const resumeCandidate = token ?? storedToken;
+    if (!resumeCandidate) return;
     setResuming(true);
-    fetch(`/api/onboarding/resume?token=${encodeURIComponent(token)}`)
+    fetch(`/api/onboarding/resume?token=${encodeURIComponent(resumeCandidate)}`)
       .then((res) => res.json())
       .then((payload) => {
         const draft = payload.draft;
         if (!draft) return;
-        const data = draft.draft_data ?? {};
-        if (data.country) setDiscovery((d) => ({ ...d, country: String(data.country ?? "") }));
-        if (data.objectiveId) setObjectiveId(String(data.objectiveId ?? ""));
-        if (data.quantity) setDiscovery((d) => ({ ...d, rolloutQuantity: String(data.quantity ?? "") }));
-        if (data.objectiveId) setStep("discovery");
+        applyDraft(draft);
       })
-      .catch(() => {})
+      .catch(() => forgetResumeToken())
       .finally(() => setResuming(false));
   }, [searchParams]);
 
@@ -150,6 +260,10 @@ export function OnboardingShell() {
     if (!res.ok) throw new Error(payload.error ?? "Could not start session.");
     const token: string = payload.draft?.resume_token;
     if (token) setResumeToken(token);
+    if (token) {
+      rememberResumeToken(token);
+      setDraftPersisted(true);
+    }
     return token;
   }
 
@@ -157,6 +271,7 @@ export function OnboardingShell() {
     setObjectiveId(id);
     setError(null);
     setLoading(true);
+    setActivationStarted(true);
     try {
       await ensureDraft();
       setStep("discovery");
@@ -250,7 +365,6 @@ export function OnboardingShell() {
     else if (step === "quotation") setStep("decision");
     else if (step === "setup") setStep("decision");
     else if (step === "enterprise") setStep("decision");
-    else if (step === "next-steps") setStep("setup");
     else if (step === "identity-organisation") setStep("decision");
     else if (step === "identity-admin") setStep("identity-organisation");
     else if (step === "identity-verification") setStep("identity-admin");
@@ -276,8 +390,12 @@ export function OnboardingShell() {
     });
     setError(null);
     setResumeToken(null);
+    clearOnboardingBrowserState();
+    setDraftPersisted(false);
+    setResumePromptDraft(null);
+    setResumePromptDrafts([]);
     setIdentityOrg({ organisationName: "", workspaceName: "", workspaceSlug: "", country: "", timezone: "" });
-    setIdentityAdmin({ firstName: "", lastName: "", email: "", mobile: "", acceptedTerms: false, acceptedPrivacy: false });
+    setIdentityAdmin({ firstName: "", lastName: "", email: "", mobile: "", passwordMethod: "generated", acceptedTerms: false, acceptedPrivacy: false });
     setIdentityVerified(false);
     setDebugOtp(null);
     setBillingCycle("annual");
@@ -311,6 +429,7 @@ export function OnboardingShell() {
         setError(payload.error ?? "Could not save organisation details.");
         return;
       }
+      setDraftPersisted(true);
       setStep("identity-admin");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to continue.");
@@ -343,6 +462,9 @@ export function OnboardingShell() {
             lastName: data.lastName,
             email: data.email,
             mobile: data.mobile,
+            passwordMethod: data.passwordMethod,
+            password: data.password,
+            confirmPassword: data.confirmPassword,
             acceptedTerms: data.acceptedTerms,
             acceptedPrivacy: data.acceptedPrivacy,
             acceptedTermsAt: data.acceptedTermsAt,
@@ -355,6 +477,7 @@ export function OnboardingShell() {
         setError(identityPayload.error ?? "Could not save account details.");
         return;
       }
+      setDraftPersisted(true);
       // Trigger OTP send
       const verifyRes = await fetch("/api/acquisition/verify", {
         method: "POST",
@@ -375,9 +498,10 @@ export function OnboardingShell() {
     }
   }
 
-  function handleVerificationComplete() {
+  function handleVerificationComplete(payload: { redirectTo?: string | null }) {
     setIdentityVerified(true);
-    setStep("checkout-boundary");
+    clearOnboardingBrowserState();
+    window.location.assign(payload.redirectTo ?? "/login?returnTo=%2Fonboarding&identityConfirmed=1");
   }
 
   async function handleProvisionWorkspace() {
@@ -395,6 +519,7 @@ export function OnboardingShell() {
       });
       const payload = await res.json();
       if (!res.ok) {
+        setReadyForProvisioning(false);
         setProvisioningError({
           message: payload.error ?? "Unable to finish workspace setup.",
           reference: typeof payload.provisioningReference === "string" ? payload.provisioningReference : null,
@@ -403,9 +528,31 @@ export function OnboardingShell() {
         });
         return;
       }
+      const launchUrl = typeof payload.adminWorkspaceUrl === "string"
+        ? payload.adminWorkspaceUrl
+        : typeof payload.workspaceDestination?.adminWorkspaceUrl === "string"
+          ? payload.workspaceDestination.adminWorkspaceUrl
+          : typeof payload.workspaceUrl === "string"
+            ? payload.workspaceUrl
+            : null;
+      if (payload.workspaceReady === true && launchUrl) {
+        setReadyForProvisioning(false);
+        setActivationStarted(false);
+        forgetResumeToken();
+        window.location.assign(launchUrl);
+        return;
+      }
       setReadyForProvisioning(false);
-      setStep("next-steps");
+      setActivationStarted(true);
+      setProvisioningError({
+        message: payload.message ?? "Your commercial onboarding is complete. Your DeployIQ workspace is currently being prepared, and this is taking a little longer than expected.",
+        reference: typeof payload.job?.commercial_reference === "string" ? payload.job.commercial_reference : null,
+        failedStage: null,
+        retryable: false,
+      });
     } catch (err) {
+      setReadyForProvisioning(false);
+      setActivationStarted(true);
       setProvisioningError({
         message: err instanceof Error ? err.message : "Unable to finish workspace setup.",
         reference: null,
@@ -421,7 +568,12 @@ export function OnboardingShell() {
   const identitySteps: OnboardingStep[] = ["identity-organisation", "identity-admin", "identity-verification", "checkout-boundary"];
   const checkoutSteps: OnboardingStep[] = ["commercial-plan", "checkout-review", "checkout-payment", "checkout-success", "checkout-enterprise", "checkout-transfer-pending", "provision-boundary"];
   const isWideStep = identitySteps.includes(step) || checkoutSteps.includes(step);
-  const showProgress = step !== "enterprise" && step !== "setup" && step !== "next-steps"
+  const savedProgressLabel = identityVerified
+    ? "Your progress has been saved to your account."
+    : draftPersisted
+      ? "Your progress has been saved on this device and securely stored."
+      : "Saving progress…";
+  const showProgress = step !== "enterprise" && step !== "enterprise-submitted" && step !== "setup"
     && step !== "checkout-success" && step !== "checkout-enterprise"
     && step !== "checkout-transfer-pending" && step !== "provision-boundary";
 
@@ -457,7 +609,12 @@ export function OnboardingShell() {
             </button>
           </div>
           {resumeToken ? (
-            <p className="text-xs text-slate-400">Progress saved</p>
+            <p className="max-w-[16rem] text-right text-xs text-slate-400 sm:max-w-none">{savedProgressLabel}</p>
+          ) : null}
+          {identityVerified ? (
+            <a href="/logout" className="text-xs font-semibold text-slate-500 hover:text-slate-800">
+              Sign out
+            </a>
           ) : null}
         </div>
       </header>
@@ -477,7 +634,32 @@ export function OnboardingShell() {
           </div>
         ) : null}
 
-        {step === "objective" && (
+        {step === "objective" && resumePromptDrafts.length > 1 ? (
+          <ResumeSetupList
+            drafts={resumePromptDrafts}
+            onResume={applyDraft}
+            onStartNew={() => {
+              clearOnboardingBrowserState();
+              setResumePromptDraft(null);
+              setResumePromptDrafts([]);
+              startNewJourney();
+            }}
+          />
+        ) : null}
+
+        {step === "objective" && resumePromptDraft && resumePromptDrafts.length <= 1 ? (
+          <ResumeSetupPrompt
+            draft={resumePromptDraft}
+            onResume={() => applyDraft(resumePromptDraft)}
+            onStartNew={() => {
+              clearOnboardingBrowserState();
+              setResumePromptDraft(null);
+              startNewJourney();
+            }}
+          />
+        ) : null}
+
+        {step === "objective" && !resumePromptDraft && resumePromptDrafts.length === 0 && (
           <BusinessObjectiveStep onSelect={handleObjectiveSelect} loading={loading} />
         )}
 
@@ -679,13 +861,20 @@ export function OnboardingShell() {
                   `/api/acquisition/checkout/eligibility?token=${encodeURIComponent(resumeToken)}`
                 );
                 const payload = await res.json();
-                if (res.ok && payload.readyForProvisioning) {
-                  setReadyForProvisioning(true);
+              if (res.ok && payload.readyForProvisioning) {
+                setReadyForProvisioning(true);
+                setProvisioningError(null);
+                setStep("provision-boundary");
+              } else {
+                  setReadyForProvisioning(false);
+                  setProvisioningError({
+                    message: payload.message ?? "Workspace setup for this solution is handled by our assisted provisioning team.",
+                    reference: null,
+                    failedStage: null,
+                    retryable: false,
+                  });
                   setStep("provision-boundary");
-                } else {
-                  setError("Your workspace is not yet eligible for setup. Please check your activation status.");
-                  setStep("checkout-review");
-                }
+              }
               } catch {
                 // Network fallback — trust local state set during card payment
                 if (readyForProvisioning) {
@@ -722,6 +911,10 @@ export function OnboardingShell() {
           />
         )}
 
+        {step === "enterprise-submitted" && (
+          <EnterpriseSubmittedConfirmation resumeToken={resumeToken} />
+        )}
+
         {/* CO-1C: Provision Boundary — guarded: only reached via card payment success */}
         {step === "provision-boundary" && (
           <ProvisionBoundaryStep
@@ -731,12 +924,12 @@ export function OnboardingShell() {
             quotation={quotation}
             billingCycle={billingCycle}
             paymentReference={paymentReference}
+            resumeToken={resumeToken}
             readyForProvisioning={readyForProvisioning}
+            saveRecoveryLabel={draftPersisted ? savedProgressLabel : null}
             provisioningError={provisioningError}
-            onReturnToActivation={() => setStep("checkout-review")}
-            onContinue={() => {
-              void handleProvisionWorkspace();
-            }}
+            activationStarted={activationStarted}
+            onContinue={handleProvisionWorkspace}
           />
         )}
 
@@ -750,26 +943,135 @@ export function OnboardingShell() {
           />
         )}
 
-        {step === "next-steps" && (
-          <div className="space-y-8">
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-6 py-8 text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500" aria-hidden="true">
-                <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <h2 className="text-2xl font-bold text-emerald-900">You're all set</h2>
-              <p className="mt-2 text-sm text-emerald-700">Account creation and workspace setup will be available in the next step.</p>
-            </div>
-            {resumeToken ? (
-              <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                <p className="text-xs text-slate-500">Your save link</p>
-                <p className="mt-1 break-all font-mono text-xs text-slate-700">/onboarding?token={resumeToken}</p>
-              </div>
-            ) : null}
-          </div>
-        )}
       </main>
+    </div>
+  );
+}
+
+function ResumeSetupPrompt({
+  draft,
+  onResume,
+  onStartNew,
+}: {
+  draft: ResumePromptDraft;
+  onResume: () => void;
+  onStartNew: () => void;
+}) {
+  const label = draft.recoveryLabel ?? recoveryLabelForDraft(draft);
+  const productName = label.productName.replace(/^DeployIQ\s+/i, "");
+  return (
+    <div className="space-y-6 rounded-2xl border border-orange-200 bg-white px-6 py-8 shadow-sm">
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Saved setup</p>
+        <h1 className="text-2xl font-bold text-slate-900">You have an incomplete {productName} workspace setup.</h1>
+        <p className="text-sm text-slate-500">Resume where you left off, or start a separate new setup.</p>
+      </div>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <button
+          type="button"
+          onClick={onResume}
+          className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white hover:bg-orange-600"
+        >
+          Resume setup
+        </button>
+        <button
+          type="button"
+          onClick={onStartNew}
+          className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          Start a new setup
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ResumeSetupList({
+  drafts,
+  onResume,
+  onStartNew,
+}: {
+  drafts: ResumePromptDraft[];
+  onResume: (draft: ResumePromptDraft) => void;
+  onStartNew: () => void;
+}) {
+  return (
+    <div className="space-y-6 rounded-2xl border border-orange-200 bg-white px-6 py-8 shadow-sm">
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Saved workspace setups</p>
+        <h1 className="text-2xl font-bold text-slate-900">Choose the setup you want to resume.</h1>
+      </div>
+      <div className="grid gap-3">
+        {drafts.map((draft) => {
+          const label = draft.recoveryLabel ?? recoveryLabelForDraft(draft);
+          return (
+            <div key={draft.id} className="rounded-xl border border-slate-200 px-4 py-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-bold text-slate-900">{label.productName} — {label.organisationName}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Last updated: {draft.last_updated_at ? new Date(draft.last_updated_at).toLocaleString() : "Recently"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onResume(draft)}
+                  className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
+                >
+                  Resume
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={onStartNew}
+        className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+      >
+        Start a new setup
+      </button>
+    </div>
+  );
+}
+
+function recoveryLabelForDraft(draft: ResumePromptDraft) {
+  const data = draft.draft_data ?? {};
+  const recommendation = typeof data.recommendation === "object" && data.recommendation
+    ? data.recommendation as { productKey?: unknown; productName?: unknown }
+    : null;
+  const productKey = draft.selected_product
+    ?? (typeof recommendation?.productKey === "string" ? recommendation.productKey : null)
+    ?? (typeof data.recommendedProductKey === "string" ? data.recommendedProductKey : null);
+  const product = productKey ? getCanonicalProduct(productKey) : null;
+  const productName = draft.recoveryLabel?.productName
+    ?? product?.productName
+    ?? (typeof recommendation?.productName === "string" ? recommendation.productName : "DeployIQ");
+  const organisationName = draft.recoveryLabel?.organisationName
+    ?? (typeof data.organisationName === "string" && data.organisationName.trim() ? data.organisationName.trim() : "Saved workspace");
+  return {
+    productName,
+    organisationName,
+    title: `incomplete ${productName.replace(/^DeployIQ\s+/i, "")} workspace setup`,
+  };
+}
+
+function EnterpriseSubmittedConfirmation({ resumeToken }: { resumeToken: string | null }) {
+  return (
+    <div className="space-y-8">
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-6 py-8 text-center">
+        <h2 className="text-xl font-bold text-emerald-900">Thank you</h2>
+        <p className="mt-2 text-sm text-emerald-700">
+          Your details have been saved. A member of the DeployIQ team will be in touch to prepare a tailored proposal for your programme.
+        </p>
+      </div>
+      {resumeToken ? (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-center">
+          <p className="text-xs text-slate-400">Your progress is saved.</p>
+          <p className="mt-1 break-all font-mono text-xs text-slate-600">/onboarding?token={resumeToken}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -908,7 +1210,7 @@ function SetupPlaceholder({
             </button>
             {resumeToken ? (
               <p className="text-xs text-slate-400">
-                Progress saved
+                Your progress has been saved on this device and securely stored.
               </p>
             ) : null}
           </div>

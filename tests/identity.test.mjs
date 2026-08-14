@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe } from "node:test";
+import { readFileSync } from "node:fs";
 import {
   validateOrganisationName,
   validateWorkspaceName,
@@ -240,6 +241,137 @@ describe("validatePasswordMatch", () => {
   });
   test("returns error for empty confirm", () => {
     assert.ok(validatePasswordMatch("abc123", "") !== null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test-mode identity confirmation and recovery
+// ---------------------------------------------------------------------------
+describe("test identity confirmation", () => {
+  test("verify route creates or restores a test account after OTP confirmation without silent login", () => {
+    const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
+    assert.match(route, /createOrRestoreTestIdentityAccount/);
+    assert.match(route, /authenticatedUserId: testIdentity\?\.userId \?\? draft\.authenticated_user_id/);
+    assert.match(route, /identityLinkedAt/);
+    assert.match(route, /sessionEstablished: false/);
+    assert.match(route, /new URLSearchParams/);
+    assert.match(route, /`\/login\?\$\{redirectParams\.toString\(\)\}`/);
+    assert.doesNotMatch(route, /setAuthCookie/);
+  });
+
+  test("verification code is returned only in development response and is not logged raw", () => {
+    const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
+    assert.match(route, /debug_otp: otp/);
+    assert.match(route, /OTP generated for test response/);
+    assert.doesNotMatch(route, /OTP for \$\{email\}: \$\{otp\}/);
+  });
+
+  test("test identity account resolves an existing user before creating one", () => {
+    const helper = readFileSync(new URL("../lib/acquisition/testIdentitySession.ts", import.meta.url), "utf8");
+    assert.match(helper, /auth\.admin\.listUsers/);
+    assert.match(helper, /profileByEmail/);
+    assert.match(helper, /auth\.admin\.createUser/);
+    assert.match(helper, /auth\.admin\.updateUserById/);
+    assert.match(helper, /deployiq_onboarding_test_user: true/);
+  });
+
+  test("generated password verification redirects to login and never silently authenticates", () => {
+    const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
+    const verification = readFileSync(new URL("../components/onboarding/IdentityVerificationStep.tsx", import.meta.url), "utf8");
+    assert.match(route, /debug_temporary_password/);
+    assert.match(route, /requiresTemporaryPasswordDelivery/);
+    assert.match(route, /passwordChangeRequired/);
+    assert.match(route, /redirectParams\.set\("onboardingUserId"/);
+    assert.match(route, /onboardingUserId/);
+    assert.match(verification, /Your temporary password/);
+    assert.match(verification, /Use this temporary password with your verified email to sign in/);
+    assert.match(verification, /Continue to sign in/);
+    assert.doesNotMatch(route, /deployiq-access-token/);
+  });
+
+  test("generated-password OTP success renders delivery panel before login redirect", () => {
+    const verification = readFileSync(new URL("../components/onboarding/IdentityVerificationStep.tsx", import.meta.url), "utf8");
+    assert.match(verification, /setTemporaryPassword\(payload\.debug_temporary_password\)/);
+    assert.match(verification, /payload\.passwordMethod === "generated" && payload\.requiresTemporaryPasswordDelivery === true/);
+    assert.match(verification, /onClick=\{\(\) => onVerified\(\{ redirectTo: verifiedRedirectTo \}\)\}/);
+    assert.match(verification, /Copy password/);
+    assert.match(verification, /aria-label="Copy temporary password"/);
+    assert.match(verification, /navigator\.clipboard\.writeText\(temporaryPassword\)/);
+    assert.match(verification, /setPasswordCopied\(true\)/);
+    assert.match(verification, /Unable to copy automatically\. Select and copy the password manually\./);
+    assert.doesNotMatch(verification, /localStorage\.setItem\(.*temporaryPassword/);
+    assert.doesNotMatch(verification, /sessionStorage\.setItem\(.*temporaryPassword/);
+  });
+
+  test("customer-created passwords are encrypted in the draft and removed after OTP verification", () => {
+    const route = readFileSync(new URL("../app/api/acquisition/identity/route.ts", import.meta.url), "utf8");
+    const verify = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
+    assert.match(route, /encryptOnboardingPassword/);
+    assert.match(route, /customerPasswordEnvelope/);
+    assert.match(verify, /decryptOnboardingPassword/);
+    assert.match(verify, /customerPasswordEnvelope: null/);
+  });
+
+  test("existing account recovery does not overwrite the user's password", () => {
+    const helper = readFileSync(new URL("../lib/acquisition/testIdentitySession.ts", import.meta.url), "utf8");
+    const login = readFileSync(new URL("../app/login/page.tsx", import.meta.url), "utf8");
+    assert.match(helper, /if \(!user\)/);
+    assert.match(helper, /existingAccountAuthRequired = !canApplyOnboardingPassword/);
+    assert.match(helper, /isIncompleteOnboardingGeneratedUser/);
+    assert.match(helper, /first_login_completed !== true/);
+    assert.match(login, /Forgot Password/);
+  });
+
+  test("onboarding passwords can be applied only to new or incomplete generated accounts", () => {
+    const helper = readFileSync(new URL("../lib/acquisition/testIdentitySession.ts", import.meta.url), "utf8");
+    assert.match(helper, /function shouldApplyOnboardingPassword/);
+    assert.match(helper, /if \(!input\.user\) return true/);
+    assert.match(helper, /return isIncompleteOnboardingGeneratedUser\(input\.user\)/);
+    assert.match(helper, /canApplyOnboardingPassword \? \{ password \} : \{\}/);
+    assert.match(helper, /passwordApplied = canApplyOnboardingPassword/);
+  });
+
+  test("existing account verification pauses before login with existing-password guidance", () => {
+    const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
+    const verification = readFileSync(new URL("../components/onboarding/IdentityVerificationStep.tsx", import.meta.url), "utf8");
+    assert.match(route, /existingAccountAuthRequired: testIdentity\?\.existingAccountAuthRequired \?\? false/);
+    assert.match(route, /authenticatedUserId: testIdentity\?\.userId \?\? draft\.authenticated_user_id/);
+    assert.match(verification, /setExistingAccountAuthRequired\(payload\.existingAccountAuthRequired === true\)/);
+    assert.match(verification, /This email already has a DeployIQ account/);
+    assert.match(verification, /payload\.existingAccountAuthRequired === true/);
+  });
+
+  test("first login password change flow clears password_change_required", () => {
+    const session = readFileSync(new URL("../app/api/auth/session/route.ts", import.meta.url), "utf8");
+    const passwordRoute = readFileSync(new URL("../app/api/auth/password/route.ts", import.meta.url), "utf8");
+    const page = readFileSync(new URL("../app/login/create-password/page.tsx", import.meta.url), "utf8");
+    assert.match(session, /accountSecurity\.passwordChangeRequired/);
+    assert.match(session, /\/login\/create-password\?returnTo=/);
+    assert.match(passwordRoute, /if \(!accountSecurity\.passwordChangeRequired\)/);
+    assert.match(passwordRoute, /if \(passwordError\) throw passwordError/);
+    assert.match(passwordRoute, /password_change_required: false/);
+    assert.match(passwordRoute, /first_login_completed: true/);
+    assert.match(page, /Create a new password/);
+  });
+
+  test("OTP attempts are limited and successful verification consumes credential handoff state", () => {
+    const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
+    assert.match(route, /MAX_OTP_ATTEMPTS = 5/);
+    assert.match(route, /otpFailedAttempts: failedAttempts \+ 1/);
+    assert.match(route, /otpHash: null/);
+    assert.match(route, /customerPasswordEnvelope: null/);
+    const draftUpdateStart = route.indexOf("await updateOnboardingDraft({", route.indexOf("const testIdentity"));
+    const draftUpdateEnd = route.indexOf("const returnTo", draftUpdateStart);
+    const draftUpdate = route.slice(draftUpdateStart, draftUpdateEnd);
+    assert.doesNotMatch(draftUpdate, /generatedTemporaryPassword/);
+    assert.doesNotMatch(route, /console\.(?:info|log|warn|error).*generatedTemporaryPassword/);
+  });
+
+  test("development temporary password delivery is disabled for production runtime", () => {
+    const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
+    assert.match(route, /VERCEL_ENV === "production"/);
+    assert.match(route, /DEPLOYIQ_RUNTIME_ENV === "production"/);
+    assert.match(route, /canUseDevelopmentCredentialDelivery\(\)/);
   });
 });
 

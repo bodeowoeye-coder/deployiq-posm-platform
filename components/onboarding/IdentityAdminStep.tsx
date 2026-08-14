@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeft, Eye, EyeOff, RefreshCw, Copy, Check as CheckIcon } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff } from "lucide-react";
 import {
   validateName,
   validateBusinessEmail,
@@ -20,6 +20,9 @@ export type IdentityAdminData = {
   lastName: string;
   email: string;
   mobile: string;
+  passwordMethod: "generated" | "customer_created";
+  password?: string;
+  confirmPassword?: string;
   acceptedTerms: boolean;
   acceptedPrivacy: boolean;
   /** ISO timestamp when terms were accepted — set on submit. */
@@ -41,45 +44,6 @@ const inputClass =
   "block w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-1 focus:ring-orange-400";
 
 const STRENGTH_COLOURS = ["bg-rose-400", "bg-amber-400", "bg-yellow-400", "bg-emerald-400", "bg-emerald-500"];
-
-/**
- * Generate a cryptographically strong password that satisfies all requirements:
- * uppercase, lowercase, digit, special char, minimum 14 characters.
- * Uses browser crypto.getRandomValues — never leaves the client.
- */
-function generateStrongPassword(): string {
-  const UPPER   = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  const LOWER   = "abcdefghjkmnpqrstuvwxyz";
-  const DIGITS  = "23456789";
-  const SPECIAL = "!@#$%^&*-_=+?";
-  const ALL     = UPPER + LOWER + DIGITS + SPECIAL;
-
-  // Guarantee at least one of each required class
-  const required = [
-    UPPER[randInt(UPPER.length)],
-    LOWER[randInt(LOWER.length)],
-    DIGITS[randInt(DIGITS.length)],
-    SPECIAL[randInt(SPECIAL.length)],
-  ];
-
-  const remaining = 10; // total length = 14
-  const extra = Array.from({ length: remaining }, () => ALL[randInt(ALL.length)]);
-  const combined = [...required, ...extra];
-
-  // Fisher-Yates shuffle
-  for (let i = combined.length - 1; i > 0; i--) {
-    const j = randInt(i + 1);
-    [combined[i], combined[j]] = [combined[j], combined[i]];
-  }
-
-  return combined.join("");
-}
-
-function randInt(max: number): number {
-  const arr = new Uint32Array(1);
-  crypto.getRandomValues(arr);
-  return arr[0] % max;
-}
 
 function PasswordMeter({ analysis }: { analysis: PasswordAnalysis }) {
   return (
@@ -119,40 +83,16 @@ export function IdentityAdminStep({
   initialData, orgData, recommendation, quotation, onSubmit, onBack,
 }: Props) {
   const [form, setForm] = useState<IdentityAdminData>(initialData);
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [password, setPassword] = useState(initialData.password ?? "");
+  const [confirmPassword, setConfirmPassword] = useState(initialData.confirmPassword ?? "");
   const [showPw, setShowPw] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
-  const [pwAnalysis, setPwAnalysis] = useState<PasswordAnalysis>(analysePassword(""));
-  const [copied, setCopied] = useState(false);
-  const [generatedShowing, setGeneratedShowing] = useState(false);
+  const [pwAnalysis, setPwAnalysis] = useState<PasswordAnalysis>(analysePassword(initialData.password ?? ""));
 
   function patchField(field: keyof IdentityAdminData, value: string | boolean) {
     setForm((c) => ({ ...c, [field]: value }));
     setErrors((c) => ({ ...c, [field]: undefined }));
-  }
-
-  function handleGenerate() {
-    const pw = generateStrongPassword();
-    setPassword(pw);
-    setConfirmPassword(pw);
-    setPwAnalysis(analysePassword(pw));
-    setShowPw(true);
-    setGeneratedShowing(true);
-    setErrors((c) => ({ ...c, password: undefined, confirmPassword: undefined }));
-    setCopied(false);
-  }
-
-  async function handleCopy() {
-    if (!password) return;
-    try {
-      await navigator.clipboard.writeText(password);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
-    } catch {
-      // clipboard unavailable — user can copy manually
-    }
   }
 
   function validate(): boolean {
@@ -165,9 +105,11 @@ export function IdentityAdminStep({
     if (emailErr) next.email = emailErr;
     const mobileErr = validateMobile(form.mobile);
     if (mobileErr) next.mobile = mobileErr;
-    if (!pwAnalysis.isAcceptable) next.password = "Password does not meet requirements.";
-    const matchErr = validatePasswordMatch(password, confirmPassword);
-    if (matchErr) next.confirmPassword = matchErr;
+    if (form.passwordMethod === "customer_created") {
+      if (!pwAnalysis.isAcceptable) next.password = "Password does not meet requirements.";
+      const matchErr = validatePasswordMatch(password, confirmPassword);
+      if (matchErr) next.confirmPassword = matchErr;
+    }
     if (!form.acceptedTerms) next.terms = "You must accept the Terms of Service.";
     if (!form.acceptedPrivacy) next.privacy = "You must accept the Privacy Policy.";
     setErrors(next);
@@ -178,9 +120,10 @@ export function IdentityAdminStep({
     e.preventDefault();
     if (!validate()) return;
     const now = new Date().toISOString();
-    // Password is validated but NOT stored in state or passed to parent.
     onSubmit({
       ...form,
+      password: form.passwordMethod === "customer_created" ? password : undefined,
+      confirmPassword: form.passwordMethod === "customer_created" ? confirmPassword : undefined,
       acceptedTermsAt: form.acceptedTerms ? now : undefined,
       acceptedPrivacyAt: form.acceptedPrivacy ? now : undefined,
     });
@@ -255,28 +198,56 @@ export function IdentityAdminStep({
               {errors.mobile ? <p className="text-xs text-rose-600" role="alert">{errors.mobile}</p> : null}
             </div>
 
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-slate-700">Password setup</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className={`cursor-pointer rounded-xl border p-4 transition-colors ${
+                  form.passwordMethod === "generated" ? "border-orange-300 bg-orange-50" : "border-slate-200 bg-white hover:border-slate-300"
+                }`}>
+                  <input
+                    type="radio"
+                    name="passwordMethod"
+                    value="generated"
+                    checked={form.passwordMethod === "generated"}
+                    onChange={() => patchField("passwordMethod", "generated")}
+                    className="sr-only"
+                  />
+                  <span className="block text-sm font-semibold text-slate-900">Let DeployIQ create a secure password</span>
+                  <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                    DeployIQ generates a temporary password after verification. You will change it on first sign-in.
+                  </span>
+                </label>
+                <label className={`cursor-pointer rounded-xl border p-4 transition-colors ${
+                  form.passwordMethod === "customer_created" ? "border-orange-300 bg-orange-50" : "border-slate-200 bg-white hover:border-slate-300"
+                }`}>
+                  <input
+                    type="radio"
+                    name="passwordMethod"
+                    value="customer_created"
+                    checked={form.passwordMethod === "customer_created"}
+                    onChange={() => patchField("passwordMethod", "customer_created")}
+                    className="sr-only"
+                  />
+                  <span className="block text-sm font-semibold text-slate-900">I'll create my own password</span>
+                  <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                    Use your own password now. You will sign in with it after email verification.
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {form.passwordMethod === "customer_created" ? (
+              <>
             {/* Password */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <label htmlFor="adm-pw" className="block text-sm font-medium text-slate-700">
-                  Password <span className="text-rose-500" aria-hidden="true">*</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={handleGenerate}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:border-orange-300 hover:text-orange-700 transition-colors"
-                  aria-label="Generate a strong password for DeployIQ"
-                >
-                  <RefreshCw className="h-3 w-3" aria-hidden="true" />
-                  Generate strong password
-                </button>
-              </div>
+              <label htmlFor="adm-pw" className="block text-sm font-medium text-slate-700">
+                Password <span className="text-rose-500" aria-hidden="true">*</span>
+              </label>
               <div className="relative">
                 <input id="adm-pw" name="new-password" type={showPw ? "text" : "password"} value={password}
                   onChange={(e) => {
                     setPassword(e.target.value);
                     setPwAnalysis(analysePassword(e.target.value));
-                    setGeneratedShowing(false);
                     setErrors((c) => ({ ...c, password: undefined }));
                   }}
                   className={`${inputClass} pr-10`} placeholder="Create a strong password"
@@ -289,29 +260,6 @@ export function IdentityAdminStep({
               </div>
               {password ? <PasswordMeter analysis={pwAnalysis} /> : null}
               {errors.password ? <p className="text-xs text-rose-600" role="alert">{errors.password}</p> : null}
-
-              {/* Generated password disclosure */}
-              {generatedShowing && password ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold text-amber-800">
-                      Save this password securely.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleCopy}
-                      className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors"
-                      aria-label="Copy generated password"
-                    >
-                      {copied ? <CheckIcon className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
-                      {copied ? "Copied" : "Copy"}
-                    </button>
-                  </div>
-                  <p className="text-xs text-amber-700">
-                    DeployIQ will not be able to show it again. Store it in a password manager before continuing.
-                  </p>
-                </div>
-              ) : null}
             </div>
 
             {/* Confirm password */}
@@ -335,6 +283,8 @@ export function IdentityAdminStep({
               </div>
               {errors.confirmPassword ? <p className="text-xs text-rose-600" role="alert">{errors.confirmPassword}</p> : null}
             </div>
+              </>
+            ) : null}
 
             {/* Terms */}
             <div className="space-y-2.5">
