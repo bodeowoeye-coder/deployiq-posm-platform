@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { headers } from "next/headers";
+import { resolveActiveSupportSession } from "../admin/supportAccess.ts";
 import { getCurrentAccessToken, getCurrentRefreshToken, resolveCurrentUserContext } from "../auth.ts";
 import { createAdminSupabase } from "../supabaseAdmin.ts";
 import type { Client } from "../types.ts";
@@ -45,6 +46,7 @@ export type CustomerWorkspaceContext = {
   role: CustomerWorkspaceRole;
   clientId: string;
   client: Client;
+  supportSession: { id: string; expiresAt: string; expiresInMinutes: number } | null;
   organisationName: string;
   workspaceName: string;
   workspaceSlug: string;
@@ -526,7 +528,18 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
     totalElapsedMs: timingMs(totalStartedAt),
   });
 
-  if (authContext.role.role !== "client" || !authContext.role.client_id || !authContext.client) {
+  // A DeployIQ platform administrator may resolve one customer tenant, but only when an active,
+  // unexpired support session bound to their own user id authorises that exact client.
+  const supportSession = authContext.role.role === "admin" ? await resolveActiveSupportSession() : null;
+  if (authContext.role.role === "admin" && !supportSession) {
+    workspaceDiagnosticLog("warn", unresolvedContext, {
+      step: "Session role validation",
+      result: "Platform admin without an active support session",
+    });
+    throw new CustomerWorkspaceRedirect("/admin/customers");
+  }
+
+  if (!supportSession && (authContext.role.role !== "client" || !authContext.role.client_id || !authContext.client)) {
     workspaceDiagnosticLog("warn", unresolvedContext, {
       step: "Session role validation",
       result: "Not a Customer Workspace session",
@@ -538,7 +551,7 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
   }
 
   const supabase = createAdminSupabase();
-  const clientId = authContext.role.client_id;
+  const clientId = supportSession ? supportSession.clientId : authContext.role.client_id!;
   const diagnosticContext: WorkspaceDiagnosticContext = {
     route: "/workspace/admin",
     userId: authContext.user.id,
@@ -588,20 +601,29 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
   ]);
 
   const membershipRoleKey = text(membership?.role_key);
-  const role = roleFromMembership(membershipRoleKey);
+  const role = supportSession ? "customer_admin" : roleFromMembership(membershipRoleKey);
   workspaceDiagnosticLog("info", diagnosticContext, {
     step: "Membership role evaluation",
     result: role === "customer_admin" ? "AUTHORIZED" : "UNAUTHORIZED",
     details: {
       MembershipRoleKey: membershipRoleKey || null,
       MembershipStatus: text(membership?.status) || null,
+      SupportSession: supportSession ? supportSession.id : null,
     },
   });
   if (role !== "customer_admin") {
     throw new CustomerWorkspaceRedirect("/client");
   }
 
-  const organisationName = text(organisation?.name) || authContext.client.name;
+  const organisationName = text(organisation?.name) || text(authContext.client?.name);
+  // In support mode the tenant record comes from the canonical clients row, not the admin's session.
+  const clientRecord: Client = authContext.client ?? {
+    id: clientId,
+    name: organisationName,
+    can_review: false,
+    status: text(organisation?.status) === "Inactive" ? "Inactive" : "Active",
+    created_at: text(organisation?.created_at) || new Date().toISOString(),
+  } as Client;
   const workspaceSlug = text(settings?.workspace_slug) || slugFromName(organisationName);
   const workspaceName = text(settings?.workspace_display_name) || organisationName;
   const workspaceStatus = text(settings?.status).toLowerCase();
@@ -640,7 +662,10 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
     email: authContext.user.email ?? null,
     role,
     clientId,
-    client: authContext.client,
+    client: clientRecord,
+    supportSession: supportSession
+      ? { id: supportSession.id, expiresAt: supportSession.expiresAt, expiresInMinutes: supportSession.expiresInMinutes }
+      : null,
     organisationName,
     workspaceName,
     workspaceSlug,

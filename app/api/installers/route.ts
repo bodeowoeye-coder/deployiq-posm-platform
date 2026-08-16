@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { accessControlErrorResponse, requireAdmin } from "@/lib/accessControl";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { cleanArray, cleanString, writeAuditLog } from "@/lib/userManagement";
+import { INSTALLER_CREATION_MOVED_MESSAGE } from "@/lib/workspace/fieldResources";
 
 export const dynamic = "force-dynamic";
 
@@ -19,23 +20,8 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     await requireAdmin(request);
-    const body = await request.json();
-    const installerName = cleanString(body.installerName);
-    if (!installerName) return NextResponse.json({ error: "Installer name is required." }, { status: 400 });
-    const { data, error } = await createAdminSupabase()
-      .from("installers")
-      .insert({
-        installer_name: installerName,
-        agency_id: cleanString(body.agencyId) || null,
-        assigned_regions: cleanArray(body.assignedRegions),
-        assigned_states: cleanArray(body.assignedStates),
-        assigned_project_ids: cleanArray(body.assignedProjectIds),
-        access_status: cleanString(body.accessStatus) || "Active"
-      })
-      .select()
-      .single();
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ installer: data });
+    // This legacy route created untenanted installer identities with no invitation.
+    return NextResponse.json({ error: INSTALLER_CREATION_MOVED_MESSAGE }, { status: 405 });
   } catch (error) {
     const { status, payload } = accessControlErrorResponse(error);
     return NextResponse.json(payload, { status });

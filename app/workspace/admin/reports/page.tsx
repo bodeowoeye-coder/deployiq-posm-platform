@@ -1,5 +1,15 @@
-import { WorkspaceModulePlaceholder } from "@/components/workspace/WorkspaceModulePlaceholder";
+import { redirect } from "next/navigation";
+import { WorkspaceReportsClient } from "@/components/workspace/WorkspaceReportsClient";
+import { CustomerWorkspaceRedirect } from "@/lib/workspace/customerAdmin";
+import { getWorkspaceAnalytics } from "@/lib/workspace/analytics";
 
-export default function ReportsPage() {
-  return <WorkspaceModulePlaceholder title="Reports" description="Open tenant-scoped reports and exports for Customer Workspace projects." />;
+export const dynamic = "force-dynamic";
+
+export default async function ReportsPage({ searchParams }: { searchParams?: { projectId?: string } }) {
+  try {
+    return <WorkspaceReportsClient dashboard={await getWorkspaceAnalytics({ projectId: searchParams?.projectId })} />;
+  } catch (error) {
+    if (error instanceof CustomerWorkspaceRedirect) redirect(error.redirectTo);
+    throw error;
+  }
 }

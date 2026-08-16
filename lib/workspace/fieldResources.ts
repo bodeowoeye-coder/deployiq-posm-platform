@@ -19,6 +19,7 @@ export type AgencyFilters = {
 };
 
 export type InstallerFilters = {
+  projectId?: string | null;
   search?: string | null;
   agency?: string | null;
   status?: string | null;
@@ -150,10 +151,51 @@ function normalizeAgency(row: Row, metrics: { assignedCampaigns?: number; assign
   };
 }
 
-function normalizeInstaller(row: Row, metrics: { campaigns?: number; assignedProjects?: string[]; assignedLocations?: number; completed?: number; remaining?: number; approvalPercent?: number; gpsPercent?: number; averageCompletionHours?: number } = {}) {
+type InstallerMembershipStatus = "active" | "invited" | "inactive" | "none";
+
+// User Management is the authoritative source of installer identity: an installer is only
+// operationally assignable once its invitation has been accepted (membership is active).
+function installerEligibility(userId: string | null, storedStatus: string, membershipStatus?: InstallerMembershipStatus) {
+  if (!userId) {
+    return { assignable: false, reason: "Legacy record created outside User Management. Re-invite this installer from User Management to make them assignable." };
+  }
+  if (membershipStatus === "invited") {
+    return { assignable: false, reason: "Invitation pending. This installer becomes assignable once the invitation is accepted." };
+  }
+  if (membershipStatus !== "active") {
+    return { assignable: false, reason: "No active workspace membership in this tenant." };
+  }
+  if (storedStatus === "archived" || storedStatus === "inactive") {
+    return { assignable: false, reason: `Installer is ${storedStatus}.` };
+  }
+  return { assignable: true, reason: "Active workspace member." };
+}
+
+async function installerMembershipStatuses(clientId: string, userIds: string[]) {
+  const statuses = new Map<string, InstallerMembershipStatus>();
+  const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+  if (uniqueUserIds.length === 0) return statuses;
+  const { data, error } = await createAdminSupabase()
+    .from("workspace_memberships")
+    .select("user_id,status")
+    .eq("client_id", clientId)
+    .in("user_id", uniqueUserIds);
+  if (error) {
+    console.warn("[field-resource-performance]", { step: "Installer membership lookup failed", diagnostic: diagnosticFor(error) });
+    return statuses;
+  }
+  for (const row of (data ?? []) as Row[]) {
+    const status = text(row.status);
+    statuses.set(text(row.user_id), status === "active" || status === "invited" || status === "inactive" ? status : "none");
+  }
+  return statuses;
+}
+
+function normalizeInstaller(row: Row, metrics: { campaigns?: number; assignedProjects?: string[]; assignedLocations?: number; completed?: number; remaining?: number; approvalPercent?: number; gpsPercent?: number; averageCompletionHours?: number } = {}, membershipStatus?: InstallerMembershipStatus) {
   const activeWork = (metrics.assignedLocations ?? 0) - (metrics.completed ?? 0);
   const storedStatus = installerStatus(row.availability_status ?? row.access_status ?? row.status);
   const status = storedStatus === "available" && activeWork > 0 ? "busy" : storedStatus;
+  const eligibility = installerEligibility(text(row.user_id) || null, storedStatus, membershipStatus);
   return {
     id: text(row.id),
     clientId: text(row.client_id),
@@ -173,6 +215,10 @@ function normalizeInstaller(row: Row, metrics: { campaigns?: number; assignedPro
     notes: text(row.notes) || null,
     profilePhotoUrl: text(row.profile_photo_url) || null,
     status,
+    membershipStatus: membershipStatus ?? "none",
+    assignable: eligibility.assignable,
+    eligibilityReason: eligibility.reason,
+    origin: text(row.user_id) ? "user_management" : "legacy_direct_record",
     campaigns: metrics.campaigns ?? 0,
     assignedProjects: metrics.assignedProjects ?? [],
     assignedLocations: metrics.assignedLocations ?? 0,
@@ -228,14 +274,15 @@ async function notifyFieldResourceEvent(input: { clientId: string; projectId?: s
   });
 }
 
-async function assignmentMetrics(workspaceContext: CustomerWorkspaceContext) {
-  const { data, error } = await createAdminSupabase()
+async function assignmentMetrics(workspaceContext: CustomerWorkspaceContext, projectId?: string | null) {
+  let query = createAdminSupabase()
     .from("workspace_field_assignments")
     .select("campaign_id,project_id,agency_id,installer_id,deployment_location_id,assignment_status")
     .eq("client_id", workspaceContext.clientId)
     .eq("workspace_id", workspaceContext.clientId)
-    .is("removed_at", null)
-    .limit(5000);
+    .is("removed_at", null);
+  if (projectId) query = query.eq("project_id", projectId);
+  const { data, error } = await query.limit(5000);
   if (error) {
     console.warn("[field-resource-performance]", { step: "Optional assignment metrics skipped", diagnostic: diagnosticFor(error) });
     return { agencyCampaigns: new Map<string, Set<string>>(), installerCampaigns: new Map<string, Set<string>>(), installerProjects: new Map<string, Set<string>>(), installerLocations: new Map<string, Set<string>>(), installerCompleted: new Map<string, number>() };
@@ -324,7 +371,7 @@ export async function getInstallerDashboard(filters: InstallerFilters = {}) {
   const [{ data, error }, agencyResult, metrics] = await Promise.all([
     supabase.from("installers").select("*,agencies(id,agency_name)").eq("client_id", resolvedWorkspace.clientId).eq("workspace_id", resolvedWorkspace.clientId).order("installer_name", { ascending: true }),
     supabase.from("agencies").select("id,agency_name,status").eq("client_id", resolvedWorkspace.clientId).eq("workspace_id", resolvedWorkspace.clientId).neq("status", "Archived").order("agency_name", { ascending: true }),
-    assignmentMetrics(resolvedWorkspace),
+    assignmentMetrics(resolvedWorkspace, filters.projectId),
   ]);
   fieldResourcePerformanceLog({ route: "/workspace/admin/installers", step: "Installer lookup", elapsedMs: elapsedMs(lookupStartedAt), totalElapsedMs: elapsedMs(totalStartedAt) });
   if (error) throw error;
@@ -343,7 +390,9 @@ export async function getInstallerDashboard(filters: InstallerFilters = {}) {
       if (projectId) projectNameById.set(projectId, text(row.name) || text(row.campaign) || projectId);
     }
   }
-  const installers = ((data ?? []) as Row[]).map((row) => {
+  const installerRows = (data ?? []) as Row[];
+  const membershipStatuses = await installerMembershipStatuses(resolvedWorkspace.clientId, installerRows.map((row) => text(row.user_id)));
+  const installers = installerRows.map((row) => {
     const installerId = text(row.id);
     const assigned = metrics.installerLocations.get(installerId)?.size ?? 0;
     const completed = metrics.installerCompleted.get(installerId) ?? 0;
@@ -354,7 +403,7 @@ export async function getInstallerDashboard(filters: InstallerFilters = {}) {
       assignedLocations: assigned,
       completed,
       remaining: Math.max(0, assigned - completed),
-    });
+    }, membershipStatuses.get(text(row.user_id)) ?? "none");
   });
   const sorted = filterInstallers(installers, filters).sort((a, b) => {
     const sort = text(filters.sort);
@@ -373,6 +422,8 @@ export async function getInstallerDashboard(filters: InstallerFilters = {}) {
     pagination: { page, pageSize, total: sorted.length, pages },
     kpis: [
       { label: "Total Installers", value: installers.length },
+      { label: "Assignable", value: installers.filter((item) => item.assignable).length },
+      { label: "Invitation Pending", value: installers.filter((item) => item.membershipStatus === "invited").length },
       { label: "Available", value: installers.filter((item) => item.status === "available").length },
       { label: "Busy", value: installers.filter((item) => item.status === "busy").length },
       { label: "Inactive", value: installers.filter((item) => item.status === "inactive").length },
@@ -387,6 +438,67 @@ export async function getInstallerDashboard(filters: InstallerFilters = {}) {
       sort: text(filters.sort) || "name",
     },
   };
+}
+
+export type AssignableInstaller = {
+  id: string;
+  installerName: string;
+  status: string;
+  agencyId: string | null;
+  agencyName: string | null;
+  retainedAssignment: boolean;
+};
+
+// Create/Edit Project must only offer active, tenant-scoped installers. Installer ids already
+// persisted on a project are retained so editing a project never silently drops an assignment.
+export async function getAssignableInstallers(retainInstallerIds: Array<string | null | undefined> = []): Promise<AssignableInstaller[]> {
+  const resolvedWorkspace = await workspace();
+  const retained = new Set(retainInstallerIds.map((value) => text(value)).filter(Boolean));
+  const { data, error } = await createAdminSupabase()
+    .from("installers")
+    .select("id,installer_name,user_id,availability_status,access_status,status,agency_id,agencies(id,agency_name)")
+    .eq("client_id", resolvedWorkspace.clientId)
+    .eq("workspace_id", resolvedWorkspace.clientId)
+    .order("installer_name", { ascending: true });
+  if (error) throw error;
+  const rows = (data ?? []) as Row[];
+  const membershipStatuses = await installerMembershipStatuses(resolvedWorkspace.clientId, rows.map((row) => text(row.user_id)));
+  return rows
+    .map((row) => {
+      const storedStatus = installerStatus(row.availability_status ?? row.access_status ?? row.status);
+      const eligibility = installerEligibility(text(row.user_id) || null, storedStatus, membershipStatuses.get(text(row.user_id)) ?? "none");
+      return {
+        id: text(row.id),
+        installerName: text(row.installer_name),
+        status: storedStatus,
+        agencyId: text(row.agency_id) || null,
+        agencyName: text((row.agencies as Row | undefined)?.agency_name) || null,
+        assignable: eligibility.assignable,
+        retainedAssignment: !eligibility.assignable && retained.has(text(row.id)),
+      };
+    })
+    .filter((installer) => installer.assignable || installer.retainedAssignment)
+    .map(({ assignable: _assignable, ...installer }) => installer);
+}
+
+// Single source of truth for "may this installer be assigned in this tenant right now".
+export async function assertInstallerAssignable(clientId: string, installerId: string) {
+  const { data, error } = await createAdminSupabase()
+    .from("installers")
+    .select("id,user_id,availability_status,access_status,status")
+    .eq("id", installerId)
+    .eq("client_id", clientId)
+    .eq("workspace_id", clientId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw Object.assign(new Error("Select an eligible installer from this workspace."), { status: 400 });
+  const membershipStatuses = await installerMembershipStatuses(clientId, [text(data.user_id)]);
+  const eligibility = installerEligibility(
+    text(data.user_id) || null,
+    installerStatus(data.availability_status ?? data.access_status ?? data.status),
+    membershipStatuses.get(text(data.user_id)) ?? "none",
+  );
+  if (!eligibility.assignable) throw Object.assign(new Error(eligibility.reason), { status: 409 });
 }
 
 async function validateAgency(agencyId: string, workspaceContext: CustomerWorkspaceContext) {
@@ -474,47 +586,46 @@ export async function updateAgency(input: AgencyInput & { action?: string | null
   return { agency: normalizeAgency(data as Row) };
 }
 
-export async function createInstaller(input: InstallerInput) {
-  const totalStartedAt = nowMs();
-  const resolvedWorkspace = await workspace();
-  const installerName = text(input.installerName);
-  const phone = text(input.phone);
-  if (!installerName) throw Object.assign(new Error("Installer name is required."), { status: 400 });
-  if (!phone) throw Object.assign(new Error("Installer phone is required."), { status: 400 });
-  const agencyId = text(input.agencyId);
-  await validateAgency(agencyId, resolvedWorkspace);
+export const INSTALLER_CREATION_MOVED_MESSAGE = "Installers are created in Account Settings → User Management. Invite the installer there; they become assignable once the invitation is accepted.";
+
+function rejectDirectInstallerCreation(): never {
+  throw Object.assign(new Error(INSTALLER_CREATION_MOVED_MESSAGE), { status: 405 });
+}
+
+export async function createInstaller(_input: InstallerInput) {
+  rejectDirectInstallerCreation();
+}
+
+export async function provisionInstallerForWorkspaceMember(input: {
+  clientId: string;
+  userId: string;
+  installerName: string;
+  email: string;
+  phone?: string | null;
+}) {
+  const supabase = createAdminSupabase();
+  const { data: existing, error: lookupError } = await supabase
+    .from("installers")
+    .select("id")
+    .eq("client_id", input.clientId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
   const payload = {
-    client_id: resolvedWorkspace.clientId,
-    workspace_id: resolvedWorkspace.clientId,
-    installer_name: installerName,
-    phone,
+    client_id: input.clientId,
+    workspace_id: input.clientId,
+    user_id: input.userId,
+    installer_name: text(input.installerName),
     email: text(input.email) || null,
-    agency_id: agencyId || null,
-    state: text(input.state) || null,
-    region: text(input.region) || null,
-    city: text(input.city) || null,
-    assigned_states: text(input.state) ? [text(input.state)] : [],
-    assigned_regions: text(input.region) ? [text(input.region)] : [],
-    skills: textArray(input.skills),
-    vehicle: text(input.vehicle) || null,
-    team: text(input.team) || null,
-    notes: text(input.notes) || null,
-    profile_photo_url: text(input.profilePhotoUrl) || null,
-    availability_status: installerStatus(input.status),
-    access_status: installerStatus(input.status) === "inactive" ? "Inactive" : "Active",
-    status: installerStatus(input.status) === "archived" ? "Inactive" : "Active",
+    phone: text(input.phone) || null,
+    availability_status: "available",
+    access_status: "Active",
+    status: "Active",
   };
-  const startedAt = nowMs();
-  const { data, error } = await createAdminSupabase().from("installers").insert(payload).select("*,agencies(id,agency_name)").single();
-  fieldResourcePerformanceLog({ route: "/api/workspace/installers", step: "Persistence", elapsedMs: elapsedMs(startedAt), totalElapsedMs: elapsedMs(totalStartedAt) });
+  const { error } = existing?.id
+    ? await supabase.from("installers").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", existing.id)
+    : await supabase.from("installers").insert(payload);
   if (error) throw error;
-  void notifyFieldResourceEvent({
-    clientId: resolvedWorkspace.clientId,
-    title: "Installer Created",
-    message: `${installerName} has been added to your workspace.`,
-    status: "installer_created",
-  }).catch((error) => console.warn("[field-resource-performance]", { step: "Audit scheduling", result: "failed", error: error instanceof Error ? error.message : "Unknown error" }));
-  return { installer: normalizeInstaller(data as Row) };
 }
 
 export async function updateInstaller(input: InstallerInput & { action?: string | null }) {
@@ -705,32 +816,9 @@ export async function previewWorkspaceInstallerImport(csv: string) {
 }
 
 export async function commitWorkspaceInstallerImport(csv: string) {
-  const resolvedWorkspace = await workspace();
+  // Preview stays available so an existing CSV can still be validated before re-inviting in User Management.
   const preview = await previewWorkspaceInstallerImport(csv);
-  if (preview.errors > 0 || preview.duplicates > 0) {
-    throw Object.assign(new Error("Resolve duplicate or invalid installer records before importing."), { status: 422, preview });
-  }
-  const rows = preview.rows.filter((row) => row.ready).map((row) => ({
-    client_id: resolvedWorkspace.clientId,
-    workspace_id: resolvedWorkspace.clientId,
-    installer_name: text(row.record.installer_name),
-    phone: text(row.record.phone),
-    email: text(row.record.email) || null,
-    state: text(row.record.state) || null,
-    region: text(row.record.region) || null,
-    city: text(row.record.city) || null,
-    skills: textArray(row.record.skills),
-    vehicle: text(row.record.vehicle) || null,
-    team: text(row.record.team) || null,
-    notes: text(row.record.notes) || null,
-    availability_status: "available",
-    access_status: "Active",
-    status: "Active",
-  }));
-  if (rows.length === 0) return { imported: 0, preview };
-  const { data, error } = await createAdminSupabase().from("installers").insert(rows).select("id");
-  if (error) throw error;
-  return { imported: data?.length ?? rows.length, preview };
+  throw Object.assign(new Error(INSTALLER_CREATION_MOVED_MESSAGE), { status: 405, preview });
 }
 
 async function validateCampaign(campaignId: string, workspaceContext: CustomerWorkspaceContext) {
@@ -753,9 +841,12 @@ export async function assignFieldResources(input: FieldAssignmentInput) {
   const agency = await validateAgency(text(input.agencyId), resolvedWorkspace);
   const installerId = text(input.installerId);
   if (installerId) {
-    const { data, error } = await createAdminSupabase().from("installers").select("id").eq("id", installerId).eq("client_id", resolvedWorkspace.clientId).eq("workspace_id", resolvedWorkspace.clientId).maybeSingle();
+    const { data, error } = await createAdminSupabase().from("installers").select("id,user_id,availability_status,access_status,status").eq("id", installerId).eq("client_id", resolvedWorkspace.clientId).eq("workspace_id", resolvedWorkspace.clientId).maybeSingle();
     if (error) throw error;
     if (!data) throw Object.assign(new Error("Select an installer from this workspace."), { status: 400 });
+    const membershipStatuses = await installerMembershipStatuses(resolvedWorkspace.clientId, [text(data.user_id)]);
+    const eligibility = installerEligibility(text(data.user_id) || null, installerStatus(data.availability_status ?? data.access_status ?? data.status), membershipStatuses.get(text(data.user_id)) ?? "none");
+    if (!eligibility.assignable) throw Object.assign(new Error(eligibility.reason), { status: 409 });
   }
   if (!agency && !installerId) throw Object.assign(new Error("Select an agency or installer to assign."), { status: 400 });
   const campaignLocationIds = Array.from(new Set(textArray(input.campaignLocationIds)));

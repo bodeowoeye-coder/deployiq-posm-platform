@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { analysePassword, validatePasswordMatch, type PasswordAnalysis } from "@/lib/acquisition/identity";
+import { BrandMark } from "@/components/BrandMark";
 
 const inputClass =
   "min-h-11 rounded-lg border border-slate-200 px-3 shadow-sm transition focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-100";
@@ -68,7 +69,8 @@ export default function CreatePasswordPage() {
   return (
     <main className="grid min-h-[100dvh] place-items-center bg-slate-50 px-4">
       <form onSubmit={handleSubmit} className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Account Security</p>
+        <BrandMark compact />
+        <p className="mt-6 text-xs font-semibold uppercase tracking-widest text-orange-600">DeployIQ account security</p>
         <h1 className="mt-2 text-2xl font-bold text-slate-950">Create a new password</h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
           Replace your temporary password before continuing your DeployIQ workspace setup.

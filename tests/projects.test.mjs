@@ -1,6 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { isLegacyProvisioningPlaceholderProject } from "../lib/projects.ts";
+
+test("projects: legacy provisioning placeholder is identified by its full legacy shape", () => {
+  assert.equal(isLegacyProvisioningPlaceholderProject({
+    name: "Getting Started",
+    campaign: "Getting Started",
+    target_quantity: 0,
+    status: "Planning",
+    start_date: null,
+    end_date: null,
+    brand: null,
+    brand_id: null,
+    regions_covered: [],
+    assigned_installers: [],
+  }), true);
+  assert.equal(isLegacyProvisioningPlaceholderProject({
+    name: "Getting Started",
+    campaign: "Live Campaign",
+    target_quantity: 10,
+    status: "Planning",
+    start_date: "2026-08-15",
+    end_date: null,
+    brand: "Darling",
+    brand_id: null,
+    regions_covered: ["Lagos"],
+    assigned_installers: [],
+  }), false);
+});
 
 test("projects: Customer Workspace project list displays required dashboard controls", () => {
   const page = readFileSync(new URL("../app/workspace/admin/projects/page.tsx", import.meta.url), "utf8");
@@ -47,8 +75,8 @@ test("projects: Customer Workspace create form mirrors Core Admin simplicity wit
     "Status",
     "Start Date",
     "Expected End Date",
-    "Primary Target Region",
-    "Primary Target State",
+    "Regions",
+    "States",
     "Assigned Agency",
     "Lead Installer",
   ]) {
@@ -72,14 +100,15 @@ test("projects: Customer Workspace edit form reuses Create Project fields and sa
     assert.match(form, new RegExp(field));
   }
   assert.doesNotMatch(form, /Client Company|clientCompanyName/);
-  assert.match(form, /readOnly aria-readonly="true"/);
+  assert.match(form, /name="agencyId"/);
+  assert.match(form, /name="installerId"/);
   assert.match(form, /const projectStatuses = \["Planning", "Active", "On Hold", "Completed"\] as const/);
   assert.match(form, /value=\{form\.status\}/);
   assert.match(form, /status: form\.status/);
   assert.match(form, /Save Changes/);
   assert.match(form, /Cancel/);
   assert.match(form, /fetch\(isEdit \? `\/api\/workspace\/projects\/\$\{project\?\.id\}`/);
-  assert.match(form, /router\.push\(isEdit \? "\/workspace\/admin\/campaigns"/);
+  assert.match(form, /router\.push\("\/workspace\/admin\/campaigns"\)/);
   assert.doesNotMatch(form, /name="clientId"|body: JSON\.stringify\(\{[\s\S]*clientId/);
   assert.match(route, /PATCH/);
   assert.match(route, /updateCustomerProjectDetails/);
@@ -108,16 +137,142 @@ test("projects: edit form prepopulates brand status and geography without blanki
   const form = readFileSync(new URL("../components/workspace/ProjectCreateWizard.tsx", import.meta.url), "utf8");
   const service = readFileSync(new URL("../lib/workspace/projects.ts", import.meta.url), "utf8");
   assert.match(form, /brandName: \(project\.brand\?\.brand_name \?\? String\(\(project as Record<string, unknown>\)\.brand \?\? ""\)\) \|\| "Multi-brand"/);
-  assert.match(form, /const fallbackState = project\.primary_target_state \?\? project\.regions_covered\?\.\[0\] \?\? ""/);
-  assert.match(form, /const fallbackRegion = project\.primary_target_region \?\? \(fallbackState \? getRegionForState\(fallbackState\) : ""\)/);
-  assert.match(form, /targetRegion: fallbackRegion/);
-  assert.match(form, /targetState: fallbackState/);
+  // Legacy single-value projects still read back through the multi-value model.
+  const geography = readFileSync(new URL("../lib/geography.ts", import.meta.url), "utf8");
+  assert.match(geography, /export function selectionFromProject/);
+  assert.match(geography, /const states = normalizeStates\(\[\.\.\.\(project\.regions_covered \?\? \[\]\), project\.primary_target_state \?\? ""\]\)/);
+  assert.match(geography, /regions: deriveProjectRegions\(\{ states, storedRegions: \[\.\.\.\(project\.project_regions \?\? \[\]\), project\.primary_target_region \?\? ""\] \}\)/);
+  assert.match(form, /const selection = selectionFromProject\(project\)/);
+  assert.match(form, /targetRegions: selection\.regions/);
+  assert.match(form, /targetStates: selection\.states/);
   assert.match(form, /status: statusFor\(project\.status\)/);
-  assert.match(service, /const submittedStates = textArray\(input\.states\)/);
-  assert.match(service, /const submittedRegions = textArray\(input\.regions\)/);
-  assert.match(service, /const states = submittedStates\.length > 0 \? submittedStates : existing\.project\.regions_covered \?\? \[\]/);
-  assert.match(service, /const targetState = submittedStates\[0\] \?\? existing\.project\.primary_target_state \?\? null/);
-  assert.match(service, /const targetRegion = submittedRegions\[0\] \?\? existing\.project\.primary_target_region \?\? null/);
+  assert.match(service, /const submittedStates = normalizeStates\(textArray\(input\.states\)\)/);
+  assert.match(service, /const submittedRegions = normalizeRegions\(textArray\(input\.regions\)\)/);
+  assert.match(service, /const states = submittedStates\.length > 0 \? submittedStates : normalizeStates\(existing\.project\.regions_covered \?\? \[\]\)/);
+});
+
+test("projects: geography is multi-region and multi-state end to end", () => {
+  const form = readFileSync(new URL("../components/workspace/ProjectCreateWizard.tsx", import.meta.url), "utf8");
+  const service = readFileSync(new URL("../lib/workspace/projects.ts", import.meta.url), "utf8");
+  const geography = readFileSync(new URL("../lib/geography.ts", import.meta.url), "utf8");
+
+  // Canonical geography is reused; no free text.
+  assert.match(geography, /export function deriveProjectRegions/);
+  assert.match(geography, /export function normalizeRegions/);
+  assert.match(geography, /export function normalizeStates/);
+  assert.match(geography, /\.filter\(isCanonicalRegion\)/);
+  assert.match(geography, /\.filter\(isCanonicalState\)/);
+
+  // Multi-value UI replaces the single selects in both Create and Edit (one shared form component).
+  assert.match(form, /function MultiGeographyPicker/);
+  assert.match(form, /targetRegions: string\[\]/);
+  assert.match(form, /targetStates: string\[\]/);
+  assert.match(form, /addLabel="Add region"/);
+  assert.match(form, /addLabel="Add state"/);
+  assert.match(form, /aria-label=\{`Remove \$\{value\}`\}/);
+  assert.doesNotMatch(form, /Select region<\/option>|Select state<\/option>/);
+  assert.doesNotMatch(form, /Primary Target Region|Primary Target State/);
+
+  // A composite control must not be wrapped in a <label>: the label re-dispatches the click to the
+  // nested <select>, which reopens and immediately closes it, making the picker unusable.
+  assert.match(form, /function FieldGroup\(\{ label, htmlFor, children, hint \}/);
+  assert.match(form, /<label htmlFor=\{htmlFor\}>\{label\}<\/label>/);
+  assert.match(form, /<FieldGroup label="Regions" htmlFor="regions-picker"/);
+  assert.match(form, /<FieldGroup label="States" htmlFor="states-picker"/);
+  assert.doesNotMatch(form, /<Field label="Regions">|<Field label="States">/);
+  assert.match(form, /id=\{`\$\{name\}-picker`\}/);
+
+  // Form state changes are delegated to the canonical geography state machine.
+  assert.match(form, /addRegionToSelection\(selection, region\)/);
+  assert.match(form, /removeRegionFromSelection\(selection, region\)/);
+  assert.match(form, /addStateToSelection\(selection, state\)/);
+  assert.match(form, /removeStateFromSelection\(selection, state\)/);
+  assert.match(form, /visibleStatesFor\(\{ regions: form\.targetRegions, states: form\.targetStates \}\)/);
+  assert.match(form, /selectionFromProject\(project\)/);
+
+  // Every selected value is submitted, not just the first.
+  assert.match(form, /regions: form\.targetRegions/);
+  assert.match(form, /states: form\.targetStates/);
+
+  // Detail read model returns full coverage, not the first value.
+  assert.match(service, /states: normalizeStates\(normalized\.regions_covered \?\? \[\]\)/);
+  assert.match(service, /regions: deriveProjectRegions\(\{/);
+  assert.doesNotMatch(service, /regions: \[text\(\(normalized as Record<string, unknown>\)\.primary_target_region\)\]\.filter\(Boolean\)/);
+});
+
+test("projects: downstream filters derive options from all configured project geography", () => {
+  const analytics = readFileSync(new URL("../lib/workspace/analytics.ts", import.meta.url), "utf8");
+  const analyticsClient = readFileSync(new URL("../components/workspace/WorkspaceAnalyticsClient.tsx", import.meta.url), "utf8");
+  const reportsClient = readFileSync(new URL("../components/workspace/WorkspaceReportsClient.tsx", import.meta.url), "utf8");
+  const team = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
+
+  assert.match(analytics, /projects\.flatMap\(\(project\) => deriveProjectRegions\(/);
+  assert.match(analytics, /projects\.flatMap\(\(project\) => \[\.\.\.\(project\.regions_covered \?\? \[\]\), project\.primary_target_state \?\? ""\]\)/);
+  assert.match(analyticsClient, /selectedProject\.regions_covered \?\? \[\]/);
+  assert.match(reportsClient, /selectedProject\.regions_covered \?\? \[\]/);
+  // User Management territory options cover every project region.
+  assert.match(team, /projectRows\.flatMap\(\(project\) => deriveProjectRegions\(/);
+});
+
+test("projects: resource assignment is tenant scoped and uses project-level canonical columns", () => {
+  const service = readFileSync(new URL("../lib/workspace/projects.ts", import.meta.url), "utf8");
+  const fieldResources = readFileSync(new URL("../lib/workspace/fieldResources.ts", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../supabase/migrations/20260815000000_add_project_resource_and_region_columns.sql", import.meta.url), "utf8");
+
+  // Migration is additive only and keeps workspace_field_assignments campaign-scoped.
+  assert.match(migration, /add column if not exists agency_id uuid references public\.agencies\(id\) on delete set null/);
+  assert.match(migration, /add column if not exists lead_installer_id uuid references public\.installers\(id\) on delete set null/);
+  assert.match(migration, /add column if not exists project_regions text\[\] not null default '\{\}'/);
+  assert.doesNotMatch(migration, /alter column campaign_id drop not null/);
+  assert.doesNotMatch(migration, /drop column|rename column|delete from|truncate/i);
+
+  // Project-level configuration is written to projects, never duplicated into field assignments.
+  assert.match(service, /async function persistProjectConfiguration/);
+  assert.match(service, /agency_id: text\(input\.agencyId\) \|\| null/);
+  assert.match(service, /lead_installer_id: text\(input\.installerId\) \|\| null/);
+  assert.match(service, /project_regions: input\.regions/);
+  assert.doesNotMatch(service, /\.from\("workspace_field_assignments"\)\s*\.insert\(/);
+
+  // Read-back uses the same canonical columns through tenant-scoped lookups.
+  assert.match(service, /const agencyId = text\(project\.agency_id\) \|\| null/);
+  assert.match(service, /const installerId = text\(project\.lead_installer_id\) \|\| null/);
+  assert.match(service, /\.from\("agencies"\)\.select\("id,agency_name"\)[\s\S]{0,140}\.eq\("client_id", workspace\.clientId\)/);
+  assert.match(service, /\.from\("installers"\)\.select\("id,installer_name"\)[\s\S]{0,140}\.eq\("client_id", workspace\.clientId\)/);
+
+  // One shared guard runs on both create and update.
+  assert.match(service, /async function assertProjectResourcesOwned/);
+  assert.equal((service.match(/await assertProjectResourcesOwned\(supabase, resolvedWorkspace, input\)/g) ?? []).length, 2);
+  assert.match(service, /\.from\("agencies"\)\.select\("id"\)[\s\S]{0,200}\.eq\("client_id", workspace\.clientId\)/);
+  assert.match(service, /if \(installerId\) await assertInstallerAssignable\(workspace\.clientId, installerId\)/);
+
+  // Lead Installer eligibility reuses the single User Management installer model.
+  assert.match(fieldResources, /export async function assertInstallerAssignable/);
+  assert.match(fieldResources, /\.eq\("client_id", clientId\)\s*\.eq\("workspace_id", clientId\)/);
+  assert.match(fieldResources, /installerMembershipStatuses\(clientId, \[text\(data\.user_id\)\]\)/);
+  assert.match(fieldResources, /if \(!eligibility\.assignable\) throw Object\.assign\(new Error\(eligibility\.reason\), \{ status: 409 \}\)/);
+});
+
+test("projects: project_regions is the canonical multi-region store with legacy fallback", () => {
+  const service = readFileSync(new URL("../lib/workspace/projects.ts", import.meta.url), "utf8");
+  const form = readFileSync(new URL("../components/workspace/ProjectCreateWizard.tsx", import.meta.url), "utf8");
+  const types = readFileSync(new URL("../lib/types.ts", import.meta.url), "utf8");
+  const analytics = readFileSync(new URL("../lib/workspace/analytics.ts", import.meta.url), "utf8");
+  const team = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
+
+  assert.match(types, /project_regions\?: string\[\] \| null/);
+  assert.match(types, /agency_id\?: string \| null/);
+  assert.match(types, /lead_installer_id\?: string \| null/);
+
+  // Detail read prefers project_regions and still falls back to legacy single values.
+  assert.match(service, /\(project as Row\)\.project_regions as string\[\]/);
+  assert.match(service, /text\(\(normalized as Record<string, unknown>\)\.primary_target_region\)/);
+  // Edit restores from project_regions plus the legacy fallback.
+  const geographyModule = readFileSync(new URL("../lib/geography.ts", import.meta.url), "utf8");
+  assert.match(geographyModule, /storedRegions: \[\.\.\.\(project\.project_regions \?\? \[\]\), project\.primary_target_region \?\? ""\]/);
+  assert.match(form, /selectionFromProject\(project\)/);
+  // Downstream options read the canonical column too.
+  assert.match(analytics, /\.\.\.\(project\.project_regions \?\? \[\]\)/);
+  assert.match(team, /project\.project_regions as string\[\]/);
 });
 
 test("projects: edit PATCH persists canonical fields only and reports safe diagnostics", () => {
@@ -145,7 +300,7 @@ test("projects: edit PATCH persists canonical fields only and reports safe diagn
   assert.doesNotMatch(coreService.match(/project_targets"\)\.insert\(\{[\s\S]*?\}\)/)?.[0] ?? "", /agency_name/);
 });
 
-test("projects: review edit shows tenant-scoped assignment names read-only", () => {
+test("projects: review edit shows tenant-scoped editable resource selectors", () => {
   const form = readFileSync(new URL("../components/workspace/ProjectCreateWizard.tsx", import.meta.url), "utf8");
   const service = readFileSync(new URL("../lib/workspace/projects.ts", import.meta.url), "utf8");
   const editPage = readFileSync(new URL("../app/workspace/admin/projects/[id]/edit/page.tsx", import.meta.url), "utf8");
@@ -155,9 +310,9 @@ test("projects: review edit shows tenant-scoped assignment names read-only", () 
   assert.match(service, /\.eq\("project_id", projectId\)/);
   assert.match(service, /\.from\("agencies"\)\.select\("id,agency_name"\)/);
   assert.match(service, /\.from\("installers"\)\.select\("id,installer_name"\)/);
-  assert.match(editPage, /resources=\{result\.resources\}/);
-  assert.match(form, /resources\?\.agencyName/);
-  assert.match(form, /resources\?\.leadInstallerName/);
+  assert.match(editPage, /resources=\{\{ \.\.\.result\.resources, agencies:/);
+  assert.match(form, /resources\?\.agencies/);
+  assert.match(form, /resources\?\.installers/);
   assert.match(form, /No agency assigned/);
   assert.match(form, /No lead installer assigned/);
   assert.doesNotMatch(form, /No agency assigned yet|No lead installer assigned yet/);
@@ -396,9 +551,9 @@ test("projects: create flow verifies canonical tenant row and does not block on 
 test("projects: create page has one primary Create Project title", () => {
   const page = readFileSync(new URL("../app/workspace/admin/projects/new/page.tsx", import.meta.url), "utf8");
   const wizard = readFileSync(new URL("../components/workspace/ProjectCreateWizard.tsx", import.meta.url), "utf8");
-  assert.match(page, /<h2 className="mt-2 text-2xl font-bold text-slate-950">CREATE PROJECT<\/h2>/);
+  assert.match(page, /<h2 className="mt-2 text-2xl font-bold text-slate-950">Create Project<\/h2>/);
   assert.match(page, /Create the canonical project and its initial campaign information for this workspace\./);
-  assert.equal((page.match(/CREATE PROJECT/g) ?? []).length, 1);
+  assert.equal((page.match(/Create Project/g) ?? []).length, 1);
   assert.doesNotMatch(wizard, /: "Create Project"/);
   assert.doesNotMatch(wizard, /Project setup/);
   assert.match(wizard, /"Create"\)/);
@@ -414,8 +569,8 @@ test("projects: review and post-create journey are operational setup focused", (
   }
   const summaryBlock = wizard.match(/Project Summary[\s\S]*?<\/section>/)?.[0] ?? "";
   assert.doesNotMatch(summaryBlock, /Client Company|Directory|Region|State/);
-  assert.match(wizard, /router\.push\(isEdit \? "\/workspace\/admin\/campaigns" : "\/workspace\/admin\/projects"\)/);
-  assert.match(wizard, /Returning to Projects\./);
+  assert.match(wizard, /router\.push\("\/workspace\/admin\/campaigns"\)/);
+  assert.match(wizard, /The project now appears below\./);
   assert.doesNotMatch(detail, /nextProjectAction/);
   assert.doesNotMatch(detail, /Recommended action/);
   assert.doesNotMatch(detail, /Upload Deployment Directory/);

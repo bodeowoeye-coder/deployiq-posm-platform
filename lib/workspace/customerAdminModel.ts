@@ -29,6 +29,11 @@ export const CUSTOMER_ADMIN_PERMISSIONS = [
   "billing.read",
 ] as const;
 
+export function hasWorkspaceSettingsPermission(permissions: string[] | null | undefined) {
+  const values = Array.isArray(permissions) ? permissions : [];
+  return values.includes("workspace_settings.manage") || values.includes("settings.manage");
+}
+
 export const CUSTOMER_ADMIN_DENIED_PERMISSIONS = [
   "tenant.list_all",
   "tenant.access_other",

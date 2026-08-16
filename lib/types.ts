@@ -136,6 +136,9 @@ export type Project = {
   actual_completion?: string | null;
   primary_target_region?: string | null;
   primary_target_state?: string | null;
+  project_regions?: string[] | null;
+  agency_id?: string | null;
+  lead_installer_id?: string | null;
   budget?: number | null;
   currency?: string | null;
   target_quantity: number;

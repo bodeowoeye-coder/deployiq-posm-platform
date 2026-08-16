@@ -1246,7 +1246,7 @@ export function AdminDashboard({
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex min-h-16 w-[min(1380px,calc(100%-28px))] min-w-0 flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <BrandMark />
+          <BrandMark compact />
           <div className="relative flex min-w-0 flex-wrap gap-2">
             <button
               type="button"

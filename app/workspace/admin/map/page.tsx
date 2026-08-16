@@ -4,10 +4,10 @@ import { getWorkspaceDeploymentMap } from "@/lib/workspace/deploymentExecution";
 
 export const dynamic = "force-dynamic";
 
-export default async function DeploymentMapPage() {
+export default async function DeploymentMapPage({ searchParams }: { searchParams?: { projectId?: string } }) {
   let map;
   try {
-    map = await getWorkspaceDeploymentMap();
+    map = await getWorkspaceDeploymentMap({ projectId: searchParams?.projectId });
   } catch (error) {
     if (error instanceof CustomerWorkspaceRedirect) redirect(error.redirectTo);
     throw error;

@@ -1,5 +1,6 @@
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { resolveCustomerWorkspaceContext } from "@/lib/workspace/customerAdmin";
+import { hasWorkspaceSettingsPermission } from "@/lib/workspace/customerAdminModel";
 import { CUSTOMER_WORKSPACE_ROLES, type WorkspaceTeamRoleKey } from "@/lib/workspace/team";
 
 type Row = Record<string, unknown>;
@@ -110,7 +111,9 @@ export async function saveApprovalWorkflow(input: {
   allowApprovalComments?: boolean | null;
 }) {
   const workspace = await resolveCustomerWorkspaceContext();
-  if (!workspace.permissions.includes("settings.manage")) throw Object.assign(new Error("Approval workflow settings require workspace settings permission."), { status: 403 });
+  if (!hasWorkspaceSettingsPermission(workspace.permissions)) {
+    throw Object.assign(new Error("Approval workflow settings require workspace settings permission."), { status: 403 });
+  }
   const supabase = createAdminSupabase();
   const { data: current, error: readError } = await supabase
     .from("workspace_settings")

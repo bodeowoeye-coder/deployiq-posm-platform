@@ -19,6 +19,24 @@ function textValue(value: unknown) {
 function textKey(value: unknown) {
   return textValue(value).toLowerCase();
 }
+export function isLegacyProvisioningPlaceholderProject(project: ProjectRowLike | null | undefined) {
+  if (!project) return false;
+  const projectName = textKey(textValue(project.project_name) || textValue(project.name));
+  const campaignName = textKey(textValue(project.campaign_name) || textValue(project.campaign));
+  const targetQuantity = Number(project.target_quantity ?? 0);
+  const regions = Array.isArray(project.regions_covered) ? project.regions_covered.filter(Boolean) : [];
+  const installers = Array.isArray(project.assigned_installers) ? project.assigned_installers.filter(Boolean) : [];
+  return projectName === "getting started" &&
+    campaignName === "getting started" &&
+    targetQuantity === 0 &&
+    !textValue(project.start_date) &&
+    !textValue(project.end_date) &&
+    !textValue(project.brand) &&
+    !textValue(project.brand_id) &&
+    regions.length === 0 &&
+    installers.length === 0 &&
+    textKey(project.status) === "planning";
+}
 
 export function campaignMatches(selectedCampaign: string | null | undefined, actualCampaign: string | null | undefined) {
   const selected = textKey(selectedCampaign);

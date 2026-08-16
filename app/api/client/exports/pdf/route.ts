@@ -7,8 +7,9 @@ import { getBrandCounts, getRegionCounts } from "@/lib/reporting";
 import { getPortfolioOperations, getProjectOperations } from "@/lib/operations";
 import type { DeploymentProgress, ProjectTarget } from "@/lib/types";
 import type { Submission } from "@/lib/types";
-import { campaignMatches, displayProjectName, resolveSubmissionCampaignName } from "@/lib/projects";
+import { campaignMatches, displayProjectName, isLegacyProvisioningPlaceholderProject, resolveSubmissionCampaignName } from "@/lib/projects";
 import { createReportId, drawReportFooter, drawReportHeader } from "@/lib/reportBranding";
+import { isMissingDeploymentProgressTable } from "@/lib/workspace/analyticsCore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -240,6 +241,7 @@ export async function GET(request: Request) {
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
   const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected";
+  const statusFilter = searchParams.get("status")?.trim() ?? "";
   const gpsFilter = (searchParams.get("gpsFilter")?.trim().toLowerCase() ?? "") as "" | "all_gps" | "gps_verified" | "gps_missing";
     const campaignDebugEnabled = process.env.NEXT_PUBLIC_CAMPAIGN_FILTER_DEBUG === "1";
     const scoped = await loadClientSubmissionScope(supabase, client, clientId);
@@ -331,9 +333,10 @@ export async function GET(request: Request) {
     });
     }
 
-    if (quickFilter === "approved") submissions = submissions.filter((item) => item.status === "Approved");
-    if (quickFilter === "pending") submissions = submissions.filter((item) => item.status === "Pending");
-    if (quickFilter === "rejected") submissions = submissions.filter((item) => item.status === "Rejected");
+    if (statusFilter) submissions = submissions.filter((item) => item.status === statusFilter);
+    if (!statusFilter && quickFilter === "approved") submissions = submissions.filter((item) => item.status === "Approved");
+    if (!statusFilter && quickFilter === "pending") submissions = submissions.filter((item) => item.status === "Pending");
+    if (!statusFilter && quickFilter === "rejected") submissions = submissions.filter((item) => item.status === "Rejected");
   const effectiveGpsFilter =
     gpsFilter ||
     ((searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_verified"
@@ -348,19 +351,25 @@ export async function GET(request: Request) {
   const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
   const reportId = createReportId(isFiltered ? "DPIQ-CLT-FLT" : "DPIQ-CLT");
   let y = headerContentStart;
-  const projectTitle = project || "All projects";
+  const operationalProjects = scoped.projects.filter((item) => !isLegacyProvisioningPlaceholderProject(item));
+  const selectedProject = projectId ? operationalProjects.find((item) => item.id === projectId) : null;
+  const projectTitle = selectedProject?.project_name || project || "Combined Workspace Report";
+  const includedProjects = selectedProject ? [selectedProject] : operationalProjects;
   const clientDisplayName = scoped.effectiveClient.name;
   const regionCounts = getRegionCounts(submissions);
   const brandCounts = getBrandCounts(submissions);
-  const projectIds = scoped.projects.map((item) => item.id);
-  const [{ data: projectTargets }, { data: deploymentProgress }] =
+  const projectIds = includedProjects.map((item) => item.id);
+  const [{ data: projectTargets, error: projectTargetsError }, { data: deploymentProgress, error: progressError }] =
     projectIds.length > 0
       ? await Promise.all([
           supabase.from("project_targets").select("*").in("project_id", projectIds),
           supabase.from("deployment_progress").select("*").in("project_id", projectIds)
         ])
       : [{ data: [] }, { data: [] }];
-  const projectOperations = getProjectOperations(scoped.projects, (projectTargets ?? []) as ProjectTarget[], submissions, (deploymentProgress ?? []) as DeploymentProgress[]);
+  if (projectTargetsError) throw projectTargetsError;
+  if (progressError && !isMissingDeploymentProgressTable(progressError)) throw progressError;
+  const compatibleDeploymentProgress = progressError && isMissingDeploymentProgressTable(progressError) ? [] : deploymentProgress ?? [];
+  const projectOperations = getProjectOperations(includedProjects, (projectTargets ?? []) as ProjectTarget[], submissions, compatibleDeploymentProgress as DeploymentProgress[]);
   const portfolio = getPortfolioOperations(projectOperations);
   const statesCovered = new Set(submissions.map((item) => item.installer_state).filter(Boolean)).size;
   const evidenceRecords = submissions.length;
@@ -547,6 +556,46 @@ export async function GET(request: Request) {
 
   y += sectionBoxHeight + 8;
 
+  doc.addPage();
+  drawReportHeader(doc, pageWidth, "Project Performance Breakdown", [
+    ["Client Name", clientDisplayName],
+    ["Report Scope", projectTitle],
+    ["Generated Date/Time", generatedAt],
+    ["Report ID", reportId]
+  ]);
+  y = headerContentStart;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.setTextColor(15, 23, 42);
+  doc.text(projectId ? "Selected Project Performance" : "Combined Workspace Project Performance", margin, y);
+  y += 8;
+  projectOperations.forEach((row) => {
+    if (y > 258) {
+      doc.addPage();
+      drawReportHeader(doc, pageWidth, "Project Performance Breakdown", [
+        ["Client Name", clientDisplayName],
+        ["Report Scope", projectTitle],
+        ["Generated Date/Time", generatedAt],
+        ["Report ID", reportId]
+      ]);
+      y = headerContentStart;
+    }
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(margin, y, pageWidth - margin * 2, 32, 2, 2, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text(row.project.project_name, margin + 4, y + 7);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Campaign: ${row.project.campaign_name || "Not set"} | Brand: ${row.project.brand?.brand_name || "Multi-brand / unassigned"} | Status: ${row.project.status}`, margin + 4, y + 12);
+    doc.text(`Target: ${row.expected} | Actual: ${row.actual} | Outstanding: ${row.outstanding} | Completion: ${row.completion}%`, margin + 4, y + 17);
+    doc.text(`Approved: ${row.approved} | Pending: ${row.pending} | Rejected: ${row.rejected} | Evidence: ${row.submissions.length}`, margin + 4, y + 22);
+    doc.text(`Dates: ${row.project.start_date || "Not set"} to ${row.project.end_date || "Not set"}`, margin + 4, y + 27);
+    y += 38;
+  });
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
@@ -610,6 +659,7 @@ export async function GET(request: Request) {
     const resolvedProjectName = projectRecord ? displayProjectName(projectRecord.project_name) : displayProjectName(item.project_name);
     const rows = [
       `Project: ${resolvedProjectName}`,
+      `Campaign: ${resolveSubmissionCampaignName(scoped.projects, item) || "Not set"}`,
       `Brand: ${item.brand_name || "Unassigned"}`,
       `Status: ${item.status} | Duplicate: ${item.duplicate_status || "Unique"}`,
       `Region: ${item.installer_region || item.state_region || "Unknown"} | State: ${item.installer_state || "Unknown"} | LGA: ${item.installer_lga || "n/a"}`,

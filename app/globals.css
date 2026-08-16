@@ -856,3 +856,10 @@ a {
     width: fit-content;
   }
 }
+
+/* Shared DeployIQ navigation surface. Uses the same tokens as the Customer Workspace sidebar so
+   Core Admin and the tenant workspace stay visually consistent. */
+.deployiq-nav-surface {
+  background: var(--cw-sidebar);
+  border-color: var(--cw-border);
+}

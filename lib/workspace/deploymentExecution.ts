@@ -18,6 +18,13 @@ import {
   resolveCustomerWorkspaceContext,
   type CustomerWorkspaceContext,
 } from "@/lib/workspace/customerAdmin";
+import {
+  buildWorkspaceMapMetrics,
+  filterWorkspaceMapRows,
+  normalizeWorkspaceMapPoint,
+  resolveLocationState,
+  type WorkspaceMapPoint,
+} from "@/lib/workspace/deploymentMap";
 
 type Row = Record<string, unknown>;
 
@@ -404,11 +411,11 @@ function normalizeWorkspaceSubmission(row: Row): Row {
   };
 }
 
-export async function getWorkspaceDeploymentSubmissions() {
+export async function getWorkspaceDeploymentSubmissions(filters: { projectId?: string | null } = {}) {
   const workspace = await resolveCustomerAdminContext();
   const { data, error } = await createAdminSupabase()
     .from("submissions")
-    .select("id,status,project_name,brand_name,installer_name,selected_outlet_name,selected_outlet_address,resolved_state,installer_state,state_region,gps_status,gps_distance_meters,image_url,submitted_at,rejection_reason,correction_notes,approval_comments,reviewed_at,field_assignment_id")
+    .select("id,project_id,status,project_name,brand_name,installer_name,selected_outlet_name,selected_outlet_address,resolved_state,installer_state,state_region,gps_status,gps_distance_meters,image_url,submitted_at,rejection_reason,correction_notes,approval_comments,reviewed_at,field_assignment_id")
     .eq("client_id", workspace.clientId)
     // Historical Core submissions can be tenant-scoped by client_id before workspace_id existed.
     .is("archived_at", null)
@@ -424,7 +431,7 @@ export async function getWorkspaceDeploymentSubmissions() {
       loadError: "Submissions could not be loaded. Try refreshing this page.",
     };
   }
-  const submissions = ((data ?? []) as Row[]).map(normalizeWorkspaceSubmission);
+  const submissions = ((data ?? []) as Row[]).filter((row) => !filters.projectId || text(row.project_id) === filters.projectId).map(normalizeWorkspaceSubmission);
   return {
     workspace,
     submissions,
@@ -481,26 +488,55 @@ export async function getSupervisorDeploymentDashboard() {
   };
 }
 
-export async function getWorkspaceDeploymentMap() {
+export async function getWorkspaceDeploymentMap(filters: {
+  projectId?: string | null;
+  status?: string | null;
+  installer?: string | null;
+  state?: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+} = {}) {
   const workspace = await resolveCustomerAdminContext();
   const { data, error } = await createAdminSupabase()
     .from("submissions")
-    .select("id,status,installer_name,selected_outlet_name,gps_latitude,gps_longitude,gps_status,submitted_at")
+    .select("id,client_id,project_id,project_name,brand_name,installer_name,selected_outlet_name,resolved_state,installer_state,state_region,gps_latitude,gps_longitude,gps_status,gps_distance_meters,image_url,status,submitted_at")
     .eq("client_id", workspace.clientId)
-    .not("gps_latitude", "is", null)
-    .not("gps_longitude", "is", null)
+    .is("archived_at", null)
+    .order("submitted_at", { ascending: false })
     .limit(500);
-  if (error) throw error;
+
+  if (error) {
+    return {
+      workspace,
+      queryStatus: "error" as const,
+      loadError: "Deployment map data could not be loaded. Try refreshing the page.",
+      points: [],
+      metrics: { completed: 0, pending: 0, rejected: 0, gpsExceptions: 0 },
+      filters,
+      available: { projects: [], installers: [], states: [] },
+    };
+  }
+
+  const rows = ((data ?? []) as Row[]).filter((row) => {
+    if (text(row.client_id) && text(row.client_id) !== workspace.clientId) return false;
+    return true;
+  });
+
+  const points: WorkspaceMapPoint[] = filterWorkspaceMapRows(rows, { ...filters, clientId: workspace.clientId });
+  const metrics = buildWorkspaceMapMetrics(points);
+  const available = {
+    projects: Array.from(new Set(rows.map((row) => text(row.project_id)).filter(Boolean))).sort(),
+    installers: Array.from(new Set(points.map((point) => point.installer).filter(Boolean))).sort(),
+    states: Array.from(new Set(points.map((point) => point.state).filter((value): value is string => Boolean(value)))).sort(),
+  };
+
   return {
     workspace,
-    points: ((data ?? []) as Row[]).map((row) => ({
-      id: text(row.id),
-      installer: text(row.installer_name) || "Installer",
-      outlet: text(row.selected_outlet_name) || "Deployment location",
-      latitude: numberOrNull(row.gps_latitude),
-      longitude: numberOrNull(row.gps_longitude),
-      status: text(row.status),
-      gpsStatus: text(row.gps_status) || "Unavailable",
-    })),
+    queryStatus: "success" as const,
+    loadError: null,
+    points,
+    metrics,
+    filters,
+    available,
   };
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import type { MutableRefObject } from "react";
 import { Copy, KeyRound, MailPlus, RotateCw, Search, ShieldCheck, UserMinus, UsersRound, X } from "lucide-react";
 import type {
   WorkspaceTeamDashboard,
@@ -59,6 +60,7 @@ export function WorkspaceTeamClient({ initialDashboard }: Props) {
   const [selectedMember, setSelectedMember] = useState<WorkspaceTeamMember | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const lastErrorRef = useRef("");
 
   const filteredMembers = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -88,14 +90,17 @@ export function WorkspaceTeamClient({ initialDashboard }: Props) {
   async function apiRequest(path: string, init: RequestInit) {
     setBusy(true);
     setMessage("");
+    lastErrorRef.current = "";
     try {
       const response = await fetch(path, { ...init, credentials: "include", cache: "no-store" });
       const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.error || "Unable to update workspace team.");
+      if (!response.ok) throw new Error(body?.error || `Unable to update workspace team (HTTP ${response.status}).`);
       await reloadTeam();
       return body;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to update workspace team.");
+      const detail = error instanceof Error ? error.message : "Unable to update workspace team.";
+      lastErrorRef.current = detail;
+      setMessage(detail);
       return null;
     } finally {
       setBusy(false);
@@ -130,12 +135,39 @@ export function WorkspaceTeamClient({ initialDashboard }: Props) {
     }
   }
 
+  async function updateAssignments(member: WorkspaceTeamMember, projectIds: string[], regions: string[]) {
+    const body = await apiRequest("/api/workspace/team", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update_assignments", membershipId: member.id, projectIds, regions }),
+    });
+    if (body?.ok) {
+      const projectNames = projectIds.map((projectId) => dashboard.assignmentOptions.projects.find((project) => project.id === projectId)?.name ?? projectId);
+      setDashboard((current) => ({ ...current, members: current.members.map((item) => item.id === member.id ? { ...item, assignedProjectIds: projectIds, assignedProjectNames: projectNames, assignedRegions: regions } : item) }));
+      setSelectedMember((current) => current && current.id === member.id ? { ...current, assignedProjectIds: projectIds, assignedProjectNames: projectNames, assignedRegions: regions } : current);
+    }
+  }
+
   async function resendInvitation(member: WorkspaceTeamMember) {
     await apiRequest("/api/workspace/team", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "resend_invitation", membershipId: member.id }),
     });
+  }
+
+  async function simulateInvitationAcceptance(member: WorkspaceTeamMember) {
+    const body = await apiRequest("/api/workspace/team", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "simulate_invitation_acceptance", membershipId: member.id }),
+    });
+    if (body?.ok) {
+      const activated = (item: WorkspaceTeamMember): WorkspaceTeamMember => ({ ...item, status: "Active", invitationStatus: "Accepted", invitationDeliveryStatus: "not_applicable" });
+      setDashboard((current) => ({ ...current, members: current.members.map((item) => item.id === member.id ? activated(item) : item) }));
+      setSelectedMember((current) => current && current.id === member.id ? activated(current) : current);
+      setMessage("Test invitation activated. This member is now an active workspace member.");
+    }
   }
 
   return (
@@ -289,6 +321,7 @@ export function WorkspaceTeamClient({ initialDashboard }: Props) {
           close={() => setInviteOpen(false)}
           apiRequest={apiRequest}
           busy={busy}
+          lastErrorRef={lastErrorRef}
           onInvitationCreated={(result) => {
             if (!result.member || !result.invitation) return;
             setDashboard((current) => ({
@@ -317,8 +350,10 @@ export function WorkspaceTeamClient({ initialDashboard }: Props) {
           dashboard={dashboard}
           close={() => setSelectedMember(null)}
           changeRole={changeRole}
+          updateAssignments={updateAssignments}
           removeMember={removeMember}
           resendInvitation={resendInvitation}
+          simulateInvitationAcceptance={simulateInvitationAcceptance}
           busy={busy}
         />
       ) : null}
@@ -343,12 +378,13 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-bold ${statusClass(status)}`}>{status}</span>;
 }
 
-function InviteModal({ dashboard, close, apiRequest, busy, onInvitationCreated }: {
+function InviteModal({ dashboard, close, apiRequest, busy, onInvitationCreated, lastErrorRef }: {
   dashboard: WorkspaceTeamDashboard;
   close: () => void;
   busy: boolean;
   apiRequest: (path: string, init: RequestInit) => Promise<unknown>;
   onInvitationCreated?: (result: InvitationCreateResult) => void;
+  lastErrorRef: MutableRefObject<string>;
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -376,6 +412,11 @@ function InviteModal({ dashboard, close, apiRequest, busy, onInvitationCreated }
         sendEmail,
       }),
     }) as InvitationCreateResult | null;
+    if (!body) {
+      setActionState("error");
+      setLocalMessage(lastErrorRef.current || "Unable to process workspace team request. Check the team API response and try again.");
+      return;
+    }
     if (body?.invitationLink) {
       setLink(body.invitationLink);
       setActionState(sendEmail ? "invited" : "link_ready");
@@ -383,6 +424,7 @@ function InviteModal({ dashboard, close, apiRequest, busy, onInvitationCreated }
       onInvitationCreated?.(body);
     } else {
       setActionState("error");
+      setLocalMessage(body?.message || "The invitation could not be created. Please try again.");
     }
   }
 
@@ -439,13 +481,15 @@ function InviteModal({ dashboard, close, apiRequest, busy, onInvitationCreated }
   );
 }
 
-function ProfileDrawer({ member, dashboard, close, changeRole, removeMember, resendInvitation, busy }: {
+function ProfileDrawer({ member, dashboard, close, changeRole, updateAssignments, removeMember, resendInvitation, simulateInvitationAcceptance, busy }: {
   member: WorkspaceTeamMember;
   dashboard: WorkspaceTeamDashboard;
   close: () => void;
   changeRole: (member: WorkspaceTeamMember, roleKey: WorkspaceTeamRoleKey) => Promise<void>;
+  updateAssignments: (member: WorkspaceTeamMember, projectIds: string[], regions: string[]) => Promise<void>;
   removeMember: (member: WorkspaceTeamMember) => Promise<void>;
   resendInvitation: (member: WorkspaceTeamMember) => Promise<void>;
+  simulateInvitationAcceptance: (member: WorkspaceTeamMember) => Promise<void>;
   busy: boolean;
 }) {
   return (
@@ -487,7 +531,17 @@ function ProfileDrawer({ member, dashboard, close, changeRole, removeMember, res
           {member.status === "Pending Invitation" ? (
             <button type="button" disabled={!dashboard.canManageTeam || busy} onClick={() => resendInvitation(member)} className="workspace-button-secondary"><RotateCw className="h-4 w-4" />Resend invitation</button>
           ) : null}
+          {dashboard.testInvitationAcceptanceEnabled && member.status === "Pending Invitation" ? (
+            <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 p-3">
+              <p className="text-xs font-bold uppercase tracking-widest text-amber-800">Test mode only</p>
+              <p className="mt-1 text-xs text-amber-900">Email delivery is not configured locally. This runs the same activation as a real invitation acceptance.</p>
+              <button type="button" disabled={!dashboard.canManageTeam || busy} onClick={() => simulateInvitationAcceptance(member)} className="workspace-button-secondary mt-2"><ShieldCheck className="h-4 w-4" />Activate test invitation</button>
+            </div>
+          ) : null}
         </div>
+        {member.showsAssignedProjects ? (
+          <AssignmentEditor member={member} dashboard={dashboard} updateAssignments={updateAssignments} busy={busy} />
+        ) : null}
         <div className="mt-6">
           <h4 className="text-sm font-bold">Recent Activity</h4>
           <ul className="mt-3 space-y-2 text-sm text-slate-600">
@@ -496,6 +550,78 @@ function ProfileDrawer({ member, dashboard, close, changeRole, removeMember, res
         </div>
       </aside>
     </div>
+  );
+}
+
+function AssignmentEditor({ member, dashboard, updateAssignments, busy }: {
+  member: WorkspaceTeamMember;
+  dashboard: WorkspaceTeamDashboard;
+  updateAssignments: (member: WorkspaceTeamMember, projectIds: string[], regions: string[]) => Promise<void>;
+  busy: boolean;
+}) {
+  const [projectIds, setProjectIds] = useState<string[]>(member.assignedProjectIds);
+  const [regions, setRegions] = useState<string[]>(member.assignedRegions);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const options = dashboard.assignmentOptions;
+  const dirty = projectIds.slice().sort().join("|") !== member.assignedProjectIds.slice().sort().join("|")
+    || regions.slice().sort().join("|") !== member.assignedRegions.slice().sort().join("|");
+
+  function toggle(list: string[], setList: (next: string[]) => void, value: string) {
+    setSaveState("idle");
+    setList(list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
+  }
+
+  async function save() {
+    setSaveState("saving");
+    await updateAssignments(member, projectIds, regions);
+    setSaveState("saved");
+    window.setTimeout(() => setSaveState("idle"), 1600);
+  }
+
+  return (
+    <section className="mt-6">
+      <h4 className="text-sm font-bold">Resource assignments</h4>
+      <p className="mt-1 text-xs text-slate-600">Control which projects and regions this member can work on.</p>
+      <div className="mt-3 grid gap-3">
+        <div className="workspace-subtle-card p-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Projects</p>
+          <div className="mt-2 grid max-h-40 gap-2 overflow-y-auto">
+            {options.projects.length === 0 ? <p className="text-sm text-slate-500">No projects available in this workspace.</p> : null}
+            {options.projects.map((project) => (
+              <label key={project.id} className="flex items-center gap-2 text-sm font-semibold">
+                <input
+                  type="checkbox"
+                  checked={projectIds.includes(project.id)}
+                  disabled={!dashboard.canManageTeam || busy}
+                  onChange={() => toggle(projectIds, setProjectIds, project.id)}
+                />
+                <span className="truncate">{project.name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="workspace-subtle-card p-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Regions</p>
+          <div className="mt-2 grid max-h-40 gap-2 overflow-y-auto">
+            {options.regions.length === 0 ? <p className="text-sm text-slate-500">No regions defined on workspace projects.</p> : null}
+            {options.regions.map((region) => (
+              <label key={region} className="flex items-center gap-2 text-sm font-semibold">
+                <input
+                  type="checkbox"
+                  checked={regions.includes(region)}
+                  disabled={!dashboard.canManageTeam || busy}
+                  onChange={() => toggle(regions, setRegions, region)}
+                />
+                <span className="truncate">{region}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <button type="button" disabled={!dashboard.canManageTeam || busy || !dirty || saveState === "saving"} onClick={save} className="workspace-button-secondary">
+          {saveState === "saving" ? "Saving assignments..." : saveState === "saved" ? "Assignments saved" : "Save assignments"}
+        </button>
+      </div>
+    </section>
   );
 }
 

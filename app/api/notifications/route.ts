@@ -6,7 +6,7 @@ import {
   getAuthenticatedUserContext,
   requireAdmin
 } from "@/lib/accessControl";
-import { getNotificationAction, notificationsEnabled } from "@/lib/notifications";
+import { clientNotificationsEnabled, getNotificationAction, notificationsEnabled } from "@/lib/notifications";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
@@ -47,12 +47,11 @@ function phaseMessage(status: string, fallbackMessage: string, phaseName: string
 
 export async function GET(request: Request) {
   try {
-    if (!notificationsEnabled()) return disabledResponse();
-
     const context = await getAuthenticatedUserContext(request);
     if (!["admin", "client"].includes(context.role)) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
+    if (context.role === "client" ? !(await clientNotificationsEnabled(context.client_id ?? "")) : !notificationsEnabled()) return disabledResponse();
 
     const { searchParams } = new URL(request.url);
     const requestedClientId = searchParams.get("clientId")?.trim() || null;
@@ -82,8 +81,19 @@ export async function GET(request: Request) {
     }
 
     const notifications = data ?? [];
-    const unreadCount = notifications.filter((item) => !item.read_at).length;
-    return NextResponse.json({ enabled: true, notifications, unreadCount });
+    const projectIds = Array.from(new Set(notifications.map((item) => item.project_id).filter((value): value is string => Boolean(value))));
+    const projectMap = new Map<string, { project_name?: string | null; campaign_name?: string | null }>();
+    if (projectIds.length > 0 && context.role === "client" && context.client_id) {
+      const { data: projects } = await supabase.from("projects").select("id,project_name,campaign_name").eq("client_id", context.client_id).in("id", projectIds);
+      for (const project of projects ?? []) projectMap.set(project.id, project);
+    }
+    const enrichedNotifications = notifications.map((notification) => ({
+      ...notification,
+      project_name: notification.project_id ? projectMap.get(notification.project_id)?.project_name ?? null : null,
+      campaign_name: notification.project_id ? projectMap.get(notification.project_id)?.campaign_name ?? null : null,
+    }));
+    const unreadCount = enrichedNotifications.filter((item) => !item.read_at).length;
+    return NextResponse.json({ enabled: true, notifications: enrichedNotifications, unreadCount });
   } catch (error) {
     const { status, payload } = accessControlErrorResponse(error);
     return NextResponse.json(payload, { status });
@@ -173,10 +183,6 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  if (!notificationsEnabled()) {
-    return NextResponse.json({ error: "Notifications are disabled." }, { status: 404 });
-  }
-
   let context;
   try {
     context = await getAuthenticatedUserContext(request);
@@ -187,6 +193,9 @@ export async function PATCH(request: Request) {
 
   if (!["admin", "client"].includes(context.role)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  if (context.role === "client" ? !(await clientNotificationsEnabled(context.client_id ?? "")) : !notificationsEnabled()) {
+    return NextResponse.json({ error: "Notifications are disabled." }, { status: 404 });
   }
 
   const body = await request.json().catch(() => ({}));

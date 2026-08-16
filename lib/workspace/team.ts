@@ -1,5 +1,7 @@
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
+import { deriveProjectRegions } from "@/lib/geography";
 import { writeAuditLog } from "@/lib/userManagement";
+import { provisionInstallerForWorkspaceMember } from "@/lib/workspace/fieldResources";
 import {
   resolveCustomerWorkspaceContext,
   type CustomerWorkspaceContext,
@@ -30,6 +32,7 @@ export type WorkspaceTeamMember = {
   joinedDate: string | null;
   invitationStatus: string;
   invitationDeliveryStatus?: "not_applicable" | "link_created" | "delivery_not_configured" | "sent" | "failed";
+  assignedProjectIds: string[];
   assignedProjectNames: string[];
   assignedRegions: string[];
   showsAssignedProjects: boolean;
@@ -91,9 +94,14 @@ export type WorkspaceInvitationPrecheck = {
 export type WorkspaceTeamDashboard = {
   workspace: CustomerWorkspaceContext;
   canManageTeam: boolean;
+  testInvitationAcceptanceEnabled: boolean;
   members: WorkspaceTeamMember[];
   invitations: WorkspaceTeamInvitation[];
   roles: WorkspaceTeamRoleDefinition[];
+  assignmentOptions: {
+    projects: Array<{ id: string; name: string }>;
+    regions: string[];
+  };
   permissionMatrix: WorkspacePermissionSection[];
   auditLog: WorkspaceTeamAuditEvent[];
   summary: {
@@ -125,6 +133,9 @@ const FIELD_ASSIGNMENT_ROLE_KEYS = new Set<WorkspaceTeamRoleKey>([
   "field_coordinator",
   "installer",
 ]);
+
+// user_profiles.status is constrained to Active/Inactive/Suspended/Archived; pending state lives on workspace_memberships.status.
+const PENDING_INVITE_PROFILE_STATUS = "Active";
 
 export const CUSTOMER_WORKSPACE_ROLES: WorkspaceTeamRoleDefinition[] = [
   {
@@ -587,6 +598,13 @@ async function checkWorkspaceInvitationDuplicateByEmail(clientId: string, email:
   };
 }
 
+async function existingAuthUserByEmail(email: string) {
+  const normalizedEmail = normalizeEmail(email);
+  const { data, error } = await createAdminSupabase().auth.admin.listUsers({ page: 1, perPage: 1000 });
+  if (error) throw error;
+  return data.users.find((user) => normalizeEmail(user.email) === normalizedEmail) ?? null;
+}
+
 async function generateInvitationLink(input: { email: string; name: string; supabase: ReturnType<typeof createAdminSupabase> }) {
   const inviteResult = await input.supabase.auth.admin.generateLink({
     type: "invite",
@@ -648,15 +666,28 @@ export async function getWorkspaceTeamDashboard(): Promise<WorkspaceTeamDashboar
     roleDefinitions,
     { data: memberships, error: membershipsError },
     { data: profiles, error: profilesError },
+    { data: projects, error: projectsError },
     { data: auditRows },
   ] = await Promise.all([
     roleDefinitionsForWorkspace(workspace.clientId),
     supabase.from("workspace_memberships").select("id,user_id,role_key,status,created_at,updated_at").eq("client_id", workspace.clientId).order("created_at", { ascending: true }),
-    supabase.schema("public").from("user_profiles").select("user_id,full_name,email,status,created_at,updated_at").limit(1000),
+    supabase.schema("public").from("user_profiles").select("user_id,full_name,email,status,created_at,updated_at,assigned_project_ids,assigned_regions,assigned_states").limit(1000),
+    supabase.from("projects").select("id,name,primary_target_region,project_regions,regions_covered").eq("client_id", workspace.clientId).order("name", { ascending: true }),
     supabase.from("audit_logs").select("id,action_type,actor_user_id,target_user_id,created_at,new_value").order("created_at", { ascending: false }).limit(25),
   ]);
   if (membershipsError) throw membershipsError;
   if (profilesError) throw profilesError;
+  if (projectsError) throw projectsError;
+
+  const projectRows = (projects ?? []) as Array<Record<string, unknown>>;
+  const projectNameById = new Map(projectRows.map((project) => [text(project.id), text(project.name)]));
+  const assignmentOptions = {
+    projects: projectRows.map((project) => ({ id: text(project.id), name: text(project.name) })).filter((project) => project.id && project.name),
+    regions: [...new Set(projectRows.flatMap((project) => deriveProjectRegions({
+      states: Array.isArray(project.regions_covered) ? (project.regions_covered as string[]) : [],
+      storedRegions: [...(Array.isArray(project.project_regions) ? (project.project_regions as string[]) : []), text(project.primary_target_region)],
+    })))].sort((a, b) => a.localeCompare(b)),
+  };
 
   const userIds = (memberships ?? []).map((membership) => text(membership.user_id));
   const authStartedAt = nowMs();
@@ -679,6 +710,11 @@ export async function getWorkspaceTeamDashboard(): Promise<WorkspaceTeamDashboar
     const role = roleDefinition(text(membership.role_key));
     const status = statusLabel(text(membership.status));
     const assignmentSummary = assignmentSummaries.get(userId) ?? { assignedProjectNames: [], assignedRegions: [] };
+    const profileProjectIds = Array.isArray(profile?.assigned_project_ids) ? profile.assigned_project_ids.map((value) => text(value)).filter(Boolean) : [];
+    const profileRegions = Array.isArray(profile?.assigned_regions) ? profile.assigned_regions.map((value) => text(value)).filter(Boolean) : [];
+    const assignedProjectIds = profileProjectIds.length > 0 ? profileProjectIds : assignmentSummary.assignedProjectNames.map((name) => [...projectNameById.entries()].find(([, projectName]) => projectName === name)?.[0] ?? "").filter(Boolean);
+    const assignedProjectNames = assignedProjectIds.map((projectId) => projectNameById.get(projectId) ?? projectId).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    const assignedRegions = profileRegions.length > 0 ? profileRegions : assignmentSummary.assignedRegions;
     return {
       id: text(membership.id),
       userId,
@@ -692,8 +728,9 @@ export async function getWorkspaceTeamDashboard(): Promise<WorkspaceTeamDashboar
       joinedDate: text(membership.created_at) || (auth?.createdAt ?? null),
       invitationStatus: status === "Pending Invitation" ? "Invitation sent" : "Accepted",
       invitationDeliveryStatus: status === "Pending Invitation" ? "link_created" : "not_applicable",
-      assignedProjectNames: assignmentSummary.assignedProjectNames,
-      assignedRegions: assignmentSummary.assignedRegions,
+      assignedProjectIds,
+      assignedProjectNames,
+      assignedRegions,
       showsAssignedProjects: FIELD_ASSIGNMENT_ROLE_KEYS.has(role.key),
       recentActivity: [
         `${role.label} access assigned`,
@@ -748,9 +785,11 @@ export async function getWorkspaceTeamDashboard(): Promise<WorkspaceTeamDashboar
   const dashboard = {
     workspace,
     canManageTeam: workspace.role === "customer_admin",
+    testInvitationAcceptanceEnabled: testInvitationAcceptanceEnabled(),
     members,
     invitations,
     roles: roleDefinitions,
+    assignmentOptions,
     permissionMatrix: CUSTOMER_WORKSPACE_PERMISSION_MATRIX,
     auditLog,
     summary: {
@@ -819,14 +858,11 @@ export async function inviteWorkspaceUser(input: {
   if (duplicate.state === "already_member") throw Object.assign(new Error("This person already belongs to this workspace."), { status: 409 });
   if (duplicate.state === "pending_invitation") throw Object.assign(new Error("An invitation is already pending for this email."), { status: 409 });
 
+  const existingAuthUser = await existingAuthUserByEmail(email);
+
   const linkStartedAt = nowMs();
   const generated = await generateInvitationLink({ email, name, supabase });
-  invitePerformanceLog({
-    operation: "invite_user",
-    step: "Generate invitation link",
-    elapsedMs: elapsedMs(linkStartedAt),
-    totalElapsedMs: elapsedMs(totalStartedAt),
-  });
+  invitePerformanceLog({ operation: "invite_user", step: existingAuthUser ? "Reuse Auth identity and generate link" : "Generate invitation link", elapsedMs: elapsedMs(linkStartedAt), totalElapsedMs: elapsedMs(totalStartedAt) });
   const userId = generated.data.user?.id ?? "";
   const actionLink = generated.data.properties?.action_link ?? null;
   if (!userId) throw Object.assign(new Error("Could not create the invitation."), { status: 500 });
@@ -840,9 +876,12 @@ export async function inviteWorkspaceUser(input: {
       user_id: userId,
       full_name: name,
       email,
-      status: "Invited",
+      status: PENDING_INVITE_PROFILE_STATUS,
     }, { onConflict: "user_id" });
     if (profileError) throw profileError;
+  } else {
+    const { error: profileUpdateError } = await supabase.schema("public").from("user_profiles").update({ full_name: name, email, status: PENDING_INVITE_PROFILE_STATUS }).eq("user_id", userId);
+    if (profileUpdateError) throw profileUpdateError;
   }
   invitePerformanceLog({
     operation: "invite_user",
@@ -878,13 +917,18 @@ export async function inviteWorkspaceUser(input: {
     totalElapsedMs: elapsedMs(totalStartedAt),
   });
   const persistStartedAt = nowMs();
-  const { data: membership, error } = await supabase.from("workspace_memberships").insert({
+  const { data: existingMembership } = await supabase.from("workspace_memberships").select("id,created_at,status").eq("client_id", workspace.clientId).eq("user_id", userId).maybeSingle();
+  if (existingMembership?.status === "active") throw Object.assign(new Error("This person already belongs to this workspace."), { status: 409 });
+  const membershipQuery = existingMembership
+    ? supabase.from("workspace_memberships").update({ role_id: roleId, role_key: role.technicalRoleKey, status: "invited", updated_at: new Date().toISOString() }).eq("id", existingMembership.id).select("id,created_at").single()
+    : supabase.from("workspace_memberships").insert({
     client_id: workspace.clientId,
     user_id: userId,
     role_id: roleId,
     role_key: role.technicalRoleKey,
     status: "invited",
   }).select("id,created_at").single();
+  const { data: membership, error } = await membershipQuery;
   if (error) {
     if ((error as { code?: string }).code === "23505") {
       throw Object.assign(new Error("This person already belongs to this workspace or has a pending invitation."), { status: 409 });
@@ -899,6 +943,15 @@ export async function inviteWorkspaceUser(input: {
   });
   const actionType = input.sendEmail === false ? "invitation_link_generated" : "user_invited";
   const deliveryStatus = input.sendEmail === false ? "link_created" : "delivery_not_configured";
+
+  if (role.key === "installer") {
+    await provisionInstallerForWorkspaceMember({
+      clientId: workspace.clientId,
+      userId,
+      installerName: name,
+      email,
+    });
+  }
   const auditStartedAt = nowMs();
   void writeAuditLog({
     actorUserId: workspace.userId,
@@ -946,6 +999,7 @@ export async function inviteWorkspaceUser(input: {
     joinedDate: text(membership.created_at) || new Date().toISOString(),
     invitationStatus: input.sendEmail === false ? "Invitation link created" : deliveryMessage,
     invitationDeliveryStatus: deliveryStatus,
+    assignedProjectIds: [],
     assignedProjectNames: [],
     assignedRegions: [],
     showsAssignedProjects: FIELD_ASSIGNMENT_ROLE_KEYS.has(role.key),
@@ -956,7 +1010,7 @@ export async function inviteWorkspaceUser(input: {
   return {
     ok: true,
     userId,
-    invitationLink: actionLink,
+    invitationLink: actionLink || undefined,
     invitationStatus: member.invitationStatus,
     invitationDeliveryStatus: deliveryStatus,
     message: member.invitationStatus,
@@ -986,6 +1040,123 @@ async function activeAdminCount(clientId: string) {
     .in("role_key", ["customer_admin", "workspace_owner"]);
   if (error) throw error;
   return (data ?? []).length;
+}
+
+// Invitation acceptance: the invited user has authenticated, so their membership becomes active
+// and any linked installer record becomes operationally assignable.
+export async function acceptWorkspaceInvitations(userId: string, clientId?: string) {
+  if (!userId) return { activated: 0 };
+  const supabase = createAdminSupabase();
+  let query = supabase
+    .from("workspace_memberships")
+    .update({ status: "active", updated_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("status", "invited");
+  if (clientId) query = query.eq("client_id", clientId);
+  const { data, error } = await query.select("id,client_id,role_key");
+  if (error) {
+    console.warn("[workspace-invitation-acceptance]", { userId, message: error.message, code: error.code });
+    return { activated: 0 };
+  }
+  const activated = (data ?? []) as Array<Record<string, unknown>>;
+  if (activated.length === 0) return { activated: 0 };
+
+  const { data: profile } = await supabase.schema("public").from("user_profiles").select("full_name,email").eq("user_id", userId).maybeSingle();
+  await supabase.schema("public").from("user_profiles").update({ status: "Active", updated_at: new Date().toISOString() }).eq("user_id", userId);
+
+  for (const membership of activated) {
+    const membershipClientId = text(membership.client_id);
+    // Installer members invited before installer provisioning existed are healed here, so
+    // acceptance always leaves a linked, assignable installer record.
+    if (text(membership.role_key) === "installer") {
+      await provisionInstallerForWorkspaceMember({
+        clientId: membershipClientId,
+        userId,
+        installerName: text(profile?.full_name) || text(profile?.email),
+        email: text(profile?.email),
+      });
+    }
+    void writeAuditLog({
+      actorUserId: userId,
+      targetUserId: userId,
+      actionType: "invitation_accepted",
+      newValue: { clientId: membershipClientId, roleKey: text(membership.role_key) },
+    }).catch(() => undefined);
+  }
+  return { activated: activated.length };
+}
+
+// Local/test affordance only: email delivery is not configured outside production, so the real
+// invitation link cannot be exercised. Requires an explicit opt-in flag and a non-production runtime.
+export function testInvitationAcceptanceEnabled() {
+  const isProduction = process.env.VERCEL_ENV === "production" || process.env.DEPLOYIQ_RUNTIME_ENV === "production" || process.env.NODE_ENV === "production";
+  return !isProduction && process.env.DEPLOYIQ_ENABLE_TEST_INVITATION_ACCEPTANCE === "1";
+}
+
+export async function simulateWorkspaceInvitationAcceptance(input: { membershipId: string }) {
+  if (!testInvitationAcceptanceEnabled()) {
+    throw Object.assign(new Error("Test invitation acceptance is not available in this environment."), { status: 404 });
+  }
+  const workspace = await resolveCustomerWorkspaceContext();
+  assertCanManage(workspace);
+  const supabase = createAdminSupabase();
+  const { data: membership, error: membershipError } = await supabase
+    .from("workspace_memberships")
+    .select("id,user_id,status")
+    .eq("id", input.membershipId)
+    .eq("client_id", workspace.clientId)
+    .maybeSingle();
+  if (membershipError) throw membershipError;
+  if (!membership) throw Object.assign(new Error("Member not found."), { status: 404 });
+  if (text(membership.status) !== "invited") {
+    throw Object.assign(new Error("Only a pending invitation can be activated."), { status: 409 });
+  }
+
+  const result = await acceptWorkspaceInvitations(text(membership.user_id), workspace.clientId);
+  if (result.activated === 0) throw Object.assign(new Error("The invitation could not be activated."), { status: 409 });
+
+  await writeAuditLog({
+    actorUserId: workspace.userId,
+    targetUserId: text(membership.user_id),
+    actionType: "invitation_accepted_test_mode",
+    newValue: { clientId: workspace.clientId, membershipId: text(membership.id), simulated: true },
+  });
+  return { ok: true, membershipId: text(membership.id), status: "Active", activated: result.activated };
+}
+
+export async function updateWorkspaceMemberAssignments(input: {
+  membershipId: string;
+  projectIds: string[];
+  regions: string[];
+}) {
+  const workspace = await resolveCustomerWorkspaceContext();
+  assertCanManage(workspace);
+  const supabase = createAdminSupabase();
+  const { data: membership, error: membershipError } = await supabase
+    .from("workspace_memberships")
+    .select("id,user_id,role_key")
+    .eq("id", input.membershipId)
+    .eq("client_id", workspace.clientId)
+    .maybeSingle();
+  if (membershipError) throw membershipError;
+  if (!membership) throw Object.assign(new Error("Member not found."), { status: 404 });
+  const projectIds = [...new Set(input.projectIds.filter((value) => typeof value === "string" && value.trim()))];
+  const regions = [...new Set(input.regions.filter((value) => typeof value === "string" && value.trim()))];
+  if (projectIds.length > 0) {
+    const { data: projects, error: projectError } = await supabase.from("projects").select("id").eq("client_id", workspace.clientId).in("id", projectIds);
+    if (projectError) throw projectError;
+    const validProjectIds = new Set((projects ?? []).map((project) => text(project.id)));
+    if (projectIds.some((projectId) => !validProjectIds.has(projectId))) throw Object.assign(new Error("One or more selected projects are outside this workspace."), { status: 400 });
+  }
+  const { error: profileError } = await supabase.schema("public").from("user_profiles").update({
+    assigned_project_ids: projectIds,
+    assigned_regions: regions,
+    assigned_states: regions,
+    updated_at: new Date().toISOString(),
+  }).eq("user_id", text(membership.user_id));
+  if (profileError) throw profileError;
+  await writeAuditLog({ actorUserId: workspace.userId, targetUserId: text(membership.user_id), actionType: "assignments_changed", newValue: { clientId: workspace.clientId, projectIds, regions } });
+  return { ok: true, projectIds, regions };
 }
 
 export async function updateWorkspaceMemberRole(input: { membershipId: string; roleKey: WorkspaceTeamRoleKey }) {

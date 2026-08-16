@@ -24,7 +24,7 @@ export function getRegionCounts(submissions: Submission[]) {
   const counts = new Map<string, number>();
 
   submissions.forEach((item) => {
-    const region = item.installer_region || item.state_region || "Unknown";
+    const region = item.installer_region || item.resolved_state || item.installer_state || item.state_region || "Unknown";
     counts.set(region, (counts.get(region) ?? 0) + 1);
   });
 
@@ -46,7 +46,7 @@ export function getStateCounts(submissions: Submission[]) {
   const counts = new Map<string, number>();
 
   submissions.forEach((item) => {
-    const state = item.installer_state || "Unknown";
+    const state = item.resolved_state || item.installer_state || item.state_region || "Unknown";
     counts.set(state, (counts.get(state) ?? 0) + 1);
   });
 
@@ -93,6 +93,18 @@ export function getInstallerCounts(submissions: Submission[], source?: Installer
   });
 
   return Array.from(counts.values()).sort((a, b) => b.count - a.count);
+}
+
+export function hasValidGps(submission: Submission) {
+  if (submission.gps_latitude === null || submission.gps_longitude === null) return false;
+  const latitude = Number(submission.gps_latitude);
+  const longitude = Number(submission.gps_longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  return latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
+}
+
+export function getGpsVerifiedPercentage(submissions: Submission[]) {
+  return percentage(submissions.filter(hasValidGps).length, submissions.length);
 }
 
 function percentage(part: number, whole: number) {
@@ -148,7 +160,7 @@ export function getInstallerAccuracyRanking(submissions: Submission[], source?: 
 export function getRegionPerformanceRanking(submissions: Submission[]) {
   const buckets = new Map<string, { total: number; approved: number }>();
   submissions.forEach((item) => {
-    const region = item.installer_region || item.state_region || "Unknown";
+    const region = item.installer_region || item.resolved_state || item.installer_state || item.state_region || "Unknown";
     const current = buckets.get(region) ?? { total: 0, approved: 0 };
     current.total += 1;
     if (item.status === "Approved") current.approved += 1;

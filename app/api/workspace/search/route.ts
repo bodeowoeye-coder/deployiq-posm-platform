@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentAccessToken } from "@/lib/auth";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { createUserSupabase } from "@/lib/supabaseUser";
+import { isLegacyProvisioningPlaceholderProject } from "@/lib/projects";
 
 export const dynamic = "force-dynamic";
 
@@ -74,7 +75,7 @@ export async function GET(request: Request) {
           .ilike("name", pattern)
           .limit(5);
         if (error) throw error;
-        return ((data ?? []) as Array<Record<string, unknown>>).map((project) => ({
+        return ((data ?? []) as Array<Record<string, unknown>>).filter((project) => !isLegacyProvisioningPlaceholderProject(project)).map((project) => ({
           group: "Projects" as const,
           label: text(project.project_name) || "Untitled project",
           sublabel: text(project.status) || "Project",

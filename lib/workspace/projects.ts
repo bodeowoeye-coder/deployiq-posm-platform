@@ -1,6 +1,8 @@
 import { createCoreProject, updateCoreProject } from "@/lib/core/projects/service";
+import { deriveProjectRegions, normalizeRegions, normalizeStates } from "@/lib/geography";
+import { assertInstallerAssignable } from "@/lib/workspace/fieldResources";
 import { notificationsEnabled } from "@/lib/notifications";
-import { normalizeProjectRecord, normalizeProjectRecords } from "@/lib/projects";
+import { isLegacyProvisioningPlaceholderProject, normalizeProjectRecord, normalizeProjectRecords } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Project } from "@/lib/types";
 import {
@@ -51,6 +53,8 @@ export type ProjectDashboard = {
 };
 
 export type CustomerProjectResources = {
+  agencyId?: string | null;
+  installerId?: string | null;
   agencyName: string | null;
   leadInstallerName: string | null;
 };
@@ -78,12 +82,41 @@ export type CreateCustomerProjectInput = {
   installers?: string[] | null;
   supervisors?: string[] | null;
   managers?: string[] | null;
+  agencyId?: string | null;
+  installerId?: string | null;
   directoryBatchId?: string | null;
 };
 
 export type UpdateCustomerProjectInput = CreateCustomerProjectInput & {
   projectId: string;
 };
+
+// Project-level Assigned Agency and Lead Installer live on projects itself.
+// workspace_field_assignments stays campaign-scoped and is deliberately not written here.
+async function persistProjectConfiguration(supabase: ReturnType<typeof createAdminSupabase>, workspace: CustomerWorkspaceContext, projectId: string, input: { agencyId?: string | null; installerId?: string | null; regions: string[] }) {
+  const { error } = await supabase
+    .from("projects")
+    .update({
+      agency_id: text(input.agencyId) || null,
+      lead_installer_id: text(input.installerId) || null,
+      project_regions: input.regions,
+    })
+    .eq("id", projectId)
+    .eq("client_id", workspace.clientId);
+  if (error) throw error;
+}
+
+// A manipulated request must not be able to attach another workspace's agency or installer,
+// and only an active accepted workspace member may be the Lead Installer.
+async function assertProjectResourcesOwned(supabase: ReturnType<typeof createAdminSupabase>, workspace: CustomerWorkspaceContext, input: { agencyId?: string | null; installerId?: string | null }) {
+  const agencyId = text(input.agencyId);
+  if (agencyId) {
+    const { data: agency } = await supabase.from("agencies").select("id").eq("id", agencyId).eq("client_id", workspace.clientId).eq("workspace_id", workspace.clientId).maybeSingle();
+    if (!agency) throw Object.assign(new Error("Select an agency from this workspace."), { status: 400 });
+  }
+  const installerId = text(input.installerId);
+  if (installerId) await assertInstallerAssignable(workspace.clientId, installerId);
+}
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -280,7 +313,7 @@ export async function getCustomerProjectDashboard(filters: ProjectDashboardFilte
   });
   if (projectError) throw projectError;
 
-  const projects = normalizeProjectRecords(projectRows ?? []).map((project) => {
+  const projects = normalizeProjectRecords(projectRows ?? []).filter((project) => !isLegacyProvisioningPlaceholderProject(project)).map((project) => {
     const summarized = summarizeProject(project as Project, resolvedWorkspace, directoryCount ?? 0);
     return {
       ...summarized,
@@ -348,48 +381,35 @@ function firstText(values: unknown[]) {
   return values.map((value) => text(value)).find(Boolean) ?? null;
 }
 
-async function getCustomerProjectResources(supabase: ReturnType<typeof createAdminSupabase>, workspace: CustomerWorkspaceContext, projectId: string): Promise<CustomerProjectResources> {
-  const { data: assignments, error: assignmentError } = await supabase
-    .from("workspace_field_assignments")
-    .select("agency_id,installer_id,assignment_type,assigned_at")
-    .eq("client_id", workspace.clientId)
-    .eq("workspace_id", workspace.clientId)
-    .eq("project_id", projectId)
-    .is("removed_at", null)
-    .neq("assignment_status", "removed")
-    .order("assigned_at", { ascending: true })
-    .limit(100);
-  if (assignmentError) {
-    console.warn("[workspace-projects]", "Resource assignment lookup skipped", diagnosticFor(assignmentError));
-    return { agencyName: null, leadInstallerName: null };
-  }
+// Resources read from the canonical project-level columns, resolved through tenant-scoped lookups.
+async function getCustomerProjectResources(supabase: ReturnType<typeof createAdminSupabase>, workspace: CustomerWorkspaceContext, project: Row): Promise<CustomerProjectResources> {
+  const agencyId = text(project.agency_id) || null;
+  const installerId = text(project.lead_installer_id) || null;
+  if (!agencyId && !installerId) return { agencyId: null, installerId: null, agencyName: null, leadInstallerName: null };
 
-  const rows = (assignments ?? []) as Row[];
-  const agencyIds = [...new Set(rows.map((row) => text(row.agency_id)).filter(Boolean))];
-  const installerIds = [...new Set(rows.map((row) => text(row.installer_id)).filter(Boolean))];
-  const [{ data: agencies, error: agencyError }, { data: installers, error: installerError }] = await Promise.all([
-    agencyIds.length > 0
-      ? supabase.from("agencies").select("id,agency_name").eq("client_id", workspace.clientId).in("id", agencyIds)
-      : Promise.resolve({ data: [], error: null }),
-    installerIds.length > 0
-      ? supabase.from("installers").select("id,installer_name").eq("client_id", workspace.clientId).in("id", installerIds)
-      : Promise.resolve({ data: [], error: null }),
+  const [{ data: agency, error: agencyError }, { data: installer, error: installerError }] = await Promise.all([
+    agencyId
+      ? supabase.from("agencies").select("id,agency_name").eq("client_id", workspace.clientId).eq("id", agencyId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    installerId
+      ? supabase.from("installers").select("id,installer_name").eq("client_id", workspace.clientId).eq("id", installerId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
   if (agencyError) console.warn("[workspace-projects]", "Agency name lookup skipped", diagnosticFor(agencyError));
   if (installerError) console.warn("[workspace-projects]", "Installer name lookup skipped", diagnosticFor(installerError));
 
-  const agencyById = new Map(((agencies ?? []) as Row[]).map((agency) => [text(agency.id), text(agency.agency_name)]));
-  const installerById = new Map(((installers ?? []) as Row[]).map((installer) => [text(installer.id), text(installer.installer_name)]));
   return {
-    agencyName: firstText(rows.map((row) => agencyById.get(text(row.agency_id)))),
-    leadInstallerName: firstText(rows.map((row) => installerById.get(text(row.installer_id)))),
+    agencyId,
+    installerId,
+    agencyName: text((agency as Row | null)?.agency_name) || null,
+    leadInstallerName: text((installer as Row | null)?.installer_name) || null,
   };
 }
 
 export async function getCustomerProject(projectId: string) {
   const resolvedWorkspace = await workspace();
   const supabase = createAdminSupabase();
-  const [{ data: project, error }, { count: campaignAssignedLocations }, { count: assignedResources }, resources, { count: directoryCount }, { data: directoryStates }, { data: batches }, { count: completed }, { count: pending }, { count: rejected }, { count: gpsVerified }] = await Promise.all([
+  const [{ data: project, error }, { count: campaignAssignedLocations }, { count: assignedResources }, { count: directoryCount }, { data: directoryStates }, { data: batches }, { count: completed }, { count: pending }, { count: rejected }, { count: gpsVerified }] = await Promise.all([
     supabase
       .from("projects")
       .select("*")
@@ -409,7 +429,6 @@ export async function getCustomerProject(projectId: string) {
       .eq("client_id", resolvedWorkspace.clientId)
       .eq("project_id", projectId)
       .is("removed_at", null),
-    getCustomerProjectResources(supabase, resolvedWorkspace, projectId),
     supabase
       .from("deployment_locations")
       .select("id", { count: "exact", head: true })
@@ -434,6 +453,7 @@ export async function getCustomerProject(projectId: string) {
   ]);
   if (error) throw error;
   if (!project) return null;
+  const resources = await getCustomerProjectResources(supabase, resolvedWorkspace, project as Row);
   const projectRecord = normalizeProjectRecord(project) as Project;
   const baseSummary = summarizeProject(projectRecord, resolvedWorkspace, directoryCount ?? 0);
   const normalized = {
@@ -458,8 +478,14 @@ export async function getCustomerProject(projectId: string) {
       pending: pending ?? 0,
       rejected: rejected ?? 0,
       gpsVerified: gpsVerified ?? 0,
-      states: normalized.regions_covered ?? [],
-      regions: [text((normalized as Record<string, unknown>).primary_target_region)].filter(Boolean),
+      states: normalizeStates(normalized.regions_covered ?? []),
+      regions: deriveProjectRegions({
+        states: normalized.regions_covered ?? [],
+        storedRegions: [
+          ...(Array.isArray((project as Row).project_regions) ? ((project as Row).project_regions as string[]) : []),
+          text((normalized as Record<string, unknown>).primary_target_region),
+        ],
+      }),
       cities: text((normalized as Record<string, unknown>).contractor).split(",").map((item) => item.trim()).filter(Boolean),
       lgas: [],
         health: normalized.customerStatus === "On Hold" ? "On hold" : normalized.customerStatus === "Completed" ? "Completed" : normalized.customerStatus === "Active" ? "Active" : "Planning",
@@ -506,7 +532,8 @@ export async function createCustomerProject(input: CreateCustomerProjectInput) {
   if (!projectName) throw Object.assign(new Error("Project name is required."), { status: 400 });
   if (targetQuantity <= 0) throw Object.assign(new Error("Expected deployment quantity is required."), { status: 400 });
 
-  const states = textArray(input.states);
+  const states = normalizeStates(textArray(input.states));
+  const regions = deriveProjectRegions({ states, storedRegions: normalizeRegions(textArray(input.regions)) });
   const installers = [
     ...assignedResourceEntries(input.installers),
     ...assignedResourceEntries(input.supervisors),
@@ -528,6 +555,7 @@ export async function createCustomerProject(input: CreateCustomerProjectInput) {
     directoryBatchId: text(input.directoryBatchId) || null,
   };
   const supabase = createAdminSupabase();
+  await assertProjectResourcesOwned(supabase, resolvedWorkspace, input);
   const project = await createCoreProject({
     supabase,
     actorUserId: resolvedWorkspace.userId,
@@ -539,7 +567,7 @@ export async function createCustomerProject(input: CreateCustomerProjectInput) {
     status: projectWriteStatus(input.status),
     regionsCovered: states,
     assignedInstallers: installers,
-    targetRegion: text(input.regions?.[0]) || null,
+    targetRegion: regions[0] ?? null,
     targetState: states[0] ?? null,
     targetInstaller: installers[0] ?? null,
     targetAgency: rawData.agencies[0] ?? null,
@@ -555,6 +583,7 @@ export async function createCustomerProject(input: CreateCustomerProjectInput) {
     .is("archived_at", null)
     .single();
   if (persistedProjectError) throw persistedProjectError;
+  await persistProjectConfiguration(supabase, resolvedWorkspace, project.id, { agencyId: input.agencyId, installerId: input.installerId, regions });
 
   await Promise.all([
     notifyProjectEvent({
@@ -581,14 +610,21 @@ export async function updateCustomerProjectDetails(input: UpdateCustomerProjectI
   const existing = await getCustomerProject(projectId);
   if (!existing) throw Object.assign(new Error("Project not found."), { status: 404 });
 
-  const submittedStates = textArray(input.states);
-  const submittedRegions = textArray(input.regions);
-  const states = submittedStates.length > 0 ? submittedStates : existing.project.regions_covered ?? [];
-  const targetState = submittedStates[0] ?? existing.project.primary_target_state ?? null;
-  const targetRegion = submittedRegions[0] ?? existing.project.primary_target_region ?? null;
+  const submittedStates = normalizeStates(textArray(input.states));
+  const submittedRegions = normalizeRegions(textArray(input.regions));
+  const states = submittedStates.length > 0 ? submittedStates : normalizeStates(existing.project.regions_covered ?? []);
+  const regions = deriveProjectRegions({
+    states,
+    storedRegions: submittedRegions.length > 0 || submittedStates.length > 0
+      ? submittedRegions
+      : [...(existing.overview.regions ?? []), existing.project.primary_target_region],
+  });
+  const targetState = states[0] ?? null;
+  const targetRegion = regions[0] ?? null;
   const startDate = dateText(input.startDate);
   const endDate = dateText(input.expectedEndDate);
   const supabase = createAdminSupabase();
+  await assertProjectResourcesOwned(supabase, resolvedWorkspace, input);
   await updateCoreProject({
     supabase,
     id: projectId,
@@ -613,6 +649,7 @@ export async function updateCustomerProjectDetails(input: UpdateCustomerProjectI
     .eq("client_id", resolvedWorkspace.clientId)
     .single();
   if (persistedProjectError) throw persistedProjectError;
+  await persistProjectConfiguration(supabase, resolvedWorkspace, projectId, { agencyId: input.agencyId, installerId: input.installerId, regions });
 
   await notifyProjectEvent({
     clientId: resolvedWorkspace.clientId,

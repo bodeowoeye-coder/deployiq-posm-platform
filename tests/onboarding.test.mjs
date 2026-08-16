@@ -983,7 +983,7 @@ test("catalogue: field_operations → product_key field_operations", () => {
 });
 
 // 7. Pricing Studio KNOWN_PRODUCT_OPTIONS uses catalogue keys
-test("catalogue: Pricing Studio product options include all canonical products", () => {
+test("catalogue: Pricing Studio product options include all canonical products", async () => {
   const catalog = getCanonicalProductCatalog();
   const { KNOWN_PRODUCT_OPTIONS } = await import("../components/pricing/wizardUtils.ts");
   for (const product of catalog) {

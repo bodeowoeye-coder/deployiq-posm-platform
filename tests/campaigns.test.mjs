@@ -137,7 +137,7 @@ test("campaigns: Review Edit opens canonical Project edit form directly", () => 
   assert.match(form, /Review project and campaign details, make any required changes, then save\./);
   assert.match(form, /Save Changes/);
   assert.match(form, /Cancel/);
-  assert.match(form, /router\.push\(isEdit \? "\/workspace\/admin\/campaigns"/);
+  assert.match(form, /router\.push\("\/workspace\/admin\/campaigns"\)/);
   assert.doesNotMatch(form, /Client Company|canonical projects\.campaign|workspace membership/);
   assert.match(form, /const projectStatuses = \["Planning", "Active", "On Hold", "Completed"\] as const/);
   assert.match(form, /status: form\.status/);

@@ -1,3 +1,6 @@
+import { createAdminSupabase } from "@/lib/supabaseAdmin";
+import type { CustomerWorkspaceContext } from "@/lib/workspace/customerAdmin";
+
 export type NotificationAction = {
   status: string;
   title: string;
@@ -39,6 +42,23 @@ export const PROJECT_NOTIFICATION_ACTIONS: NotificationAction[] = [
 
 export function notificationsEnabled() {
   return process.env.ENABLE_NOTIFICATIONS === "true" || process.env.NEXT_PUBLIC_ENABLE_NOTIFICATIONS === "true";
+}
+
+export async function workspaceNotificationsEnabled(workspace: CustomerWorkspaceContext) {
+  return clientNotificationsEnabled(workspace.clientId);
+}
+
+export async function clientNotificationsEnabled(clientId: string) {
+  const supabase = createAdminSupabase();
+  const [{ data: settings, error: settingsError }, { data: defaults, error: defaultsError }] = await Promise.all([
+    supabase.from("workspace_settings").select("enabled_modules").eq("client_id", clientId).maybeSingle(),
+    supabase.from("workspace_notification_defaults").select("enabled").eq("client_id", clientId),
+  ]);
+  if (settingsError || defaultsError) return notificationsEnabled();
+  const modules = Array.isArray(settings?.enabled_modules) ? settings.enabled_modules.map(String) : [];
+  const hasNotificationModule = modules.length === 0 || modules.includes("notifications");
+  const defaultsEnabled = (defaults ?? []).length === 0 || defaults.some((item) => item.enabled !== false);
+  return hasNotificationModule && defaultsEnabled;
 }
 
 export function getNotificationAction(status: string) {

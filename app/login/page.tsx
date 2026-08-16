@@ -545,7 +545,7 @@ export default function LoginPage() {
         <div className="mx-auto w-full max-w-2xl overflow-hidden rounded-3xl border border-white/10 bg-slate-950/40 shadow-2xl shadow-slate-950/50">
           <img
             src="/deployiq-login-hero.png"
-            alt="DeployIQ admin dashboard on laptop and installer mobile upload screen"
+            alt="DeployIQ operational workspace on laptop and mobile field experience"
             className="h-auto w-full object-cover"
           />
         </div>

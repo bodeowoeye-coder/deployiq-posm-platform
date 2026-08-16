@@ -7,6 +7,32 @@ import { createClient } from "@supabase/supabase-js";
 
 loadEnv({ path: ".env.local" });
 
+const NAVIGATION_PATTERN = /router\.(push|replace)|window\.location|location\.href/;
+
+// Returns the source of every useEffect/useLayoutEffect callback so assertions can target
+// automatic initialization only, leaving explicit user-triggered handlers alone.
+function extractEffectBodies(source) {
+  const bodies = [];
+  const opener = /use(?:Layout)?Effect\(/g;
+  let match;
+  while ((match = opener.exec(source)) !== null) {
+    let depth = 0;
+    for (let index = match.index + match[0].length - 1; index < source.length; index += 1) {
+      const character = source[index];
+      if (character === "(") depth += 1;
+      else if (character === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          bodies.push(source.slice(match.index, index + 1));
+          opener.lastIndex = index + 1;
+          break;
+        }
+      }
+    }
+  }
+  return bodies;
+}
+
 function getLiveAuthConfig() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
@@ -321,7 +347,15 @@ describe("mandatory password change routing", () => {
     assert.match(combined, /localStorage/);
     assert.match(combined, /prefers-color-scheme: dark/);
     assert.doesNotMatch(combined, /\/api\/auth\/session/);
-    assert.doesNotMatch(combined, /router\.(push|replace)|window\.location|location\.href/);
+
+    const effectBodies = [...extractEffectBodies(shell), ...extractEffectBodies(settings)];
+    assert.ok(effectBodies.length > 0, "expected at least one effect to inspect");
+    for (const body of effectBodies) {
+      assert.doesNotMatch(body, NAVIGATION_PATTERN, `automatic effect must not navigate: ${body.slice(0, 120)}`);
+    }
+
+    // Project Scope keeps canonical ?projectId= in the URL, but only from an explicit user change.
+    assert.match(shell, /onChange=\{\(event\) => \{[^}]*router\.push\(`\$\{normalizePath\(pathname\)\}\$\{value \? `\?projectId=/);
   });
 
   test("customer workspace subpaths are valid return destinations", () => {

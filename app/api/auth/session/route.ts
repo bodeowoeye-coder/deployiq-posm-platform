@@ -10,6 +10,7 @@ import {
   clearDeployIqAuthCookies,
   setDeployIqSessionCookies,
 } from "@/lib/authSessionCookies";
+import { acceptWorkspaceInvitations } from "@/lib/workspace/team";
 import {
   defaultDestinationForResolvedUser,
 } from "@/lib/authDestinations";
@@ -146,6 +147,7 @@ export async function POST(request: Request) {
       email: data.user.email,
       requestedReturnTo,
     });
+    await acceptWorkspaceInvitations(data.user.id);
     const accountSecurity = await getAuthoritativeAccountSecurityState(data.user.id);
     const redirectTo = accountSecurity.passwordChangeRequired
       ? `/login/create-password?returnTo=${encodeURIComponent(destination.destination)}`

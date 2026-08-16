@@ -83,7 +83,7 @@ export function InstallersClient({ initialDashboard }: { initialDashboard: Dashb
                     <td className="px-4 py-3">{installer.remaining}</td>
                     <td className="px-4 py-3">{installer.assignedLocations > 0 ? `${Math.round((installer.completed / installer.assignedLocations) * 100)}%` : "0%"}</td>
                     <td className="px-4 py-3">{installer.gpsPercent}%</td>
-                    <td className="px-4 py-3"><span className={`rounded-full border px-2 py-1 text-xs font-bold ${statusClass(installer.status)}`}>{title(installer.status)}</span></td>
+                    <td className="px-4 py-3"><span className={`rounded-full border px-2 py-1 text-xs font-bold ${statusClass(installer.status)}`}>{title(installer.status)}</span>{installer.assignable ? null : <span className="mt-1 block text-xs font-semibold text-amber-800" title={installer.eligibilityReason}>Not assignable</span>}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         <a href={`/workspace/admin/installers/${installer.id}`} className="font-bold text-orange-600">Open</a>

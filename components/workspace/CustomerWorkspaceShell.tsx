@@ -3,16 +3,20 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { ChevronDown, CircleHelp, Moon, Search, Settings, Sun } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { SupportModeBanner } from "@/components/workspace/SupportModeBanner";
 import { BrandMark } from "@/components/BrandMark";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import { SignOutButton } from "@/components/SignOutButton";
 import { applyCustomerWorkspaceAppearance, readCustomerWorkspaceAppearance, writeCustomerWorkspaceAppearance } from "@/components/workspace/WorkspaceSettingsClient";
 import { CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS } from "@/lib/workspace/customerAdminFoundation";
 import type { CustomerWorkspaceContext } from "@/lib/workspace/customerAdmin";
+import type { CustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
 
 type Props = {
   workspace: CustomerWorkspaceContext;
+  projectScope: CustomerWorkspaceProjectScope;
+  notificationEnabled: boolean;
   children: React.ReactNode;
 };
 
@@ -80,8 +84,10 @@ function resolveEffectiveTheme(themePreference: string): EffectiveTheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-export function CustomerWorkspaceShell({ workspace, children }: Props) {
+export function CustomerWorkspaceShell({ workspace, projectScope, notificationEnabled, children }: Props) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [quickTheme, setQuickTheme] = useState<EffectiveTheme>("light");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<WorkspaceSearchResult[]>([]);
@@ -90,6 +96,9 @@ export function CustomerWorkspaceShell({ workspace, children }: Props) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const activeItem = useMemo(() => currentNavItem(pathname, workspace.navigation), [pathname, workspace.navigation]);
   const activeAccountItem = useMemo(() => currentAccountItem(pathname), [pathname]);
+  const projectDependent = !activeAccountItem && ["/workspace/admin", "/workspace/admin/analytics", "/workspace/admin/map", "/workspace/admin/submissions", "/workspace/admin/alerts", "/workspace/admin/installers", "/workspace/admin/notifications", "/workspace/admin/reports"].includes(normalizePath(pathname));
+  const selectedProjectId = searchParams.get("projectId") ?? "";
+  const operationalNavigation = new Set(["/workspace/admin", "/workspace/admin/reports", "/workspace/admin/submissions", "/workspace/admin/map", "/workspace/admin/analytics", "/workspace/admin/alerts", "/workspace/admin/installers", "/workspace/admin/notifications"]);
   const sectionLabel = activeAccountItem?.label ?? activeItem?.label ?? "Customer Workspace";
   const sectionDescription = activeAccountItem
     ? ACCOUNT_SECTION_DESCRIPTIONS[activeAccountItem.label] ?? "Manage this Customer Workspace configuration area."
@@ -161,16 +170,20 @@ export function CustomerWorkspaceShell({ workspace, children }: Props) {
 
   return (
     <main className="customer-workspace-shell min-h-screen text-slate-950">
+      {workspace.supportSession ? (
+        <SupportModeBanner organisation={workspace.organisationName} expiresInMinutes={workspace.supportSession.expiresInMinutes} />
+      ) : null}
       <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
         <aside className="customer-workspace-sidebar border-r px-5 py-5 text-slate-950 shadow-[1px_0_0_rgba(15,23,42,0.04)]">
           <BrandMark />
+          {projectDependent ? <div className="mt-8 border-y border-slate-200 py-5"><label className="block px-3 text-[11px] font-black uppercase tracking-[0.24em] text-slate-400">Project Scope<select value={selectedProjectId} onChange={(event) => { const value = event.target.value; router.push(`${normalizePath(pathname)}${value ? `?projectId=${encodeURIComponent(value)}` : ""}`); }} className="mt-2 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700" aria-label="Project Scope"><option value="">All Projects</option>{projectScope.projects.map((project) => <option key={project.id} value={project.id}>{project.project_name}{project.campaign_name ? ` - ${project.campaign_name}` : ""}</option>)}</select></label></div> : null}
           <nav className="mt-8 space-y-1" aria-label="Workspace navigation">
             {workspace.navigation.map((item) => {
               const active = activeItem?.href === item.href;
               return (
                 <Link
                   key={item.label}
-                  href={item.href}
+                  href={operationalNavigation.has(item.href) && selectedProjectId ? `${item.href}?projectId=${encodeURIComponent(selectedProjectId)}` : item.href}
                   prefetch
                   aria-current={active ? "page" : undefined}
                   className={`flex min-h-10 items-center justify-between rounded-lg px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-orange-300 ${
@@ -183,6 +196,44 @@ export function CustomerWorkspaceShell({ workspace, children }: Props) {
               );
             })}
           </nav>
+          <div className="mt-8 border-t border-slate-200 pt-6">
+            <p className="px-3 text-[11px] font-black uppercase tracking-[0.24em] text-slate-400">Secondary administration</p>
+            <div className="relative mt-2">
+              <button
+                type="button"
+                onClick={() => setAccountMenuOpen((open) => !open)}
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="menu"
+                className={`flex min-h-10 w-full items-center justify-between rounded-lg px-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-300 ${activeAccountItem ? "bg-white text-orange-700 ring-1 ring-orange-200 shadow-sm" : "text-slate-700 hover:bg-white/80 hover:text-slate-950"}`}
+              >
+                <span className="flex items-center gap-2"><Settings className="h-4 w-4" aria-hidden="true" />Account Settings</span>
+                <ChevronDown className={`h-4 w-4 transition ${accountMenuOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+              </button>
+              {accountMenuOpen ? (
+                <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-sm shadow-xl" role="menu" aria-label="Account Settings">
+                  <p className="px-3 py-2 text-[11px] font-black uppercase tracking-[0.24em] text-orange-600">Configuration</p>
+                  {CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS.map((item) => {
+                    const active = activeAccountItem?.href === item.href;
+                    const planned = item.status !== "available";
+                    return (
+                      <Link
+                        key={item.label}
+                        href={item.href}
+                        prefetch
+                        role="menuitem"
+                        aria-current={active ? "page" : undefined}
+                        className={`flex min-h-10 items-center justify-between rounded-lg px-3 font-bold focus:outline-none focus:ring-2 focus:ring-orange-200 ${active ? "bg-orange-50 text-orange-800" : planned ? "text-slate-400" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}
+                        onClick={() => setAccountMenuOpen(false)}
+                      >
+                        <span>{item.label}</span>
+                        {planned ? <span className="text-[10px] uppercase tracking-widest">Soon</span> : null}
+                      </Link>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </div>
         </aside>
 
         <section className="flex min-w-0 flex-col">
@@ -251,7 +302,7 @@ export function CustomerWorkspaceShell({ workspace, children }: Props) {
                     </div>
                   ) : null}
                 </div>
-                <NotificationCenter enabled />
+                <NotificationCenter enabled={notificationEnabled} />
                 <Link href="/workspace/admin/help" prefetch aria-label="Help" className="workspace-header-button">
                   <CircleHelp className="h-4 w-4" aria-hidden="true" />
                   Help
@@ -260,44 +311,6 @@ export function CustomerWorkspaceShell({ workspace, children }: Props) {
                   {quickTheme === "dark" ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
                   {quickTheme === "dark" ? "Light" : "Dark"}
                 </button>
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setAccountMenuOpen((open) => !open)}
-                    aria-expanded={accountMenuOpen}
-                    aria-haspopup="menu"
-                    className={`workspace-header-button ${activeAccountItem ? "border-orange-200 bg-orange-50 text-orange-700" : ""}`}
-                  >
-                    <Settings className="h-4 w-4" aria-hidden="true" />
-                    Account Settings
-                    <ChevronDown className={`h-4 w-4 transition ${accountMenuOpen ? "rotate-180" : ""}`} aria-hidden="true" />
-                  </button>
-                  {accountMenuOpen ? (
-                    <div className="absolute right-0 top-12 z-40 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-sm shadow-xl" role="menu" aria-label="Account Settings">
-                      <p className="px-3 py-2 text-[11px] font-black uppercase tracking-[0.24em] text-orange-600">Configuration</p>
-                      {CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS.map((item) => {
-                        const active = activeAccountItem?.href === item.href;
-                        const planned = item.status !== "available";
-                        return (
-                          <Link
-                            key={item.label}
-                            href={item.href}
-                            prefetch
-                            role="menuitem"
-                            aria-current={active ? "page" : undefined}
-                            className={`flex min-h-10 items-center justify-between rounded-lg px-3 font-bold focus:outline-none focus:ring-2 focus:ring-orange-200 ${
-                              active ? "bg-orange-50 text-orange-800" : planned ? "text-slate-400" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"
-                            }`}
-                            onClick={() => setAccountMenuOpen(false)}
-                          >
-                            <span>{item.label}</span>
-                            {planned ? <span className="text-[10px] uppercase tracking-widest">Soon</span> : null}
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
                 <div aria-label="Workspace identity" className="workspace-identity-static flex min-h-10 items-center gap-2 px-2.5 py-1.5 text-left">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-900 text-xs font-black text-white">
                     {workspace.branding.logoUrl ? (

@@ -4,13 +4,17 @@ import { accessControlErrorResponse, requireClientUser } from "@/lib/accessContr
 import { loadClientSubmissionScope } from "@/lib/clientSubmissions";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Submission } from "@/lib/types";
-import { campaignMatches, displayProjectName, resolveSubmissionCampaignName } from "@/lib/projects";
+import { campaignMatches, displayProjectName, isLegacyProvisioningPlaceholderProject, resolveSubmissionCampaignName } from "@/lib/projects";
 import { createReportId, reportFooter, reportSubtitle } from "@/lib/reportBranding";
+import { getPortfolioOperations, getProjectOperations } from "@/lib/operations";
+import type { DeploymentProgress, ProjectTarget } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type ClientEvidenceRow = {
+  "Project Name": string;
+  "Campaign Name": string;
   "Outlet Name": string;
   "Outlet Code": string;
   Address: string;
@@ -63,11 +67,13 @@ function addCoverSheet(workbook: XLSX.WorkBook, metadata: Array<[string, string]
   XLSX.utils.book_append_sheet(workbook, cover, "Cover");
 }
 
-function toExportRow(item: Submission): ClientEvidenceRow {
+function toExportRow(item: Submission, projects: Parameters<typeof resolveSubmissionCampaignName>[0] = []): ClientEvidenceRow {
   const hasGps = hasValidGps(item);
   const outletCode = (item as Submission & { outlet_code?: string | null }).outlet_code;
   const gpsAccuracy = (item as Submission & { gps_accuracy?: number | string | null }).gps_accuracy;
   return {
+    "Project Name": item.project_name ?? "",
+    "Campaign Name": resolveSubmissionCampaignName(projects, item) || "",
     "Outlet Name": item.salon_name ?? "",
     "Outlet Code": outletCode ?? "",
     Address: item.address ?? "",
@@ -87,7 +93,7 @@ function toExportRow(item: Submission): ClientEvidenceRow {
   };
 }
 
-function styleSheet(sheet: XLSX.WorkSheet, rows: Array<ClientEvidenceRow>) {
+function styleSheet(sheet: XLSX.WorkSheet, rows: Array<Record<string, unknown>>) {
   const headers = Object.keys(
     rows[0] ?? {
       "Outlet Name": "",
@@ -112,7 +118,7 @@ function styleSheet(sheet: XLSX.WorkSheet, rows: Array<ClientEvidenceRow>) {
   sheet["!cols"] = headers.map((header) => {
     const maxLength = Math.max(
       header.length,
-      ...rows.map((row) => String(row[header as keyof typeof row] ?? "").slice(0, 80).length)
+      ...rows.map((row) => String(row[header] ?? "").slice(0, 80).length)
     );
     return { wch: Math.min(Math.max(maxLength + 2, 14), 52) };
   });
@@ -188,6 +194,7 @@ export async function GET(request: Request) {
   const endDate = searchParams.get("endDate")?.trim();
   const search = searchParams.get("query")?.trim();
   const quickFilter = (searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") as "" | "all" | "approved" | "pending" | "rejected";
+  const statusFilter = searchParams.get("status")?.trim() ?? "";
     const gpsFilter = (searchParams.get("gpsFilter")?.trim().toLowerCase() ?? "") as "" | "all_gps" | "gps_verified" | "gps_missing";
     const scoped = await loadClientSubmissionScope(supabase, client, clientId);
 
@@ -228,9 +235,10 @@ export async function GET(request: Request) {
   });
 
     let filteredData = data;
-    if (quickFilter === "approved") filteredData = data.filter((item) => item.status === "Approved");
-    if (quickFilter === "pending") filteredData = data.filter((item) => item.status === "Pending");
-    if (quickFilter === "rejected") filteredData = data.filter((item) => item.status === "Rejected");
+    if (statusFilter) filteredData = data.filter((item) => item.status === statusFilter);
+    if (!statusFilter && quickFilter === "approved") filteredData = data.filter((item) => item.status === "Approved");
+    if (!statusFilter && quickFilter === "pending") filteredData = data.filter((item) => item.status === "Pending");
+    if (!statusFilter && quickFilter === "rejected") filteredData = data.filter((item) => item.status === "Rejected");
   const effectiveGpsFilter =
     gpsFilter ||
     ((searchParams.get("quickFilter")?.trim().toLowerCase() ?? "") === "gps_verified"
@@ -241,12 +249,24 @@ export async function GET(request: Request) {
     if (effectiveGpsFilter === "gps_verified") filteredData = filteredData.filter((item) => hasValidGps(item));
     if (effectiveGpsFilter === "gps_missing") filteredData = filteredData.filter((item) => !hasValidGps(item));
 
-    const projectTitle = project || "All projects";
+    const operationalProjects = scoped.projects.filter((item) => !isLegacyProvisioningPlaceholderProject(item));
+    const selectedProject = projectId ? operationalProjects.find((item) => item.id === projectId) : null;
+    const projectTitle = selectedProject?.project_name || project || "Combined Workspace Report";
+    const includedProjects = selectedProject ? [selectedProject] : operationalProjects;
     const reportId = createReportId(isFiltered ? "DPIQ-CLT-XLS-FLT" : "DPIQ-CLT-XLS");
     const generatedAt = new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
     const baseSubmissions = ((filteredData ?? []) as Submission[]).filter((submission) => !submission.archived_at);
-    const rows = baseSubmissions.map((item) => toExportRow(item));
-    const rejectedRows = baseSubmissions.filter((item) => item.status === "Rejected").map((item) => toExportRow(item));
+    const rows = baseSubmissions.map((item) => toExportRow(item, scoped.projects));
+    const rejectedRows = baseSubmissions.filter((item) => item.status === "Rejected").map((item) => toExportRow(item, scoped.projects));
+    const projectIds = includedProjects.map((item) => item.id);
+    const [{ data: projectTargets }, { data: deploymentProgress }] = projectIds.length
+      ? await Promise.all([
+          supabase.from("project_targets").select("*").in("project_id", projectIds),
+          supabase.from("deployment_progress").select("*").in("project_id", projectIds),
+        ])
+      : [{ data: [] }, { data: [] }];
+    const projectRows = getProjectOperations(includedProjects, (projectTargets ?? []) as ProjectTarget[], baseSubmissions, (deploymentProgress ?? []) as DeploymentProgress[]);
+    const portfolio = getPortfolioOperations(projectRows);
 
     const workbook = XLSX.utils.book_new();
   addCoverSheet(workbook, [
@@ -258,6 +278,38 @@ export async function GET(request: Request) {
     ["Status Filter", quickFilter || "all"],
     ["GPS Filter", effectiveGpsFilter || "all_gps"]
   ]);
+  const summarySheet = XLSX.utils.aoa_to_sheet([
+    ["Report Scope", projectId ? projectTitle : "Combined Workspace Report"],
+    ["Projects Included", String(projectRows.length)],
+    ["Expected / Target", portfolio.expected],
+    ["Actual Deployments", portfolio.actual],
+    ["Outstanding", portfolio.outstanding],
+    ["Completion %", portfolio.completion],
+    ["Approved", portfolio.approved],
+    ["Pending", portfolio.pending],
+    ["Rejected", portfolio.rejected],
+    ["Evidence Records", baseSubmissions.length],
+  ]);
+  XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
+  const projectSummaryRows = projectRows.map((row) => ({
+    "Project Name": row.project.project_name,
+    "Campaign Name": row.project.campaign_name || "",
+    "Brand": row.project.brand?.brand_name || "Multi-brand / unassigned",
+    "Project Status": row.project.status,
+    Target: row.expected,
+    Actual: row.actual,
+    Outstanding: row.outstanding,
+    "Completion %": row.completion,
+    "Start Date": row.project.start_date || "",
+    "Expected End Date": row.project.end_date || "",
+    Approved: row.approved,
+    Pending: row.pending,
+    Rejected: row.rejected,
+    "Evidence Records": row.submissions.length,
+  }));
+  const projectSummarySheet = XLSX.utils.json_to_sheet(projectSummaryRows);
+  styleSheet(projectSummarySheet, projectSummaryRows);
+  XLSX.utils.book_append_sheet(workbook, projectSummarySheet, "Project Summary");
   const sheet = XLSX.utils.json_to_sheet(rows);
   styleSheet(sheet, rows);
   addEvidenceHyperlinks(sheet, baseSubmissions, rows);

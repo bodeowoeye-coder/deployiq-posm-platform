@@ -4,7 +4,9 @@ import {
   precheckWorkspaceInvitation,
   removeWorkspaceMember,
   resendWorkspaceInvitation,
+  simulateWorkspaceInvitationAcceptance,
   teamPerformanceLog,
+  updateWorkspaceMemberAssignments,
   updateWorkspaceMemberRole,
   updateWorkspaceRolePermissions,
 } from "@/lib/workspace/team";
@@ -15,8 +17,21 @@ function statusFor(error: unknown) {
   return typeof (error as { status?: unknown })?.status === "number" ? (error as { status: number }).status : 500;
 }
 
+// Supabase returns plain PostgrestError objects, not Error instances.
 function messageFor(error: unknown) {
-  return error instanceof Error ? error.message : "Unable to process workspace team request.";
+  const message = typeof (error as { message?: unknown })?.message === "string" ? (error as { message: string }).message : "";
+  return message || "Unable to process workspace team request.";
+}
+
+function logTeamRouteError(method: string, error: unknown) {
+  const detail = error as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
+  console.error("[workspace-team-api]", {
+    method,
+    message: typeof detail?.message === "string" ? detail.message : String(error),
+    code: detail?.code ?? null,
+    details: detail?.details ?? null,
+    hint: detail?.hint ?? null,
+  });
 }
 
 export async function GET(request: Request) {
@@ -28,6 +43,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json(result);
   } catch (error) {
+    logTeamRouteError("GET", error);
     return NextResponse.json({ error: messageFor(error) }, { status: statusFor(error) });
   }
 }
@@ -43,6 +59,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(result);
   } catch (error) {
+    logTeamRouteError("POST", error);
     return NextResponse.json({ error: messageFor(error) }, { status: statusFor(error) });
   }
 }
@@ -60,7 +77,13 @@ export async function PATCH(request: Request) {
       totalElapsedMs: Math.round((performance.now() - totalStartedAt) * 10) / 10,
     });
     let result;
-    if (body.action === "change_role") {
+    if (body.action === "update_assignments") {
+      result = await updateWorkspaceMemberAssignments({
+        membershipId: typeof body.membershipId === "string" ? body.membershipId : "",
+        projectIds: Array.isArray(body.projectIds) ? body.projectIds.filter((value: unknown): value is string => typeof value === "string") : [],
+        regions: Array.isArray(body.regions) ? body.regions.filter((value: unknown): value is string => typeof value === "string") : [],
+      });
+    } else if (body.action === "change_role") {
       result = await updateWorkspaceMemberRole({
         membershipId: typeof body.membershipId === "string" ? body.membershipId : "",
         roleKey: typeof body.roleKey === "string" ? body.roleKey : "viewer",
@@ -74,6 +97,10 @@ export async function PATCH(request: Request) {
       result = await resendWorkspaceInvitation({
         membershipId: typeof body.membershipId === "string" ? body.membershipId : "",
       });
+    } else if (body.action === "simulate_invitation_acceptance") {
+      result = await simulateWorkspaceInvitationAcceptance({
+        membershipId: typeof body.membershipId === "string" ? body.membershipId : "",
+      });
     } else {
       throw Object.assign(new Error("Unsupported team action."), { status: 400 });
     }
@@ -85,6 +112,7 @@ export async function PATCH(request: Request) {
     });
     return NextResponse.json(result);
   } catch (error) {
+    logTeamRouteError("PATCH", error);
     return NextResponse.json({ error: messageFor(error) }, { status: statusFor(error) });
   }
 }
@@ -97,6 +125,7 @@ export async function DELETE(request: Request) {
     });
     return NextResponse.json(result);
   } catch (error) {
+    logTeamRouteError("DELETE", error);
     return NextResponse.json({ error: messageFor(error) }, { status: statusFor(error) });
   }
 }

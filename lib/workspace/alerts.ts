@@ -1,16 +1,37 @@
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
+import { getOperationalAlerts, getProjectOperations } from "@/lib/operations";
+import { isLegacyProvisioningPlaceholderProject, normalizeProjectRecords } from "@/lib/projects";
+import { hasValidGps } from "@/lib/reporting";
+import { isMissingDeploymentProgressTable } from "@/lib/workspace/analyticsCore";
+import type { DeploymentProgress, Project, ProjectTarget, Submission } from "@/lib/types";
 import { resolveCustomerWorkspaceContext, type CustomerWorkspaceContext } from "@/lib/workspace/customerAdmin";
 
 type Row = Record<string, unknown>;
+
+function alertTitle(type: string) {
+  const titles: Record<string, string> = {
+    low_completion: "Low completion",
+    overdue_deployment: "Overdue project",
+    rejected_deployment: "Rejected deployment",
+    stalled_project: "Stalled project",
+  };
+  return titles[type] || type.replaceAll("_", " ");
+}
 
 export type WorkspaceAlertSeverity = "High" | "Medium" | "Low";
 
 export type WorkspaceAlert = {
   id: string;
   severity: WorkspaceAlertSeverity;
+  type: string;
   title: string;
   detail: string;
   href: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  submissionId?: string | null;
+  status?: string | null;
+  createdAt?: string | null;
 };
 
 export type WorkspaceAlertsDashboard = {
@@ -23,29 +44,19 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function numberValue(value: unknown) {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
-}
-
-function isActiveProject(row: Row) {
-  const status = text(row.status).toLowerCase();
-  return !text(row.archived_at) && ["active", "in progress", "planning", "on hold", "delayed"].includes(status);
-}
-
-export async function getWorkspaceAlertsDashboard(): Promise<WorkspaceAlertsDashboard> {
+export async function getWorkspaceAlertsDashboard(projectId?: string | null): Promise<WorkspaceAlertsDashboard> {
   const workspace = await resolveCustomerWorkspaceContext();
   const supabase = createAdminSupabase();
   const [{ data: projects, error: projectsError }, { data: submissions, error: submissionsError }] = await Promise.all([
     supabase
       .from("projects")
-      .select("id,name,campaign,status,target_quantity,end_date,archived_at")
+      .select("*")
       .eq("client_id", workspace.clientId)
       .is("archived_at", null)
       .limit(500),
     supabase
       .from("submissions")
-      .select("id,project_id,status,submitted_at")
+      .select("*")
       .eq("client_id", workspace.clientId)
       .is("archived_at", null)
       .limit(5000),
@@ -60,65 +71,38 @@ export async function getWorkspaceAlertsDashboard(): Promise<WorkspaceAlertsDash
     return { workspace, alerts: [], loadError: "Alerts could not be loaded. Try refreshing this page." };
   }
 
-  const submissionRows = (submissions ?? []) as Row[];
-  const submissionsByProject = new Map<string, Row[]>();
-  for (const submission of submissionRows) {
-    const projectId = text(submission.project_id);
-    if (!projectId) continue;
-    if (!submissionsByProject.has(projectId)) submissionsByProject.set(projectId, []);
-    submissionsByProject.get(projectId)?.push(submission);
+  const projectRows = normalizeProjectRecords((projects ?? []) as Project[]).filter((project) => !isLegacyProvisioningPlaceholderProject(project) && (!projectId || project.id === projectId)) as Project[];
+  const submissionRows = ((submissions ?? []) as Submission[]).filter((submission) => !projectId || submission.project_id === projectId);
+  const projectIds = projectRows.map((project) => project.id);
+  const [{ data: targets, error: targetsError }, { data: progress, error: progressError }] = projectIds.length
+    ? await Promise.all([
+        supabase.from("project_targets").select("*").in("project_id", projectIds),
+        supabase.from("deployment_progress").select("*").in("project_id", projectIds),
+      ])
+    : [{ data: [], error: null }, { data: [], error: null }];
+  if (targetsError || (progressError && !isMissingDeploymentProgressTable(progressError))) {
+    console.warn("[workspace-alerts] optional project operations lookup failed", { targetsError: targetsError?.message, progressError: progressError?.message });
+    return { workspace, alerts: [], loadError: "Alerts could not be loaded. Try refreshing this page." };
   }
-
-  const today = new Date().toISOString().slice(0, 10);
+  const compatibleProgress = progressError && isMissingDeploymentProgressTable(progressError) ? [] : progress ?? [];
+  const projectOperations = getProjectOperations(projectRows, (targets ?? []) as ProjectTarget[], submissionRows, compatibleProgress as DeploymentProgress[]);
   const alerts: WorkspaceAlert[] = [];
-  for (const project of (projects ?? []) as Row[]) {
-    const projectId = text(project.id);
-    const projectName = text(project.name) || text(project.campaign) || "Project";
-    const projectSubmissions = submissionsByProject.get(projectId) ?? [];
-    const approved = projectSubmissions.filter((submission) => text(submission.status) === "Approved").length;
-    const pending = projectSubmissions.filter((submission) => ["Pending", "Flagged"].includes(text(submission.status))).length;
-    const rejected = projectSubmissions.filter((submission) => ["Rejected", "Correction Requested"].includes(text(submission.status))).length;
-    const target = numberValue(project.target_quantity);
-    const completion = target > 0 ? Math.round((approved / target) * 100) : 0;
-    const href = `/workspace/admin/projects/${projectId}`;
+  const projectById = new Map(projectRows.map((project) => [project.id, project]));
+  projectOperations.forEach((row) => {
+    getOperationalAlerts([row]).forEach((alert) => {
+      alerts.push({ id: `${row.project.id}-${alert.type}`, type: alert.type, severity: alert.severity === "high" ? "High" : "Medium", title: alertTitle(alert.type), detail: alert.message, href: `/workspace/admin/projects/${row.project.id}`, projectId: row.project.id, projectName: row.project.project_name });
+    });
+  });
 
-    if (isActiveProject(project) && text(project.end_date) && text(project.end_date) < today && completion < 100) {
-      alerts.push({
-        id: `${projectId}-overdue`,
-        severity: "High",
-        title: "Overdue project",
-        detail: `${projectName} is past its expected end date with ${completion}% completion.`,
-        href,
-      });
-    }
-    if (target > 0 && projectSubmissions.length > 0 && completion < 50) {
-      alerts.push({
-        id: `${projectId}-low-completion`,
-        severity: "Medium",
-        title: "Low completion",
-        detail: `${projectName} has ${approved} approved submissions against a target of ${target}.`,
-        href,
-      });
-    }
-    if (pending > 0) {
-      alerts.push({
-        id: `${projectId}-pending`,
-        severity: "Medium",
-        title: "Outstanding deployment risk",
-        detail: `${projectName} has ${pending} submissions awaiting review.`,
-        href: "/workspace/admin/submissions",
-      });
-    }
-    if (rejected > 0) {
-      alerts.push({
-        id: `${projectId}-exceptions`,
-        severity: "High",
-        title: "Project exception",
-        detail: `${projectName} has ${rejected} rejected or correction-requested submissions.`,
-        href: "/workspace/admin/submissions",
-      });
-    }
-  }
+  submissionRows.forEach((submission) => {
+    const project = submission.project_id ? projectById.get(submission.project_id) : null;
+    const projectName = project?.project_name || submission.project_name || "Project";
+    const href = "/workspace/admin/submissions";
+    if (["Pending", "Flagged"].includes(submission.status)) alerts.push({ id: `${submission.id}-review`, type: "submission_review", severity: "Medium", title: "Submission awaiting review", detail: `${projectName} has submission evidence awaiting review.`, href, projectId: project?.id ?? submission.project_id, projectName, submissionId: submission.id, status: submission.status, createdAt: submission.submitted_at });
+    if (["Rejected", "Correction Requested"].includes(submission.status)) alerts.push({ id: `${submission.id}-correction`, type: "submission_correction", severity: "High", title: submission.status === "Rejected" ? "Rejected submission" : "Correction requested", detail: `${projectName} has a ${submission.status.toLowerCase()} submission requiring attention.`, href, projectId: project?.id ?? submission.project_id, projectName, submissionId: submission.id, status: submission.status, createdAt: submission.submitted_at });
+    if (!hasValidGps(submission)) alerts.push({ id: `${submission.id}-gps`, type: "gps_exception", severity: "Medium", title: "GPS exception", detail: `${projectName} has a submission without valid GPS coordinates.`, href, projectId: project?.id ?? submission.project_id, projectName, submissionId: submission.id, status: submission.status, createdAt: submission.submitted_at });
+    if (submission.duplicate_status && submission.duplicate_status !== "Unique") alerts.push({ id: `${submission.id}-duplicate`, type: "duplicate_exception", severity: "High", title: "Duplicate submission exception", detail: `${projectName} has a ${submission.duplicate_status.toLowerCase()} evidence record.`, href, projectId: project?.id ?? submission.project_id, projectName, submissionId: submission.id, status: submission.status, createdAt: submission.submitted_at });
+  });
 
   return { workspace, alerts, loadError: null };
 }

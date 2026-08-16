@@ -131,7 +131,7 @@ test("deployment execution: approval rejection and correction workflow are suppo
 test("deployment execution: workspace submissions loader uses runtime-safe columns and preserves KPI integrity", () => {
   const source = service();
   const page = readFileSync(new URL("../app/workspace/admin/submissions/page.tsx", import.meta.url), "utf8");
-  const loader = source.match(/export async function getWorkspaceDeploymentSubmissions\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  const loader = source.match(/export async function getWorkspaceDeploymentSubmissions\([^)]*\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.doesNotMatch(loader, /selected_outlet_state/);
   assert.match(loader, /resolved_state,installer_state,state_region/);
   assert.match(loader, /\.eq\("client_id", workspace\.clientId\)/);

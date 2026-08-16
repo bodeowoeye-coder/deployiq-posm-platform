@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function InstallersPage({
   searchParams,
 }: {
-  searchParams?: { search?: string; agency?: string; status?: string; state?: string; sort?: string; page?: string };
+  searchParams?: { projectId?: string; search?: string; agency?: string; status?: string; state?: string; sort?: string; page?: string };
 }) {
   try {
     const dashboard = await getInstallerDashboard({ ...searchParams, page: Number(searchParams?.page ?? 1) });

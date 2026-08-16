@@ -134,7 +134,8 @@ test("workspace admin: browser-supplied client or workspace id cannot override s
   const resolver = readFileSync(new URL("../lib/workspace/customerAdmin.ts", import.meta.url), "utf8");
   const page = readFileSync(new URL("../app/workspace/admin/page.tsx", import.meta.url), "utf8");
   assert.match(resolver, /authContext\.role\.client_id/);
-  assert.doesNotMatch(page, /searchParams/);
+  assert.match(page, /searchParams/);
+  assert.doesNotMatch(page, /client_id|workspace_id|tenant_id/);
 });
 
 test("workspace admin: client viewer is not upgraded automatically", () => {
@@ -278,7 +279,7 @@ test("workspace admin: valid Customer Admin can open Submissions without false a
   assert.doesNotMatch(service.match(/async function resolveCustomerAdminContext\(\)[\s\S]*?\n\}/)?.[0] ?? "", /Customer workspace access is required|status:\s*401/);
   assert.doesNotMatch(service, /selected_outlet_state/);
   assert.match(service, /resolved_state,installer_state,state_region/);
-  assert.match(reporting, /const state = item\.installer_state \|\| "Unknown"/);
+  assert.match(reporting, /const state = item\.resolved_state \|\| item\.installer_state \|\| item\.state_region \|\| "Unknown"/);
   assert.match(service, /location_state: text\(row\.resolved_state\) \|\| text\(row\.installer_state\) \|\| text\(row\.state_region\) \|\| null/);
   assert.match(service, /\.eq\("client_id", workspace\.clientId\)/);
   assert.doesNotMatch(service.match(/export async function getWorkspaceDeploymentSubmissions\(\)[\s\S]*?limit\(500\);/)?.[0] ?? "", /\.eq\("workspace_id", workspace\.clientId\)/);
@@ -301,12 +302,32 @@ test("workspace admin: valid Customer Admin can open Submissions without false a
   assert.doesNotMatch(client, /Please correct and resubmit this deployment/);
 });
 
+test("workspace admin: invitation failure exits the loading state with visible error feedback", () => {
+  const client = readFileSync(new URL("../components/workspace/WorkspaceTeamClient.tsx", import.meta.url), "utf8");
+  assert.match(client, /if \(!body\)/);
+  assert.match(client, /setActionState\("error"\)/);
+  assert.match(client, /Unable to process workspace team request/);
+  assert.match(client, /The invitation could not be created/);
+});
+
+test("workspace admin: invitation pipeline recovers partial Auth identities and preserves installer role", () => {
+  const service = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
+  assert.match(service, /existingAuthUserByEmail/);
+  assert.match(service, /Reuse Auth identity and generate link/);
+  assert.match(service, /from\("user_profiles"\)\.update/);
+  assert.match(service, /from\("workspace_memberships"\)\.update/);
+  assert.match(service, /role\.technicalRoleKey/);
+  assert.match(service, /status: "invited"/);
+});
+
 test("workspace admin: Approval Workflow configuration persists to workspace settings without new schema", () => {
   const page = readFileSync(new URL("../app/workspace/admin/approval-workflow/page.tsx", import.meta.url), "utf8");
   const client = readFileSync(new URL("../components/workspace/ApprovalWorkflowClient.tsx", import.meta.url), "utf8");
   const service = readFileSync(new URL("../lib/workspace/approvalWorkflow.ts", import.meta.url), "utf8");
+  const permissionModel = readFileSync(new URL("../lib/workspace/customerAdminModel.ts", import.meta.url), "utf8");
   const route = readFileSync(new URL("../app/api/workspace/approval-workflow/route.ts", import.meta.url), "utf8");
-  assert.match(page, /APPROVAL WORKFLOW/);
+  assert.match(page, /Approval Workflow/);
+  assert.match(page, /Workspace Settings/);
   assert.match(page, /Configure how deployment submissions are reviewed, corrected and approved within this workspace\./);
   assert.match(route, /getApprovalWorkflowDashboard/);
   assert.match(route, /saveApprovalWorkflow/);
@@ -314,7 +335,8 @@ test("workspace admin: Approval Workflow configuration persists to workspace set
   assert.match(service, /approvalWorkflow/);
   assert.match(service, /workspace_onboarding_checklist_items/);
   assert.match(service, /item_key", "configure_approval_workflow"/);
-  assert.match(service, /settings\.manage/);
+  assert.match(service, /hasWorkspaceSettingsPermission/);
+  assert.match(permissionModel, /settings\.manage/);
   assert.match(service, /submissions\.review/);
   assert.match(service, /role\.appRole !== "installer"/);
   assert.doesNotMatch(service, /create table|alter table|migration/i);
@@ -326,41 +348,101 @@ test("workspace admin: Approval Workflow configuration persists to workspace set
 test("workspace admin: Alerts is tenant-scoped and available in main navigation", () => {
   const page = readFileSync(new URL("../app/workspace/admin/alerts/page.tsx", import.meta.url), "utf8");
   const service = readFileSync(new URL("../lib/workspace/alerts.ts", import.meta.url), "utf8");
+  const operations = readFileSync(new URL("../lib/operations.ts", import.meta.url), "utf8");
   const shell = readFileSync(new URL("../components/workspace/CustomerWorkspaceShell.tsx", import.meta.url), "utf8");
   assert.match(page, /getWorkspaceAlertsDashboard/);
   assert.match(page, /Alerts/);
   assert.match(service, /resolveCustomerWorkspaceContext/);
   assert.match(service, /\.from\("projects"\)[\s\S]*\.eq\("client_id", workspace\.clientId\)/);
   assert.match(service, /\.from\("submissions"\)[\s\S]*\.eq\("client_id", workspace\.clientId\)/);
-  assert.match(service, /Overdue project|Low completion|Outstanding deployment risk|Project exception/);
+  assert.match(service, /getOperationalAlerts/);
+  assert.match(operations, /overdue_deployment|low_completion|rejected_deployment/);
   assert.match(shell, /Alerts: "Review tenant-scoped project and deployment exceptions\."/);
   assert.doesNotMatch(service, /from\("clients"\)|Commercial Pricing|Core Admin/);
 });
 
-test("workspace admin: team drawer shows read-only tenant-scoped field assignments", () => {
+test("workspace admin: approval workflow page uses title case hierarchy", () => {
+  const page = readFileSync(new URL("../app/workspace/admin/approval-workflow/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /Workspace Settings/);
+  assert.match(page, /<h2 className="mt-2 text-2xl font-bold">Approval Workflow<\/h2>/);
+});
+
+test("workspace admin: team drawer manages tenant-scoped field assignments", () => {
   const service = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
   const client = readFileSync(new URL("../components/workspace/WorkspaceTeamClient.tsx", import.meta.url), "utf8");
+  const route = readFileSync(new URL("../app/api/workspace/team/route.ts", import.meta.url), "utf8");
   assert.match(service, /FIELD_ASSIGNMENT_ROLE_KEYS/);
   assert.match(service, /\.from\("workspace_field_assignments"\)/);
   assert.match(service, /\.eq\("client_id", workspace\.clientId\)/);
   assert.match(service, /\.eq\("workspace_id", workspace\.clientId\)/);
   assert.match(service, /\.from\("projects"\)[\s\S]*\.eq\("client_id", workspace\.clientId\)/);
-  assert.match(service, /assignedProjectNames: assignmentSummary\.assignedProjectNames/);
+  assert.match(service, /export async function updateWorkspaceMemberAssignments/);
+  assert.match(service, /One or more selected projects are outside this workspace\./);
   assert.match(service, /showsAssignedProjects: FIELD_ASSIGNMENT_ROLE_KEYS\.has\(role\.key\)/);
+  assert.match(route, /action === "update_assignments"/);
   assert.match(client, /Assigned Projects/);
   assert.match(client, /Assigned Regions/);
-  assert.doesNotMatch(client, /Manage field assignments/);
+  assert.match(client, /Resource assignments/);
+  assert.match(client, /action: "update_assignments"/);
   assert.doesNotMatch(client, /href="\/workspace\/admin\/installers"/);
-  assert.doesNotMatch(client, /action: "assign_project"|assignedProjectIds|workspace_field_assignments/);
+});
+
+test("workspace admin: invited profiles use a status allowed by the user_profiles check constraint", () => {
+  const service = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
+  const route = readFileSync(new URL("../app/api/workspace/team/route.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(service, /status: "Invited"/);
+  assert.match(service, /const PENDING_INVITE_PROFILE_STATUS = "(Active|Inactive)"/);
+  // Supabase errors are plain objects, so the route must not gate messages on `instanceof Error`.
+  assert.doesNotMatch(route, /error instanceof Error \? error\.message/);
+  assert.match(route, /logTeamRouteError/);
+});
+
+test("workspace admin: test invitation acceptance is gated and reuses canonical activation", () => {
+  const service = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
+  const route = readFileSync(new URL("../app/api/workspace/team/route.ts", import.meta.url), "utf8");
+  const client = readFileSync(new URL("../components/workspace/WorkspaceTeamClient.tsx", import.meta.url), "utf8");
+  const sessionRoute = readFileSync(new URL("../app/api/auth/session/route.ts", import.meta.url), "utf8");
+
+  // Non-production runtime AND an explicit opt-in flag are both required.
+  assert.match(service, /export function testInvitationAcceptanceEnabled/);
+  assert.match(service, /VERCEL_ENV === "production" \|\| process\.env\.DEPLOYIQ_RUNTIME_ENV === "production" \|\| process\.env\.NODE_ENV === "production"/);
+  assert.match(service, /DEPLOYIQ_ENABLE_TEST_INVITATION_ACCEPTANCE === "1"/);
+  assert.match(service, /if \(!testInvitationAcceptanceEnabled\(\)\)[\s\S]{0,160}status: 404/);
+
+  // Tenant checks are not bypassed.
+  assert.match(service, /export async function simulateWorkspaceInvitationAcceptance[\s\S]{0,600}assertCanManage\(workspace\)/);
+  assert.match(service, /export async function simulateWorkspaceInvitationAcceptance[\s\S]{0,900}\.eq\("client_id", workspace\.clientId\)/);
+  assert.match(service, /Only a pending invitation can be activated\./);
+
+  // One activation model: the simulation delegates to the same function real acceptance uses.
+  assert.match(service, /export async function simulateWorkspaceInvitationAcceptance[\s\S]{0,1200}await acceptWorkspaceInvitations\(text\(membership\.user_id\), workspace\.clientId\)/);
+  assert.match(sessionRoute, /acceptWorkspaceInvitations\(data\.user\.id\)/);
+  assert.doesNotMatch(service, /simulateWorkspaceInvitationAcceptance[\s\S]{0,900}\.update\(\{ status: "active"/);
+
+  // Acceptance performs the related transitions eligibility depends on.
+  assert.match(service, /status: "Active", updated_at: new Date\(\)\.toISOString\(\) \}\)\.eq\("user_id", userId\)/);
+  assert.match(service, /role_key\) === "installer"[\s\S]{0,240}provisionInstallerForWorkspaceMember/);
+
+  assert.match(route, /action === "simulate_invitation_acceptance"/);
+  // Status stays system-controlled: no generic status editor in User Management.
+  assert.doesNotMatch(route, /action === "change_status"/);
+  assert.doesNotMatch(client, /name="status"|Edit Status/);
+  // The action is hidden unless the server reports test mode.
+  assert.match(client, /dashboard\.testInvitationAcceptanceEnabled && member\.status === "Pending Invitation"/);
+  assert.match(client, /Activate test invitation/);
+  assert.match(client, /Test mode only/);
 });
 
 test("workspace admin: Platform Admin remains separate from Customer Admin", () => {
   const workspacePage = readFileSync(new URL("../app/workspace/admin/page.tsx", import.meta.url), "utf8");
   const shell = readFileSync(new URL("../components/workspace/CustomerWorkspaceShell.tsx", import.meta.url), "utf8");
   const platformPage = readFileSync(new URL("../app/admin/page.tsx", import.meta.url), "utf8");
+  const legacyOperations = readFileSync(new URL("../app/admin/operations/page.tsx", import.meta.url), "utf8");
   assert.match(shell, /DeployIQ Admin Workspace/);
   assert.doesNotMatch(workspacePage, /requireRole\("admin"\)/);
-  assert.match(platformPage, /AdminRoutePage/);
+  // /admin is the platform dashboard; the legacy operational dashboard is retained separately.
+  assert.match(platformPage, /requireRole\(\["admin"\], "\/admin"\)/);
+  assert.match(legacyOperations, /AdminRoutePage/);
   assert.doesNotMatch(platformPage, /resolveCustomerWorkspaceContext/);
 });
 
@@ -403,8 +485,14 @@ test("workspace admin: shell keeps workspace identity compact in the header", ()
   assert.match(header, /workspace\.customerId/);
   assert.match(header, /workspace\.productName/);
   assert.match(header, /workspace-identity-static/);
-  assert.match(header, /Account Settings/);
-  assert.match(header, /CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS\.map/);
+  const headerControls = header.match(/<div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">[\s\S]*?<\/div>\n            <\/div>/)?.[0] ?? "";
+  assert.doesNotMatch(headerControls, /Account Settings/);
+  assert.doesNotMatch(headerControls, /CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS\.map/);
+  assert.match(sidebar, /Secondary administration/);
+  assert.match(sidebar, /Account Settings/);
+  assert.match(sidebar, /CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS\.map/);
+  assert.match(shell, /operationalNavigation\.has\(item\.href\)/);
+  assert.match(shell, /selectedProjectId/);
   assert.doesNotMatch(header, /<details|<summary|workspace-menu/);
   assert.doesNotMatch(header, /href="\/workspace\/admin\/profile"/);
   assert.doesNotMatch(header, /href="\/workspace\/admin\/workspace-settings\/security"/);
@@ -491,7 +579,7 @@ test("workspace admin: profile route is authenticated and uses the shared worksp
   assert.match(activation, /\/login\/create-password/);
 });
 
-test("workspace admin: header controls are ordered with Settings before identity and Sign Out last", () => {
+test("workspace admin: header controls keep operations, identity and Sign Out while Account Settings stays in sidebar", () => {
   const shell = readFileSync(new URL("../components/workspace/CustomerWorkspaceShell.tsx", import.meta.url), "utf8");
   const controls = shell.match(/<div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">[\s\S]*?<\/div>\n            <\/div>/)?.[0] ?? "";
   const searchIndex = controls.indexOf("Search workspace");
@@ -499,17 +587,19 @@ test("workspace admin: header controls are ordered with Settings before identity
   const helpIndex = controls.indexOf('aria-label="Help"');
   const themeIndex = controls.indexOf("toggleQuickTheme");
   const settingsIndex = controls.indexOf('aria-label="Settings"');
-  const accountSettingsIndex = controls.indexOf("Account Settings");
   const identityIndex = controls.indexOf('aria-label="Workspace identity"');
   const lastSignOutIndex = controls.lastIndexOf("SignOutButton");
   assert.ok(searchIndex >= 0);
   assert.ok(notificationsIndex > searchIndex);
   assert.ok(helpIndex > notificationsIndex);
   assert.ok(themeIndex > helpIndex);
-  assert.ok(accountSettingsIndex > themeIndex);
   assert.equal(settingsIndex, -1);
-  assert.ok(identityIndex > accountSettingsIndex);
+  assert.ok(identityIndex > themeIndex);
   assert.ok(lastSignOutIndex > identityIndex);
+  assert.doesNotMatch(controls, /Account Settings/);
+  const sidebar = shell.match(/<aside[\s\S]*?<\/aside>/)?.[0] ?? "";
+  assert.match(sidebar, /Secondary administration/);
+  assert.match(sidebar, /Account Settings/);
   assert.doesNotMatch(controls, /aria-label="User profile"|aria-label="Settings menu"/);
 });
 
@@ -536,8 +626,9 @@ test("workspace admin: workspace identity is static and Sign Out remains far rig
   assert.match(identity, /workspace\.branding\.organisationDisplayName/);
   assert.match(identity, /workspace\.customerId/);
   assert.doesNotMatch(identity, /<details|<summary|ChevronDown|workspace-menu|href=/);
-  assert.match(header, /Account Settings/);
-  assert.doesNotMatch(header, /Account & Security|aria-label="User profile"|aria-label="Settings menu"/);
+  const headerControls = header.match(/<div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">[\s\S]*?<\/div>\n            <\/div>/)?.[0] ?? "";
+  assert.doesNotMatch(headerControls, /Account Settings|Account & Security|aria-label="User profile"|aria-label="Settings menu"/);
+  assert.match(shell.match(/<aside[\s\S]*?<\/aside>/)?.[0] ?? "", /Account Settings/);
   assert.equal((header.match(/SignOutButton/g) ?? []).length, 1);
   assert.doesNotMatch(shell, /href="\/client"|href="\/admin"|href="\/login\/create-password/);
 });
@@ -736,7 +827,7 @@ test("workspace admin: required workspace lookup matches the Retail foundation s
     assert.match(migration, new RegExp(`${column} `));
   }
   assert.match(resolver, /const workspaceName = text\(settings\?\.workspace_display_name\) \|\| organisationName/);
-  assert.match(resolver, /const organisationName = text\(organisation\?\.name\) \|\| authContext\.client\.name/);
+  assert.match(resolver, /const organisationName = text\(organisation\?\.name\) \|\| text\(authContext\.client\?\.name\)/);
   assert.doesNotMatch(migration, /workspace_name text|workspace_status text|plan_name text|pricing_template_name text/);
   assert.doesNotMatch(resolver, /settings\?\.workspace_name|settings\?\.workspace_status|entitlement\?\.product_name|entitlement\?\.plan_name|entitlement\?\.pricing_template_name/);
 });

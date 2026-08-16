@@ -6,6 +6,8 @@ import {
   CustomerWorkspaceTransientError,
   requireCustomerWorkspace,
 } from "@/lib/workspace/customerAdmin";
+import { getCustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
+import { workspaceNotificationsEnabled } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -38,5 +40,7 @@ export default async function CustomerWorkspaceAdminLayout({ children }: { child
     throw error;
   }
 
-  return <CustomerWorkspaceShell workspace={workspace}>{children}</CustomerWorkspaceShell>;
+  const projectScope = await getCustomerWorkspaceProjectScope(workspace);
+  const notificationEnabled = await workspaceNotificationsEnabled(workspace);
+  return <CustomerWorkspaceShell workspace={workspace} projectScope={projectScope} notificationEnabled={notificationEnabled}>{children}</CustomerWorkspaceShell>;
 }

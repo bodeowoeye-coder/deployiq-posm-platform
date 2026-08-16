@@ -5,10 +5,10 @@ import { getWorkspaceDeploymentSubmissions } from "@/lib/workspace/deploymentExe
 
 export const dynamic = "force-dynamic";
 
-export default async function WorkspaceSubmissionsPage() {
+export default async function WorkspaceSubmissionsPage({ searchParams }: { searchParams?: { projectId?: string } }) {
   let dashboard;
   try {
-    dashboard = await getWorkspaceDeploymentSubmissions();
+    dashboard = await getWorkspaceDeploymentSubmissions({ projectId: searchParams?.projectId });
   } catch (error) {
     if (error instanceof CustomerWorkspaceRedirect) redirect(error.redirectTo);
     throw error;

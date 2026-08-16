@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BrandMark } from "@/components/BrandMark";
 
 type ErrorProps = {
   error: Error & {
@@ -42,23 +43,25 @@ export default function Error({ error }: ErrorProps) {
   }, [isChunkLoadError]);
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-2xl rounded-3xl border border-slate-700 bg-slate-900/95 p-8 shadow-2xl">
-        <h1 className="text-3xl font-semibold">{isRecoveringChunk ? "Refreshing app..." : "Something went wrong"}</h1>
-        <p className="mt-3 text-sm text-slate-400">
+    <main className="min-h-screen bg-slate-50 text-slate-950 flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-8 shadow-xl">
+        <BrandMark />
+        <p className="mt-8 text-xs font-semibold uppercase tracking-widest text-orange-600">DeployIQ</p>
+        <h1 className="mt-2 text-3xl font-semibold">{isRecoveringChunk ? "Refreshing DeployIQ..." : "DeployIQ needs a moment"}</h1>
+        <p className="mt-3 text-sm text-slate-600">
           {isRecoveringChunk
             ? "A stale app file was detected. DeployIQ is refreshing this page once."
             : "The app encountered an error while loading. Please try again or return to the login screen."}
         </p>
-        <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950 p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Error details</p>
-          <pre className="mt-2 max-h-40 overflow-auto text-xs leading-5 text-slate-200">{error.message}</pre>
+        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Details</p>
+          <pre className="mt-2 max-h-40 overflow-auto text-xs leading-5 text-slate-700">{error.message}</pre>
         </div>
         <div className="mt-8 flex flex-wrap gap-3">
-          <a href="/login" className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100">
+          <a href="/login" className="inline-flex items-center justify-center rounded-lg bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800">
             Go to Login
           </a>
-          <a href="/" className="inline-flex items-center justify-center rounded-xl border border-slate-700 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:border-slate-500">
+          <a href="/" className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-orange-300 hover:bg-orange-50">
             Go to Home
           </a>
         </div>

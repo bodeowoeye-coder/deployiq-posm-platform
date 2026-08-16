@@ -21,8 +21,8 @@ export function PricingStudio({ currentUserEmail }: Props) {
               className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-300"
             >
               <ArrowLeft className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span className="hidden sm:inline">Admin Dashboard</span>
-              <span className="sm:hidden">Admin</span>
+              <span className="hidden sm:inline">Platform Dashboard</span>
+              <span className="sm:hidden">Platform</span>
             </Link>
             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" aria-hidden="true" />
             <span className="hidden text-slate-400 sm:inline">Commercial</span>

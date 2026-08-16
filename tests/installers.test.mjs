@@ -26,14 +26,55 @@ test("installers: list create and detail routes stay inside Customer Workspace",
 
 test("installers: compatibility lifecycle services are retained without active registration UX", () => {
   const source = service();
-  const ui = client() + form();
-  assert.match(source, /Installer name is required\./);
-  assert.match(source, /Installer phone is required\./);
   assert.match(source, /action === "deactivate"/);
   assert.match(source, /action === "archive"/);
   assert.match(source, /action === "restore"/);
   assert.doesNotMatch(client(), /Create Installer|>Deactivate<|>Archive<|>Restore</);
   assert.match(newPage(), /redirect\("\/workspace\/admin\/team"\)/);
+});
+
+test("installers: User Management is the only installer creation entry point", () => {
+  const source = service();
+  const workspaceRoute = readFileSync(new URL("../app/api/workspace/installers/route.ts", import.meta.url), "utf8");
+  const legacyRoute = readFileSync(new URL("../app/api/installers/route.ts", import.meta.url), "utf8");
+  const team = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
+  assert.match(source, /INSTALLER_CREATION_MOVED_MESSAGE/);
+  assert.match(source, /Account Settings . User Management/);
+  assert.match(source, /function rejectDirectInstallerCreation\(\): never/);
+  assert.match(source, /export async function createInstaller[\s\S]{0,160}rejectDirectInstallerCreation\(\)/);
+  assert.match(source, /export async function commitWorkspaceInstallerImport[\s\S]{0,320}INSTALLER_CREATION_MOVED_MESSAGE/);
+  assert.match(legacyRoute, /INSTALLER_CREATION_MOVED_MESSAGE/);
+  assert.doesNotMatch(legacyRoute, /\.from\("installers"\)\s*\.insert\(/);
+  // Invites from User Management provision the linked installer identity.
+  assert.match(team, /provisionInstallerForWorkspaceMember/);
+  assert.match(source, /export async function provisionInstallerForWorkspaceMember/);
+  assert.match(workspaceRoute, /createInstaller/);
+});
+
+test("installers: assignability requires an accepted invitation in the same tenant", () => {
+  const source = service();
+  const team = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
+  const sessionRoute = readFileSync(new URL("../app/api/auth/session/route.ts", import.meta.url), "utf8");
+  const newProject = readFileSync(new URL("../app/workspace/admin/projects/new/page.tsx", import.meta.url), "utf8");
+  const editProject = readFileSync(new URL("../app/workspace/admin/projects/[id]/edit/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /function installerEligibility/);
+  assert.match(source, /Legacy record created outside User Management/);
+  assert.match(source, /Invitation pending/);
+  assert.match(source, /export async function getAssignableInstallers/);
+  // Eligibility is membership-scoped to the current tenant.
+  assert.match(source, /\.from\("workspace_memberships"\)[\s\S]{0,200}\.eq\("client_id", clientId\)/);
+  // Create and Edit Project may only offer eligible installers.
+  assert.match(newProject, /getAssignableInstallers\(\)/);
+  assert.match(editProject, /getAssignableInstallers\(\[result\.resources\?\.installerId\]\)/);
+  assert.doesNotMatch(newProject, /getInstallerDashboard/);
+  assert.doesNotMatch(editProject, /getInstallerDashboard/);
+  // Field assignment persistence enforces the same rule server-side.
+  assert.match(source, /if \(!eligibility\.assignable\) throw Object\.assign\(new Error\(eligibility\.reason\)/);
+  // Acceptance flips membership to active.
+  assert.match(team, /export async function acceptWorkspaceInvitations/);
+  assert.match(team, /\.eq\("status", "invited"\)/);
+  assert.match(sessionRoute, /acceptWorkspaceInvitations\(data\.user\.id\)/);
 });
 
 test("installers: bulk import compatibility is retained without active analytics UX", () => {
@@ -42,8 +83,7 @@ test("installers: bulk import compatibility is retained without active analytics
   assert.match(source, /previewInstallerImport/);
   assert.match(source, /Duplicate phone\./);
   assert.match(source, /Duplicate email\./);
-  assert.match(source, /Resolve duplicate or invalid installer records before importing\./);
-  assert.doesNotMatch(client(), /Download Template|Preview Import|Import Installers|Resolve duplicate or invalid installer records before importing\./);
+  assert.doesNotMatch(client(), /Download Template|Preview Import|Import Installers/);
 });
 
 test("installers: assignment engine prevents duplicates and enforces tenant relationships", () => {
@@ -76,18 +116,16 @@ test("installers: campaign readiness includes real field assignments", () => {
   assert.match(campaigns, /Team assignment available/);
 });
 
-test("installers: Project Review Edit reads current assignments without duplicating assignment writes", () => {
+test("installers: Project Review Edit uses canonical tenant-scoped resource selectors", () => {
   const projects = readFileSync(new URL("../lib/workspace/projects.ts", import.meta.url), "utf8");
   const form = readFileSync(new URL("../components/workspace/ProjectCreateWizard.tsx", import.meta.url), "utf8");
-  assert.match(projects, /\.from\("workspace_field_assignments"\)/);
   assert.match(projects, /\.eq\("client_id", resolvedWorkspace\.clientId\)/);
-  assert.match(projects, /\.eq\("workspace_id", workspace\.clientId\)/);
-  assert.match(projects, /\.eq\("project_id", projectId\)/);
+  assert.match(projects, /\.eq\("client_id", workspace\.clientId\)/);
   assert.match(projects, /\.from\("agencies"\)\.select\("id,agency_name"\)/);
   assert.match(projects, /\.from\("installers"\)\.select\("id,installer_name"\)/);
-  assert.doesNotMatch(projects.match(/export async function getCustomerProject[\s\S]*?return \{/)?.[0] ?? "", /\.insert\(|\.upsert\(|assignFieldResources/);
-  assert.match(form, /resources\?\.agencyName/);
-  assert.match(form, /resources\?\.leadInstallerName/);
+  assert.match(projects, /persistProjectConfiguration/);
+  assert.match(form, /name="agencyId"/);
+  assert.match(form, /name="installerId"/);
   assert.match(form, /No agency assigned/);
   assert.match(form, /No lead installer assigned/);
 });
