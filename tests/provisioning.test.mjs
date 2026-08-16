@@ -329,13 +329,15 @@ test("provisioning: activation notification derives server fields and stores no 
 
 test("provisioning: workspace-ready delivery is one-shot and safe without provider", () => {
   const service = readFileSync(new URL("../lib/acquisition/provisioning/activationNotifications.ts", import.meta.url), "utf8");
+  const email = readFileSync(new URL("../lib/transactionalEmail.ts", import.meta.url), "utf8");
   const provisioning = readFileSync(new URL("../lib/acquisition/provisioning/service.ts", import.meta.url), "utf8");
   assert.match(provisioning, /safelyDeliverWorkspaceReadyNotifications\(job\)/);
   assert.match(service, /\.neq\("status", "sent"\)/);
   assert.match(service, /status: "sent"/);
   assert.match(service, /sent_at: new Date\(\)\.toISOString\(\)/);
-  assert.match(service, /email_provider_not_configured/);
-  assert.match(service, /workspace_ready_email_delivery_failed/);
+  assert.match(email, /email_provider_not_configured/);
+  assert.match(service, /failure_reason_safe: delivery\.failureCode/);
+  assert.match(email, /email_delivery_failed/);
   assert.match(service, /development_simulated/);
 });
 

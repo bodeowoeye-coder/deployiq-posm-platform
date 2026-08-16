@@ -3,19 +3,22 @@ import { randomInt, createHash } from "crypto";
 import { getOnboardingDraftByToken, updateOnboardingDraft } from "@/lib/commercial/onboarding/service";
 import { isOTPExpired, OTP_VALIDITY_MINUTES, OTP_RESEND_COOLDOWN_SECONDS } from "@/lib/acquisition/identity";
 import {
-  createOrRestoreTestIdentityAccount,
+  createOrRestoreIdentityAccount,
   decryptOnboardingPassword,
+  generateIdentityPasswordSetupLink,
   generateTemporaryAccountPassword,
 } from "@/lib/acquisition/testIdentitySession";
+import { deployiqAppUrl, isProductionEmailRuntime, sendTransactionalEmail } from "@/lib/transactionalEmail";
+import { buildOnboardingAccountSetupEmail, buildOnboardingOtpEmail } from "@/lib/acquisition/onboardingIdentityEmail";
 
 const MAX_OTP_ATTEMPTS = 5;
 
 function isProductionRuntime() {
-  return process.env.VERCEL_ENV === "production" || process.env.DEPLOYIQ_RUNTIME_ENV === "production";
+  return isProductionEmailRuntime();
 }
 
 function canUseDevelopmentCredentialDelivery() {
-  return !isProductionRuntime();
+  return process.env.NODE_ENV === "development" && !isProductionRuntime();
 }
 
 function generateOTP(): string {
@@ -69,17 +72,55 @@ export async function POST(request: Request) {
         ...draft.draft_data,
         otpHash,
         otpExpiresAt: expiresAt,
-        otpSentAt: new Date().toISOString(),
+        otpSentAt: null,
         otpFailedAttempts: 0,
         emailVerified: false,
+        otpDeliveryStatus: "sending",
+        otpDeliveryFailure: null,
       },
     });
 
-    // TODO CO-1B: Integrate email service to send the OTP to `email`.
-    // For now, the OTP is returned in development mode only for testing.
-    const isDev = process.env.NODE_ENV === "development";
+    const delivery = await sendTransactionalEmail(buildOnboardingOtpEmail({ email, otp, expiresInMinutes: OTP_VALIDITY_MINUTES }));
+    if (!delivery.ok) {
+      await updateOnboardingDraft({
+        resumeToken: draftToken,
+        currentStep: "account",
+        status: "account_pending",
+        draftData: {
+          ...draft.draft_data,
+          otpHash: null,
+          otpExpiresAt: null,
+          otpSentAt: null,
+          otpFailedAttempts: 0,
+          emailVerified: false,
+          otpDeliveryStatus: "failed",
+          otpDeliveryFailure: delivery.failureCode,
+        },
+      });
+      console.error("[identity-verify] Verification delivery failed", { draftId: draft.id, deliveryMode: delivery.deliveryMode, failureCode: delivery.failureCode });
+      return NextResponse.json({ error: "We could not send your verification code. Please try again.", code: "otp_delivery_failed" }, { status: 503 });
+    }
+
+    const sentAt = new Date().toISOString();
+    await updateOnboardingDraft({
+      resumeToken: draftToken,
+      currentStep: "account",
+      status: "account_pending",
+      draftData: {
+        ...draft.draft_data,
+        otpHash,
+        otpExpiresAt: expiresAt,
+        otpSentAt: sentAt,
+        otpFailedAttempts: 0,
+        emailVerified: false,
+        otpDeliveryStatus: "sent",
+        otpDeliveryFailure: null,
+      },
+    });
+
+    const isDev = canUseDevelopmentCredentialDelivery();
     if (isDev) {
-      console.info("[CO-1B verify DEV] OTP generated for test response.", { email, expiresAt });
+      console.info("[CO-1B verify DEV] Verification code generated for test response.", { email, expiresAt });
     }
 
     return NextResponse.json({
@@ -157,8 +198,8 @@ export async function PUT(request: Request) {
     }
     const generatedTemporaryPassword = passwordMethod === "generated" ? generateTemporaryAccountPassword() : null;
 
-    const testIdentity = canUseDevelopmentCredentialDelivery() && adminEmail
-      ? await createOrRestoreTestIdentityAccount({
+    const identity = adminEmail
+      ? await createOrRestoreIdentityAccount({
           email: adminEmail,
           fullName: adminName,
           phone: typeof draft.draft_data.adminMobile === "string" ? draft.draft_data.adminMobile : null,
@@ -169,59 +210,78 @@ export async function PUT(request: Request) {
       : null;
     if (
       passwordMethod === "generated"
-      && testIdentity?.passwordApplied === true
+      && identity?.passwordApplied === true
       && (
-        testIdentity.accountSecurity.passwordMethod !== "generated"
-        || testIdentity.accountSecurity.passwordChangeRequired !== true
-        || testIdentity.accountSecurity.firstLoginCompleted !== false
-        || testIdentity.emailConfirmed !== true
+        identity.accountSecurity.passwordMethod !== "generated"
+        || identity.accountSecurity.passwordChangeRequired !== true
+        || identity.accountSecurity.firstLoginCompleted !== false
+        || identity.emailConfirmed !== true
       )
     ) {
       console.error("[identity-verify] generated credential persistence check failed", {
         draftId: draft.id,
         email: adminEmail,
-        authUserId: testIdentity.userId,
-        passwordMethod: testIdentity.accountSecurity.passwordMethod,
-        passwordChangeRequired: testIdentity.accountSecurity.passwordChangeRequired,
-        firstLoginCompleted: testIdentity.accountSecurity.firstLoginCompleted,
-        emailConfirmed: testIdentity.emailConfirmed,
+        authUserId: identity.userId,
+        passwordMethod: identity.accountSecurity.passwordMethod,
+        passwordChangeRequired: identity.accountSecurity.passwordChangeRequired,
+        firstLoginCompleted: identity.accountSecurity.firstLoginCompleted,
       });
       return NextResponse.json({ error: "Account security setup did not complete. Please request a new verification code." }, { status: 500 });
     }
+    let setupEmailSent = false;
+    if (passwordMethod === "generated" && identity?.passwordApplied === true && adminEmail && !canUseDevelopmentCredentialDelivery()) {
+      let setupLink: string;
+      try {
+        setupLink = await generateIdentityPasswordSetupLink(
+          adminEmail,
+          `${deployiqAppUrl()}/login/create-password?returnTo=${encodeURIComponent("/onboarding")}`,
+        );
+      } catch {
+        console.error("[identity-verify] account setup link generation failed", { draftId: draft.id, authUserId: identity.userId });
+        return NextResponse.json({ error: "We could not prepare your secure account setup. Please try again.", code: "account_setup_unavailable" }, { status: 503 });
+      }
+      const setupDelivery = await sendTransactionalEmail(buildOnboardingAccountSetupEmail({ email: adminEmail, setupLink }));
+      if (!setupDelivery.ok) {
+        console.error("[identity-verify] account setup delivery failed", { draftId: draft.id, authUserId: identity.userId, deliveryMode: setupDelivery.deliveryMode, failureCode: setupDelivery.failureCode });
+        return NextResponse.json({ error: "We could not send your secure account setup link. Please try again.", code: "account_setup_delivery_failed" }, { status: 503 });
+      }
+      setupEmailSent = true;
+    }
     if (adminEmail) {
-      console.info("[identity-verify] OTP confirmed", {
+      console.info("[identity-verify] Email verification confirmed", {
         draftId: draft.id,
         email: adminEmail,
-        authUserId: testIdentity?.userId ?? null,
-        authUserLinked: Boolean(testIdentity?.userId),
+        authUserId: identity?.userId ?? null,
+        authUserLinked: Boolean(identity?.userId),
         passwordMethod,
-        passwordApplied: testIdentity?.passwordApplied ?? false,
-        existingAccountAuthRequired: testIdentity?.existingAccountAuthRequired ?? false,
-        passwordChangeRequired: testIdentity?.accountSecurity.passwordChangeRequired ?? null,
-        firstLoginCompleted: testIdentity?.accountSecurity.firstLoginCompleted ?? null,
+        passwordApplied: identity?.passwordApplied ?? false,
+        existingAccountAuthRequired: identity?.existingAccountAuthRequired ?? false,
+        passwordChangeRequired: identity?.accountSecurity.passwordChangeRequired ?? null,
+        firstLoginCompleted: identity?.accountSecurity.firstLoginCompleted ?? null,
       });
     }
 
     await updateOnboardingDraft({
       resumeToken: draftToken,
-      email: testIdentity?.email ?? (adminEmail || draft.email),
+      email: identity?.email ?? (adminEmail || draft.email),
       currentStep: "account",
       status: "account_created",
       selectedProduct: draft.selected_product,
       pricingSnapshotId: draft.pricing_snapshot_id,
-      authenticatedUserId: testIdentity?.userId ?? draft.authenticated_user_id,
+      authenticatedUserId: identity?.userId ?? draft.authenticated_user_id,
       draftData: {
         ...draft.draft_data,
         emailVerified: true,
         emailVerifiedAt: new Date().toISOString(),
-        identityLinkedAt: testIdentity ? new Date().toISOString() : draft.draft_data.identityLinkedAt ?? null,
-        testSessionEstablished: Boolean(testIdentity),
+        identityLinkedAt: identity ? new Date().toISOString() : draft.draft_data.identityLinkedAt ?? null,
+        testSessionEstablished: Boolean(identity),
         email_verified_at: new Date().toISOString(),
         password_method: passwordMethod,
-        password_change_required: passwordMethod === "generated" && testIdentity?.passwordApplied === true,
+        password_change_required: passwordMethod === "generated" && identity?.passwordApplied === true,
         first_login_completed: false,
-        temporaryPasswordDeliveredAt: passwordMethod === "generated" && testIdentity?.passwordApplied === true ? new Date().toISOString() : null,
-        existingAccountAuthRequired: testIdentity?.existingAccountAuthRequired ?? false,
+        temporaryPasswordDeliveredAt: canUseDevelopmentCredentialDelivery() && passwordMethod === "generated" && identity?.passwordApplied === true ? new Date().toISOString() : null,
+        accountSetupEmailSentAt: setupEmailSent ? new Date().toISOString() : null,
+        existingAccountAuthRequired: identity?.existingAccountAuthRequired ?? false,
         otpHash: null,
         otpExpiresAt: null,
         otpFailedAttempts: 0,
@@ -234,17 +294,18 @@ export async function PUT(request: Request) {
       returnTo,
       identityConfirmed: "1",
     });
-    if (testIdentity?.userId) redirectParams.set("onboardingUserId", testIdentity.userId);
+    if (identity?.userId) redirectParams.set("onboardingUserId", identity.userId);
     const redirectTo = `/login?${redirectParams.toString()}`;
     return NextResponse.json({
       verified: true,
       sessionEstablished: false,
       redirectTo,
       passwordMethod,
-      passwordChangeRequired: passwordMethod === "generated" && testIdentity?.passwordApplied === true,
-      existingAccountAuthRequired: testIdentity?.existingAccountAuthRequired ?? false,
-      requiresTemporaryPasswordDelivery: passwordMethod === "generated" && testIdentity?.passwordApplied === true,
-      ...(canUseDevelopmentCredentialDelivery() && passwordMethod === "generated" && testIdentity?.passwordApplied === true
+      passwordChangeRequired: passwordMethod === "generated" && identity?.passwordApplied === true,
+      existingAccountAuthRequired: identity?.existingAccountAuthRequired ?? false,
+      accountSetupEmailSent: setupEmailSent,
+      requiresTemporaryPasswordDelivery: canUseDevelopmentCredentialDelivery() && passwordMethod === "generated" && identity?.passwordApplied === true,
+      ...(canUseDevelopmentCredentialDelivery() && passwordMethod === "generated" && identity?.passwordApplied === true
         ? { debug_temporary_password: generatedTemporaryPassword }
         : {}),
     });

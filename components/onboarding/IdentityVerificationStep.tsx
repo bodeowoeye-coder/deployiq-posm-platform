@@ -32,6 +32,7 @@ export function IdentityVerificationStep({
   const [passwordCopied, setPasswordCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [existingAccountAuthRequired, setExistingAccountAuthRequired] = useState(false);
+  const [accountSetupEmailSent, setAccountSetupEmailSent] = useState(false);
   const [verifiedRedirectTo, setVerifiedRedirectTo] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(OTP_RESEND_COOLDOWN_SECONDS);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -68,12 +69,13 @@ export function IdentityVerificationStep({
       setVerified(true);
       setVerifiedRedirectTo(typeof payload.redirectTo === "string" ? payload.redirectTo : null);
       setExistingAccountAuthRequired(payload.existingAccountAuthRequired === true);
+      setAccountSetupEmailSent(payload.accountSetupEmailSent === true);
       if (typeof payload.debug_temporary_password === "string") {
         setTemporaryPassword(payload.debug_temporary_password);
       } else if (payload.passwordMethod === "generated" && payload.requiresTemporaryPasswordDelivery === true) {
         setError("Temporary password delivery is not available yet. Please request a new verification code.");
         setVerified(false);
-      } else if (payload.existingAccountAuthRequired === true) {
+      } else if (payload.existingAccountAuthRequired === true || payload.accountSetupEmailSent === true) {
         return;
       } else {
         setTimeout(() => onVerified({ redirectTo: typeof payload.redirectTo === "string" ? payload.redirectTo : null }), 1200);
@@ -130,11 +132,13 @@ export function IdentityVerificationStep({
         </div>
         <div>
           <h2 className="text-2xl font-bold text-slate-900">
-            {temporaryPassword ? "Your temporary password" : "Email verified"}
+            {temporaryPassword ? "Your temporary password" : accountSetupEmailSent ? "Check your email" : "Email verified"}
           </h2>
           <p className="mt-1.5 text-sm text-slate-500">
             {temporaryPassword
               ? "Use this temporary password with your verified email to sign in. You will be required to create a new password immediately."
+              : accountSetupEmailSent
+                ? "We sent a secure, one-time account setup link to your verified email. Use it to create your password and resume this workspace setup."
               : existingAccountAuthRequired
                 ? "This email already has a DeployIQ account. Sign in with the existing password to continue setup."
               : "Taking you to sign in and continue setup…"}

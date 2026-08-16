@@ -245,13 +245,13 @@ describe("validatePasswordMatch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test-mode identity confirmation and recovery
+// Onboarding identity confirmation and recovery
 // ---------------------------------------------------------------------------
-describe("test identity confirmation", () => {
-  test("verify route creates or restores a test account after OTP confirmation without silent login", () => {
+describe("onboarding identity confirmation", () => {
+  test("verify route creates or restores an account after OTP confirmation without silent login", () => {
     const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
-    assert.match(route, /createOrRestoreTestIdentityAccount/);
-    assert.match(route, /authenticatedUserId: testIdentity\?\.userId \?\? draft\.authenticated_user_id/);
+    assert.match(route, /createOrRestoreIdentityAccount/);
+    assert.match(route, /authenticatedUserId: identity\?\.userId \?\? draft\.authenticated_user_id/);
     assert.match(route, /identityLinkedAt/);
     assert.match(route, /sessionEstablished: false/);
     assert.match(route, /new URLSearchParams/);
@@ -262,17 +262,17 @@ describe("test identity confirmation", () => {
   test("verification code is returned only in development response and is not logged raw", () => {
     const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
     assert.match(route, /debug_otp: otp/);
-    assert.match(route, /OTP generated for test response/);
+    assert.match(route, /Verification code generated for test response/);
     assert.doesNotMatch(route, /OTP for \$\{email\}: \$\{otp\}/);
   });
 
-  test("test identity account resolves an existing user before creating one", () => {
+  test("identity account resolves an existing user before creating one", () => {
     const helper = readFileSync(new URL("../lib/acquisition/testIdentitySession.ts", import.meta.url), "utf8");
     assert.match(helper, /auth\.admin\.listUsers/);
     assert.match(helper, /profileByEmail/);
     assert.match(helper, /auth\.admin\.createUser/);
     assert.match(helper, /auth\.admin\.updateUserById/);
-    assert.match(helper, /deployiq_onboarding_test_user: true/);
+    assert.match(helper, /deployiq_onboarding_identity: true/);
   });
 
   test("generated password verification redirects to login and never silently authenticates", () => {
@@ -334,8 +334,8 @@ describe("test identity confirmation", () => {
   test("existing account verification pauses before login with existing-password guidance", () => {
     const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
     const verification = readFileSync(new URL("../components/onboarding/IdentityVerificationStep.tsx", import.meta.url), "utf8");
-    assert.match(route, /existingAccountAuthRequired: testIdentity\?\.existingAccountAuthRequired \?\? false/);
-    assert.match(route, /authenticatedUserId: testIdentity\?\.userId \?\? draft\.authenticated_user_id/);
+    assert.match(route, /existingAccountAuthRequired: identity\?\.existingAccountAuthRequired \?\? false/);
+    assert.match(route, /authenticatedUserId: identity\?\.userId \?\? draft\.authenticated_user_id/);
     assert.match(verification, /setExistingAccountAuthRequired\(payload\.existingAccountAuthRequired === true\)/);
     assert.match(verification, /This email already has a DeployIQ account/);
     assert.match(verification, /payload\.existingAccountAuthRequired === true/);
@@ -360,7 +360,7 @@ describe("test identity confirmation", () => {
     assert.match(route, /otpFailedAttempts: failedAttempts \+ 1/);
     assert.match(route, /otpHash: null/);
     assert.match(route, /customerPasswordEnvelope: null/);
-    const draftUpdateStart = route.indexOf("await updateOnboardingDraft({", route.indexOf("const testIdentity"));
+    const draftUpdateStart = route.indexOf("await updateOnboardingDraft({", route.indexOf("const identity"));
     const draftUpdateEnd = route.indexOf("const returnTo", draftUpdateStart);
     const draftUpdate = route.slice(draftUpdateStart, draftUpdateEnd);
     assert.doesNotMatch(draftUpdate, /generatedTemporaryPassword/);
@@ -369,8 +369,9 @@ describe("test identity confirmation", () => {
 
   test("development temporary password delivery is disabled for production runtime", () => {
     const route = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
-    assert.match(route, /VERCEL_ENV === "production"/);
-    assert.match(route, /DEPLOYIQ_RUNTIME_ENV === "production"/);
+    const email = readFileSync(new URL("../lib/transactionalEmail.ts", import.meta.url), "utf8");
+    assert.match(email, /VERCEL_ENV === "production"/);
+    assert.match(email, /DEPLOYIQ_RUNTIME_ENV === "production"/);
     assert.match(route, /canUseDevelopmentCredentialDelivery\(\)/);
   });
 });

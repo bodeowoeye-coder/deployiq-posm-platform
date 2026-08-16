@@ -109,6 +109,20 @@ export async function updateOnboardingDraft(input: { resumeToken: string; email?
   if (existingError) throw existingError;
   if (!existingRecord) throw new Error("Draft not found.");
   const existingDraft = normaliseDraft(existingRecord as Record<string, unknown>);
+  if (
+    existingDraft.authenticated_user_id
+    && input.authenticatedUserId !== undefined
+    && input.authenticatedUserId !== existingDraft.authenticated_user_id
+  ) {
+    throw Object.assign(new Error("The verified onboarding owner cannot be changed."), { status: 403, code: "draft_owner_immutable" });
+  }
+  if (
+    existingDraft.authenticated_user_id
+    && input.email !== undefined
+    && (input.email?.trim().toLowerCase() || null) !== (existingDraft.email?.trim().toLowerCase() || null)
+  ) {
+    throw Object.assign(new Error("The verified onboarding email cannot be changed."), { status: 403, code: "draft_email_immutable" });
+  }
   const preserved = preserveCompletedProvisioningState({
     existing: existingDraft,
     nextStatus: input.status ?? existingDraft.status,

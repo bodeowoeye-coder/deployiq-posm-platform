@@ -67,7 +67,7 @@ function shouldApplyOnboardingPassword(input: {
   return isIncompleteOnboardingGeneratedUser(input.user);
 }
 
-export async function createOrRestoreTestIdentityAccount(input: {
+export async function createOrRestoreIdentityAccount(input: {
   email: string;
   fullName: string;
   phone: string | null;
@@ -103,7 +103,7 @@ export async function createOrRestoreTestIdentityAccount(input: {
         password_method: input.passwordMethod,
         password_change_required: input.passwordChangeRequired,
         first_login_completed: false,
-        deployiq_onboarding_test_user: true,
+        deployiq_onboarding_identity: true,
       },
     });
     if (error || !data.user) throw error ?? new Error("Could not create test user.");
@@ -124,7 +124,7 @@ export async function createOrRestoreTestIdentityAccount(input: {
         password_method: canApplyOnboardingPassword ? input.passwordMethod : user.app_metadata?.password_method ?? "existing",
         password_change_required: canApplyOnboardingPassword ? input.passwordChangeRequired : user.app_metadata?.password_change_required ?? false,
         first_login_completed: canApplyOnboardingPassword ? false : user.app_metadata?.first_login_completed ?? true,
-        ...(canApplyOnboardingPassword ? { deployiq_onboarding_test_user: true } : {}),
+        ...(canApplyOnboardingPassword ? { deployiq_onboarding_identity: true } : {}),
       },
     });
     if (error) throw error;
@@ -180,4 +180,17 @@ export async function createOrRestoreTestIdentityAccount(input: {
     emailConfirmed: Boolean(user.email_confirmed_at ?? user.confirmed_at),
     accountSecurity,
   };
+}
+
+// Compatibility export for existing local acceptance imports.
+export const createOrRestoreTestIdentityAccount = createOrRestoreIdentityAccount;
+
+export async function generateIdentityPasswordSetupLink(email: string, redirectTo: string) {
+  const { data, error } = await createAdminSupabase().auth.admin.generateLink({
+    type: "recovery",
+    email: email.trim().toLowerCase(),
+    options: { redirectTo },
+  });
+  if (error || !data.properties?.action_link) throw error ?? new Error("Could not create account setup link.");
+  return data.properties.action_link;
 }

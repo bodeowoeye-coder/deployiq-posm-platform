@@ -27,12 +27,34 @@ export default function CreatePasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [establishingRecoverySession, setEstablishingRecoverySession] = useState(false);
   const analysis = analysePassword(password);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const nextReturnTo = params.get("returnTo");
     if (nextReturnTo?.startsWith("/") && !nextReturnTo.startsWith("//")) setReturnTo(nextReturnTo);
+    const recovery = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const accessToken = recovery.get("access_token");
+    const refreshToken = recovery.get("refresh_token");
+    if (!accessToken || !refreshToken) return;
+    setEstablishingRecoverySession(true);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    fetch("/api/auth/session", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken, refreshToken, returnTo: nextReturnTo ?? "/onboarding" }),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.error ?? "Could not establish the secure account setup session.");
+        }
+      })
+      .catch((sessionError) => setError(sessionError instanceof Error ? sessionError.message : "Could not establish the secure account setup session."))
+      .finally(() => setEstablishingRecoverySession(false));
   }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -101,10 +123,10 @@ export default function CreatePasswordPage() {
           {error ? <div className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}</div> : null}
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || establishingRecoverySession}
             className="min-h-11 rounded-lg bg-slate-950 px-4 font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
           >
-            {submitting ? "Updating password..." : "Continue"}
+            {establishingRecoverySession ? "Securing account..." : submitting ? "Updating password..." : "Continue"}
           </button>
         </div>
       </form>

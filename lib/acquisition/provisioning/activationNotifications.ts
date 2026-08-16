@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getOnboardingDraftByToken } from "@/lib/commercial/onboarding/service";
 import type { ProvisioningJobRecord } from "./service";
+import { isProductionEmailRuntime, sendTransactionalEmail } from "@/lib/transactionalEmail";
 
 type ActivationNotificationRecord = {
   id: string;
@@ -69,21 +70,13 @@ function hashToken(token: string) {
 }
 
 function isDevelopmentEmailSimulationEnabled() {
-  return process.env.NODE_ENV !== "production" && process.env.DEPLOYIQ_RUNTIME_ENV !== "production";
+  return !isProductionEmailRuntime();
 }
 
 function publicBaseUrl() {
   return process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "")
     || process.env.DEPLOYIQ_APP_URL?.replace(/\/+$/, "")
     || "http://localhost:3000";
-}
-
-function providerEndpoint() {
-  return process.env.DEPLOYIQ_TRANSACTIONAL_EMAIL_ENDPOINT?.trim() || "";
-}
-
-function providerToken() {
-  return process.env.DEPLOYIQ_TRANSACTIONAL_EMAIL_TOKEN?.trim() || "";
 }
 
 async function findJobForDraft(draftId: string) {
@@ -256,48 +249,25 @@ export async function deliverWorkspaceReadyNotifications(job: ProvisioningJobRec
       continue;
     }
 
-    const endpoint = providerEndpoint();
-    if (!endpoint) {
-      await supabase
-        .from("workspace_activation_notifications")
-        .update({
-          status: "failed",
-          failure_reason_safe: "email_provider_not_configured",
-          delivery_mode: "provider_missing",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", notification.id)
-        .neq("status", "sent");
-      continue;
-    }
-
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(providerToken() ? { Authorization: `Bearer ${providerToken()}` } : {}),
-        },
-        body: JSON.stringify(email),
-      });
-      if (!response.ok) throw new Error("provider_rejected_workspace_ready_email");
+    const delivery = await sendTransactionalEmail(email);
+    if (delivery.ok) {
       await supabase
         .from("workspace_activation_notifications")
         .update({
           status: "sent",
           sent_at: new Date().toISOString(),
-          delivery_mode: "transactional_provider",
+          delivery_mode: delivery.deliveryMode,
           updated_at: new Date().toISOString(),
         })
         .eq("id", notification.id)
         .neq("status", "sent");
-    } catch {
+    } else {
       await supabase
         .from("workspace_activation_notifications")
         .update({
           status: "failed",
-          failure_reason_safe: "workspace_ready_email_delivery_failed",
-          delivery_mode: "transactional_provider",
+          failure_reason_safe: delivery.failureCode,
+          delivery_mode: delivery.deliveryMode,
           updated_at: new Date().toISOString(),
         })
         .eq("id", notification.id)
