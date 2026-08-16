@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { OnboardingProgress } from "./OnboardingProgress";
 import { BusinessObjectiveStep } from "./BusinessObjectiveStep";
 import { GuidedDiscoveryStep, type DiscoveryData, legacyCapabilityFlags } from "./GuidedDiscoveryStep";
+import { OnboardingJourneyVisual } from "./OnboardingJourneyVisual";
 import { RecommendationStep } from "./RecommendationStep";
 import { CommercialDecisionStep } from "./CommercialDecisionStep";
 import { LiveQuotationStep } from "./LiveQuotationStep";
@@ -91,7 +92,7 @@ export function OnboardingShell() {
   const [quotation, setQuotation] = useState<CustomerQuotation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resuming, setResuming] = useState(false);
+  const [resuming, setResuming] = useState(true);
   const [identityOrg, setIdentityOrg] = useState<IdentityOrgData>({
     organisationName: "",
     workspaceName: "",
@@ -116,6 +117,9 @@ export function OnboardingShell() {
   const [enterprisePONumber, setEnterprisePONumber] = useState<string | null>(null);
   const [readyForProvisioning, setReadyForProvisioning] = useState(false);
   const [activationStarted, setActivationStarted] = useState(false);
+  const [shadowPlanning, setShadowPlanning] = useState<React.ComponentProps<typeof ProvisionBoundaryStep>["shadowPlanning"]>(null);
+  const [provisioningJob, setProvisioningJob] = useState<React.ComponentProps<typeof ProvisionBoundaryStep>["provisioningJob"]>(null);
+  const [workspaceLaunchUrl, setWorkspaceLaunchUrl] = useState<string | null>(null);
   const [provisioningError, setProvisioningError] = useState<{
     message: string;
     reference: string | null;
@@ -227,7 +231,7 @@ export function OnboardingShell() {
         .then((res) => res.ok ? res.json() : null)
         .then((payload) => {
           if (Array.isArray(payload?.drafts) && payload.drafts.length > 0) setResumePromptDrafts(payload.drafts);
-          else if (payload?.draft) setResumePromptDraft(payload.draft);
+          else if (payload?.draft) applyDraft(payload.draft);
           else if (payload?.activationPending && typeof payload.redirectTo === "string") window.location.assign(payload.redirectTo);
           else if (payload?.blockedByPasswordChange && typeof payload.redirectTo === "string") window.location.assign(payload.redirectTo);
         })
@@ -518,6 +522,8 @@ export function OnboardingShell() {
         body: JSON.stringify({ resumeToken }),
       });
       const payload = await res.json();
+      setShadowPlanning(payload.shadowPlanning ?? null);
+      setProvisioningJob(payload.job ?? null);
       if (!res.ok) {
         setReadyForProvisioning(false);
         setProvisioningError({
@@ -535,6 +541,18 @@ export function OnboardingShell() {
           : typeof payload.workspaceUrl === "string"
             ? payload.workspaceUrl
             : null;
+      const localDevelopmentLaunchUrl = typeof payload.localDevelopmentAdminWorkspaceUrl === "string"
+        ? payload.localDevelopmentAdminWorkspaceUrl
+        : null;
+      const completedLaunchUrl = launchUrl ?? localDevelopmentLaunchUrl;
+      if (payload.job?.status === "completed" && completedLaunchUrl) {
+        setReadyForProvisioning(true);
+        setActivationStarted(false);
+        setWorkspaceLaunchUrl(completedLaunchUrl);
+        setProvisioningError(null);
+        forgetResumeToken();
+        return;
+      }
       if (payload.workspaceReady === true && launchUrl) {
         setReadyForProvisioning(false);
         setActivationStarted(false);
@@ -568,6 +586,8 @@ export function OnboardingShell() {
   const identitySteps: OnboardingStep[] = ["identity-organisation", "identity-admin", "identity-verification", "checkout-boundary"];
   const checkoutSteps: OnboardingStep[] = ["commercial-plan", "checkout-review", "checkout-payment", "checkout-success", "checkout-enterprise", "checkout-transfer-pending", "provision-boundary"];
   const isWideStep = identitySteps.includes(step) || checkoutSteps.includes(step);
+  const isFreshObjectiveStep = step === "objective" && !resumePromptDraft && resumePromptDrafts.length === 0;
+  const isGetStartedStep = isFreshObjectiveStep || step === "discovery";
   const savedProgressLabel = identityVerified
     ? "Your progress has been saved to your account."
     : draftPersisted
@@ -626,7 +646,7 @@ export function OnboardingShell() {
 
       {/* Main content — wider for identity and checkout steps */}
       <main className={`mx-auto px-4 py-8 sm:py-12 ${
-        isWideStep ? "max-w-5xl" : "max-w-2xl"
+        isGetStartedStep ? "max-w-7xl" : isWideStep ? "max-w-5xl" : "max-w-2xl"
       }`}>
         {error ? (
           <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
@@ -659,18 +679,23 @@ export function OnboardingShell() {
           />
         ) : null}
 
-        {step === "objective" && !resumePromptDraft && resumePromptDrafts.length === 0 && (
-          <BusinessObjectiveStep onSelect={handleObjectiveSelect} loading={loading} />
-        )}
-
-        {step === "discovery" && (
-          <GuidedDiscoveryStep
-            initialData={discovery}
-            onSubmit={handleDiscoverySubmit}
-            onBack={() => setStep("objective")}
-            loading={loading}
-          />
-        )}
+        {isGetStartedStep ? (
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-900/5 lg:grid lg:grid-cols-[42%_58%]">
+            <OnboardingJourneyVisual context={step === "objective" ? "goal" : "requirements"} />
+            <div className="min-w-0">
+              {step === "objective" ? (
+                <BusinessObjectiveStep onSelect={handleObjectiveSelect} loading={loading} />
+              ) : (
+                <GuidedDiscoveryStep
+                  initialData={discovery}
+                  onSubmit={handleDiscoverySubmit}
+                  onBack={() => setStep("objective")}
+                  loading={loading}
+                />
+              )}
+            </div>
+          </div>
+        ) : null}
 
         {step === "recommendation" && recommendation ? (
           <RecommendationStep
@@ -929,6 +954,12 @@ export function OnboardingShell() {
             saveRecoveryLabel={draftPersisted ? savedProgressLabel : null}
             provisioningError={provisioningError}
             activationStarted={activationStarted}
+            shadowPlanning={shadowPlanning}
+            provisioningJob={provisioningJob}
+            workspaceLaunchUrl={workspaceLaunchUrl}
+            onLaunchWorkspace={() => {
+              if (workspaceLaunchUrl) window.location.assign(workspaceLaunchUrl);
+            }}
             onContinue={handleProvisionWorkspace}
           />
         )}

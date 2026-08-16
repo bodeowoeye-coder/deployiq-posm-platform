@@ -1,4 +1,5 @@
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
+import { randomUUID } from "node:crypto";
 import { getOnboardingDraftByToken, updateOnboardingDraft } from "@/lib/commercial/onboarding/service";
 import { upsertPlatformProvisioningContext } from "@/lib/commercial/provisioning/platform";
 import { upsertUserProfileWithRetry } from "@/lib/userManagement";
@@ -9,6 +10,10 @@ import { getRetailWorkspaceManifest } from "./retailManifest";
 import { buildRetailHealthChecks, provisionRetailWorkspaceReference } from "./retailWorkspace";
 import { buildAdminWorkspaceUrl, verifyWorkspaceDestination, type WorkspaceDestinationReadiness } from "./workspaceDestination";
 import { deliverWorkspaceReadyNotifications } from "./activationNotifications";
+import { assertProvisioningOwnership } from "./ownership";
+import { shouldRunProvisioningShadow } from "../../ai/provisioning/flags";
+import { buildTrustedProvisioningContext } from "../../ai/provisioning/context";
+import { runProvisioningShadow } from "../../ai/provisioning/shadow";
 
 export type ProvisioningJobRecord = {
   id: string;
@@ -195,10 +200,46 @@ async function createOrResumeJob(input: {
     })
     .select()
     .single();
-  if (error) throw error;
+  if (error) {
+    const { data: winner, error: winnerError } = await supabase
+      .from("provisioning_jobs")
+      .select("*")
+      .eq("acquisition_draft_id", input.draftId)
+      .maybeSingle();
+    if (winnerError) throw winnerError;
+    if (winner) return normaliseJob(winner as Record<string, unknown>);
+    throw error;
+  }
   const job = normaliseJob(data as Record<string, unknown>);
   await recordEvent(job.id, "queued", "job_created", "Provisioning job created.");
   return job;
+}
+
+async function claimJob(job: ProvisioningJobRecord) {
+  const lockToken = randomUUID();
+  const { data, error } = await createAdminSupabase().rpc("claim_acquisition_provisioning_job", {
+    p_job_id: job.id,
+    p_lock_token: lockToken,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
+async function getJob(jobId: string) {
+  const { data, error } = await createAdminSupabase().from("provisioning_jobs").select("*").eq("id", jobId).single();
+  if (error) throw error;
+  return normaliseJob(data as Record<string, unknown>);
+}
+
+export async function getProvisioningJobForDraft(draftId: string) {
+  const supabase = createAdminSupabase();
+  const { data, error } = await supabase
+    .from("provisioning_jobs")
+    .select("*")
+    .eq("acquisition_draft_id", draftId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? normaliseJob(data as Record<string, unknown>) : null;
 }
 
 async function incrementAttempt(job: ProvisioningJobRecord) {
@@ -303,11 +344,17 @@ async function ensureAdminUser(input: {
   };
 }
 
-export async function provisionAcquisitionWorkspace(resumeToken: string): Promise<ProvisioningResult> {
+export async function provisionAcquisitionWorkspace(resumeToken: string, user: {
+  id: string;
+  email: string | null;
+  emailConfirmed: boolean;
+}): Promise<ProvisioningResult> {
   const draft = await getOnboardingDraftByToken(resumeToken);
   if (!draft) {
     throw Object.assign(new Error("Acquisition session not found."), { status: 404, code: "draft_not_found" });
   }
+
+  assertProvisioningOwnership(draft, user);
 
   const eligibility = validateProvisioningEligibility(draft);
   if (!eligibility.ok) {
@@ -356,10 +403,44 @@ export async function provisionAcquisitionWorkspace(resumeToken: string): Promis
     };
   }
 
+  const claimed = await claimJob(job);
+  if (!claimed) {
+    const canonicalJob = await getJob(job.id);
+    return {
+      job: canonicalJob,
+      completed: canonicalJob.status === "completed" && canonicalJob.result_data.workspaceReady === true,
+      customerMessage: "Your workspace setup is already in progress.",
+      workspaceUrl: canonicalJob.result_data.workspaceReady === true ? text(canonicalJob.result_data.workspaceUrl) : undefined,
+      adminWorkspaceUrl: canonicalJob.result_data.workspaceReady === true ? text(canonicalJob.result_data.adminWorkspaceUrl) : undefined,
+      workspaceReady: canonicalJob.result_data.workspaceReady === true,
+      workspaceDestination: canonicalJob.result_data.workspaceDestination as WorkspaceDestinationReadiness | undefined,
+    };
+  }
   job = await incrementAttempt(job);
 
   try {
     job = await updateJob(job, "validating");
+    if (shouldRunProvisioningShadow(eligibility.productKey)) {
+      try {
+        const trustedContext = buildTrustedProvisioningContext(draft, eligibility);
+        const shadowPlanning = await runProvisioningShadow(trustedContext);
+        job = await updateJob(job, "validating", {
+          result_data: mergeResult(job, { shadowPlanning }),
+        });
+        await recordEvent(job.id, "validating", "provisioning_shadow_plan_generated", "DeployIQ AI Shadow Mode plan generated and validated.", {
+          planId: shadowPlanning.proposedPlan?.planId ?? shadowPlanning.baselinePlan.planId,
+          contextHash: trustedContext.contextHash,
+          schemaVersion: shadowPlanning.baselinePlan.schemaVersion,
+          providerVersion: shadowPlanning.providerVersion,
+          manifestVersion: trustedContext.manifest.version,
+          validationStatus: shadowPlanning.validation.status,
+          differenceSummary: shadowPlanning.differences.map((item) => item.classification),
+          generatedAt: shadowPlanning.generatedAt,
+        });
+      } catch {
+        await recordEvent(job.id, "validating", "provisioning_shadow_plan_failed", "DeployIQ AI Shadow Mode planning was unavailable; deterministic provisioning continued.", { errorCode: "shadow_planning_unavailable" });
+      }
+    }
     const manifest = getProductProvisioningManifest(eligibility.productKey);
     if (!manifest) {
       throw Object.assign(new Error("No provisioning manifest is configured for this product."), { code: "manifest_not_configured" });
@@ -380,6 +461,7 @@ export async function provisionAcquisitionWorkspace(resumeToken: string): Promis
       throw Object.assign(new Error("Administrator email is missing."), { code: "missing_admin_email" });
     }
     const platform = await upsertPlatformProvisioningContext({
+      acquisitionDraftId: draft.id,
       organisationName: text(data.organisationName),
       contactPerson: adminName,
       businessEmail: adminEmail,
@@ -472,6 +554,25 @@ export async function provisionAcquisitionWorkspace(resumeToken: string): Promis
     });
 
     job = await updateJob(job, "running_post_checks");
+    const verificationSupabase = createAdminSupabase();
+    const clientId = text(job.result_data.organisationId);
+    const entitlementId = text((job.result_data.product as { entitlementId?: unknown } | undefined)?.entitlementId);
+    const [
+      { data: workspaceRows, error: workspaceVerificationError },
+      { data: entitlementRows, error: entitlementVerificationError },
+      { data: administratorMembership, error: membershipVerificationError },
+      { data: otherTenantMemberships, error: crossTenantVerificationError },
+    ] = await Promise.all([
+      verificationSupabase.from("workspace_settings").select("id,client_id,workspace_slug,status").eq("workspace_slug", eligibility.workspaceSlug),
+      verificationSupabase.from("product_entitlements").select("id,client_id,product_key,status").eq("id", entitlementId).eq("client_id", clientId).eq("product_key", eligibility.productKey).eq("status", "active"),
+      verificationSupabase.from("workspace_memberships").select("id,client_id,user_id,role_key,status").eq("client_id", clientId).eq("user_id", admin.userId).eq("status", "active").maybeSingle(),
+      verificationSupabase.from("workspace_memberships").select("id,client_id").eq("user_id", admin.userId).eq("status", "active").neq("client_id", clientId),
+    ]);
+    if (workspaceVerificationError || entitlementVerificationError || membershipVerificationError || crossTenantVerificationError) {
+      throw Object.assign(new Error("Post-provision tenant verification could not be completed."), { code: "verification_query_failed" });
+    }
+    const ownedWorkspaceRows = (workspaceRows ?? []).filter((row) => row.client_id === clientId && row.status === "active");
+    const destinationAfterProvisioning = verifyWorkspaceDestination(eligibility.workspaceSlug);
     const health = buildRetailHealthChecks({
       organisationId: text(job.result_data.organisationId) || null,
       workspaceSlug: text(job.result_data.workspaceSlug) || null,
@@ -482,9 +583,13 @@ export async function provisionAcquisitionWorkspace(resumeToken: string): Promis
       manifestVersion: text((job.result_data.manifest as { manifestVersion?: unknown } | undefined)?.manifestVersion) || null,
       productKey: eligibility.productKey,
       workspaceBelongsToDraft: draft.id === job.acquisition_draft_id,
-      duplicateWorkspaceCount: 1,
-      crossTenantReferenceCount: 0,
-      ownerMembershipExists: admin.ownerMembershipExists === true,
+      expectedWorkspaceExists: ownedWorkspaceRows.length === 1,
+      duplicateWorkspaceCount: (workspaceRows ?? []).length,
+      crossTenantReferenceCount: (otherTenantMemberships ?? []).length,
+      ownerMembershipExists: Boolean(administratorMembership),
+      entitlementVerified: (entitlementRows ?? []).length === 1,
+      destinationVerified: destinationAfterProvisioning.hostname === `${eligibility.workspaceSlug}.deployiq.ng`
+        && destinationAfterProvisioning.adminWorkspaceUrl === buildAdminWorkspaceUrl(eligibility.workspaceSlug),
       roleCount: Array.isArray((job.result_data.product as { roleIds?: unknown } | undefined)?.roleIds)
         ? ((job.result_data.product as { roleIds?: string[] }).roleIds ?? []).length
         : 0,
@@ -557,6 +662,7 @@ export async function provisionAcquisitionWorkspace(resumeToken: string): Promis
       result_data: mergeResult(job, {
         customerFailureMessage: CUSTOMER_FAILURE,
         failedSafeStage: failure.failedSafeStage,
+        failureClassification: failure.classification,
         retryable: failure.retryable,
       }),
     });
@@ -574,6 +680,13 @@ export async function provisionAcquisitionWorkspace(resumeToken: string): Promis
         provisioningFailedStage: failure.failedSafeStage,
       },
     });
-    throw Object.assign(new Error(CUSTOMER_FAILURE), { status: 500, code: failure.failureCode, failedStage: failure.failedSafeStage, retryable: true, job });
+    throw Object.assign(new Error(CUSTOMER_FAILURE), {
+      status: failure.classification === "security_rejected" ? 403 : failure.classification === "approval_required" ? 409 : 500,
+      code: failure.failureCode,
+      classification: failure.classification,
+      failedStage: failure.failedSafeStage,
+      retryable: failure.retryable,
+      job,
+    });
   }
 }

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAuthoritativeAccountSecurityState, getCurrentUserContext, isAllowedReturnTo } from "@/lib/auth";
+import { setDeployIqSessionCookies } from "@/lib/authSessionCookies";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
+import { getPublicSupabaseConfig } from "@/lib/supabaseEnv";
 import { analysePassword, validatePasswordMatch } from "@/lib/acquisition/identity";
+import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +51,28 @@ export async function POST(request: Request) {
     });
     if (metadataError) throw metadataError;
 
-    return NextResponse.json({ ok: true, redirectTo });
+    // Updating a password through the admin API invalidates the session that
+    // brought the customer here. Establish a fresh, password-backed session
+    // before returning to onboarding so account-owned draft recovery remains
+    // authoritative instead of falling through to anonymous Step 1.
+    const { url, anonKey } = getPublicSupabaseConfig();
+    const authClient = createClient(url, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: refreshedAuth, error: refreshedAuthError } = await authClient.auth.signInWithPassword({
+      email: context.user.email ?? "",
+      password,
+    });
+    if (refreshedAuthError || !refreshedAuth.session) {
+      throw refreshedAuthError ?? new Error("Could not establish the updated password session.");
+    }
+
+    const response = NextResponse.json({ ok: true, redirectTo });
+    setDeployIqSessionCookies(response, request, {
+      accessToken: refreshedAuth.session.access_token,
+      refreshToken: refreshedAuth.session.refresh_token,
+    });
+    return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update password.";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -365,6 +365,17 @@ export default async function Customer360Page({
               Provisioning failure ({value(commercial.failureCode)}): {commercial.failureMessage}
             </p>
           ) : null}
+          {commercial.shadowPlanning ? (
+            <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm">
+              <p className="font-bold text-indigo-900">DeployIQ AI Shadow Mode plan generated</p>
+              <dl className="mt-3 grid gap-2 md:grid-cols-3">
+                <Info label="Validation">{value(commercial.shadowPlanning.validationStatus)}</Info>
+                <Info label="Provider">{value(commercial.shadowPlanning.providerVersion)}</Info>
+                <Info label="Generated">{formatDate(commercial.shadowPlanning.generatedAt)}</Info>
+              </dl>
+              {commercial.shadowPlanning.differences.length ? <p className="mt-3 text-xs text-indigo-800">Comparison: {commercial.shadowPlanning.differences.map((item) => item.classification).join(", ")}</p> : null}
+            </div>
+          ) : null}
           <h3 className="mt-6 text-sm font-bold text-slate-950">Provisioning History</h3>
           {commercial.events.length === 0 ? (
             <div className="mt-3"><Empty>Provisioning record not available.</Empty></div>

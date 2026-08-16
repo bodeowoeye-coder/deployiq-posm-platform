@@ -3,17 +3,29 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { BrandMark } from "@/components/BrandMark";
+import { DesktopBrandStories } from "@/components/login/DesktopBrandStories";
+import { MobileBrandCarousel } from "@/components/login/MobileBrandCarousel";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
+import {
+  isLoginCarouselAlwaysShown,
+  LOGIN_CAROUSEL_STORAGE_KEY,
+  nextLoginCarouselCycle,
+  readLoginCarouselCycle,
+  shouldShowLoginCarousel,
+} from "@/lib/loginCarousel";
+import { persistRememberedLoginEmail, readRememberedLoginEmail } from "@/lib/loginPreferences";
 import { createBrowserSupabase } from "@/lib/supabaseClient";
 
 type PublicSupabaseConfig = { url: string; anonKey: string };
+type LoginCarouselState = "pending" | "show" | "hide";
 const WORKSPACE_OPEN_TIMEOUT_MS = 12_000;
 const MAX_WORKSPACE_OPEN_ATTEMPTS = 3;
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberEmail, setRememberEmail] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [error, setError] = useState("");
@@ -24,6 +36,7 @@ export default function LoginPage() {
   const [publicConfig, setPublicConfig] = useState<PublicSupabaseConfig | null>(null);
   const [openingTrouble, setOpeningTrouble] = useState(false);
   const [hasCompletedInitialWorkspaceLoad, setHasCompletedInitialWorkspaceLoad] = useState(false);
+  const [carouselState, setCarouselState] = useState<LoginCarouselState>("pending");
   const { showToast } = useToast();
   const router = useRouter();
   const loginInProgressRef = useRef(false);
@@ -147,6 +160,11 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const rememberedEmail = readRememberedLoginEmail(window.localStorage);
+    if (rememberedEmail) {
+      setEmail(rememberedEmail);
+      setRememberEmail(true);
+    }
     const mountStart = performance.now();
     console.info("[login-timing]", {
       stage: "login-page-mounted",
@@ -297,6 +315,26 @@ export default function LoginPage() {
 
   function continueAsCurrentAccount() {
     router.replace(returnTo || "/workspace/admin");
+  }
+
+  // Presentation only: the counter advances once per login visit and never gates authentication.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const alwaysShowCarousel = isLoginCarouselAlwaysShown(
+      process.env.NEXT_PUBLIC_DEPLOYIQ_ALWAYS_SHOW_LOGIN_CAROUSEL,
+      process.env.NODE_ENV,
+    );
+    try {
+      const cycle = readLoginCarouselCycle(window.localStorage.getItem(LOGIN_CAROUSEL_STORAGE_KEY));
+      setCarouselState(alwaysShowCarousel || shouldShowLoginCarousel(cycle) ? "show" : "hide");
+      window.localStorage.setItem(LOGIN_CAROUSEL_STORAGE_KEY, String(nextLoginCarouselCycle(cycle)));
+    } catch {
+      setCarouselState(alwaysShowCarousel ? "show" : "hide");
+    }
+  }, []);
+
+  function dismissBrandCarousel() {
+    setCarouselState("hide");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -453,21 +491,36 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-[100dvh] bg-white text-slate-950 lg:flex">
+    <main className="min-h-[100dvh] bg-white text-slate-950 md:grid md:h-[100dvh] md:grid-rows-[55%_45%] md:overflow-hidden lg:grid-cols-[34%_66%] lg:grid-rows-1 xl:grid-cols-[26%_74%] 2xl:grid-cols-[22%_78%]">
+      {carouselState === "pending" ? (
+        <div
+          aria-busy="true"
+          aria-label="Preparing DeployIQ introduction"
+          className="fixed inset-0 z-50 grid min-h-[100dvh] place-items-center overflow-hidden bg-slate-950 text-white md:hidden"
+        >
+          <p className="whitespace-nowrap text-2xl font-black tracking-tight" aria-label="DeployIQ trademark">
+            <span>Deploy</span><span className="text-orange-500">IQ</span><span className="align-super text-[11px] text-white">&trade;</span>
+          </p>
+        </div>
+      ) : null}
+      {carouselState === "show" ? <MobileBrandCarousel onComplete={dismissBrandCarousel} /> : null}
       {/* Left side - Login form */}
-      <div className="flex flex-col lg:w-1/2 lg:flex-col">
-        <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4 lg:border-b-0 lg:border-r">
-          <BrandMark />
+      <div className="relative z-10 flex min-h-0 flex-col bg-white md:h-full md:overflow-y-auto md:shadow-2xl md:shadow-slate-950/10">
+        <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4 md:px-8 lg:px-8 2xl:px-10">
+          <div className="md:hidden"><BrandMark /></div>
+          <div className="hidden whitespace-nowrap text-2xl font-black tracking-tight md:block" aria-label="DeployIQ trademark">
+            <span className="text-slate-950">Deploy</span><span className="text-orange-500">IQ</span><span className="align-super text-[11px] text-slate-950">&trade;</span>
+          </div>
           <ThemeToggle />
         </header>
 
-        <section className="flex flex-1 flex-col justify-center px-6 py-12 sm:px-8 md:px-10 lg:px-12">
-          <div className="mx-auto w-full max-w-sm">
-            <h1 className="text-3xl font-bold leading-tight">Sign in</h1>
+        <section className="flex min-h-0 flex-1 flex-col justify-center px-6 py-10 sm:px-8 md:px-10 md:py-6 lg:px-8 2xl:px-10">
+          <div className="mx-auto w-full max-w-md">
+            <h1 className="text-3xl font-black leading-tight lg:text-4xl">Sign in</h1>
             <p className="mt-2 text-sm text-slate-600">
               {identityConfirmed
                 ? "Your email has been confirmed. Sign in to continue setting up your DeployIQ workspace."
-                : "Access your DeployIQ workspace."}
+                : "Access your DeployIQ platform."}
             </p>
 
             {accountMismatch ? (
@@ -506,7 +559,11 @@ export default function LoginPage() {
                   autoCapitalize="none"
                   inputMode="email"
                   value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  onChange={(event) => {
+                    const nextEmail = event.target.value;
+                    setEmail(nextEmail);
+                    if (rememberEmail) persistRememberedLoginEmail(window.localStorage, nextEmail, true);
+                  }}
                   required
                 />
               </label>
@@ -523,6 +580,20 @@ export default function LoginPage() {
                   required
                 />
               </label>
+              <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  name="rememberEmail"
+                  checked={rememberEmail}
+                  onChange={(event) => {
+                    const shouldRemember = event.target.checked;
+                    setRememberEmail(shouldRemember);
+                    persistRememberedLoginEmail(window.localStorage, email, shouldRemember);
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-300"
+                />
+                Remember my email
+              </label>
               {error ? <div className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}</div> : null}
               <button
                 className="min-h-11 rounded-lg bg-slate-950 px-4 font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
@@ -538,18 +609,14 @@ export default function LoginPage() {
             </form>
           </div>
         </section>
+        <footer className="hidden items-center justify-center gap-3 border-t border-slate-100 px-6 py-4 text-xs font-medium text-slate-500 md:flex">
+          <a href="/privacy" className="transition hover:text-orange-600">Privacy Notice</a>
+          <span aria-hidden className="text-slate-300">|</span>
+          <a href="/terms" className="transition hover:text-orange-600">Terms of Use</a>
+        </footer>
       </div>
 
-      {/* Right side - Hero image */}
-      <div className="hidden overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-6 py-10 sm:px-8 md:px-10 lg:flex lg:w-1/2 lg:items-center lg:justify-center lg:px-12">
-        <div className="mx-auto w-full max-w-2xl overflow-hidden rounded-3xl border border-white/10 bg-slate-950/40 shadow-2xl shadow-slate-950/50">
-          <img
-            src="/deployiq-login-hero.png"
-            alt="DeployIQ operational workspace on laptop and mobile field experience"
-            className="h-auto w-full object-cover"
-          />
-        </div>
-      </div>
+      <DesktopBrandStories />
       {(isSubmitting || isRedirecting || openingTrouble) && !hasCompletedInitialWorkspaceLoad ? (
         <div className="fixed inset-0 z-50 grid min-h-[100dvh] place-items-center overflow-hidden bg-white/95 px-6 text-center backdrop-blur-sm" aria-busy={!openingTrouble} aria-live="polite">
           <div className="w-full max-w-xs rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">

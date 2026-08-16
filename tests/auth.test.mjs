@@ -158,13 +158,18 @@ describe("mandatory password change routing", () => {
 
   test("direct onboarding access is blocked while password_change_required is true", () => {
     const onboardingPage = readFileSync(new URL("../app/onboarding/page.tsx", import.meta.url), "utf8");
-    assert.match(onboardingPage, /getCurrentAccessToken/);
-    assert.match(onboardingPage, /if \(accessToken && !context\)/);
-    assert.match(onboardingPage, /redirect\(`\/login\?returnTo=/);
     assert.match(onboardingPage, /getCurrentUserContext/);
     assert.match(onboardingPage, /readAccountSecurityState\(context\.user\)/);
     assert.match(onboardingPage, /accountSecurity\?\.passwordChangeRequired/);
     assert.match(onboardingPage, /redirect\(`\/login\/create-password\?returnTo=/);
+  });
+
+  test("anonymous onboarding entry does not turn a stale access cookie into a login requirement", () => {
+    const onboardingPage = readFileSync(new URL("../app/onboarding/page.tsx", import.meta.url), "utf8");
+    assert.match(onboardingPage, /const context = await getCurrentUserContext\(\)/);
+    assert.doesNotMatch(onboardingPage, /getCurrentAccessToken/);
+    assert.doesNotMatch(onboardingPage, /if \(accessToken && !context\)/);
+    assert.match(onboardingPage, /accountSecurity\?\.passwordChangeRequired/);
   });
 
   test("onboarding resume API cannot outrank mandatory password change", () => {
@@ -188,6 +193,20 @@ describe("mandatory password change routing", () => {
     assert.match(passwordRoute, /if \(passwordError\) throw passwordError/);
     assert.match(passwordRoute, /password_change_required: false/);
     assert.match(passwordRoute, /first_login_completed: true/);
+    assert.match(passwordRoute, /auth\.signInWithPassword/);
+    assert.match(passwordRoute, /setDeployIqSessionCookies\(response, request/);
+  });
+
+  test("password-change return restores the fresh authenticated session before onboarding recovery", () => {
+    const passwordRoute = readFileSync(new URL("../app/api/auth/password/route.ts", import.meta.url), "utf8");
+    const shell = readFileSync(new URL("../components/onboarding/OnboardingShell.tsx", import.meta.url), "utf8");
+    const metadataIndex = passwordRoute.indexOf("password_change_required: false");
+    const reauthenticationIndex = passwordRoute.indexOf("auth.signInWithPassword");
+    const cookieIndex = passwordRoute.indexOf("setDeployIqSessionCookies(response, request");
+    assert.ok(metadataIndex > -1 && reauthenticationIndex > metadataIndex);
+    assert.ok(cookieIndex > reauthenticationIndex);
+    assert.match(shell, /else if \(payload\?\.draft\) applyDraft\(payload\.draft\)/);
+    assert.doesNotMatch(shell, /else if \(payload\?\.draft\) setResumePromptDraft\(payload\.draft\)/);
   });
 
   test("OTP verification proves generated security metadata before returning temporary password", () => {

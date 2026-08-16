@@ -131,6 +131,9 @@ export async function getPlatformCustomer360(clientId: string) {
   const installerById = new Map(((installers ?? []) as Row[]).map((row) => [text(row.id), text(row.installer_name)]));
 
   const provisioningJob = (job ?? null) as Row | null;
+  const provisioningResult = provisioningJob?.result_data && typeof provisioningJob.result_data === "object" ? provisioningJob.result_data as Row : {};
+  const shadowPlanning = provisioningResult.shadowPlanning && typeof provisioningResult.shadowPlanning === "object" ? provisioningResult.shadowPlanning as Row : null;
+  const shadowValidation = shadowPlanning?.validation && typeof shadowPlanning.validation === "object" ? shadowPlanning.validation as Row : null;
   const { data: provisioningEvents } = provisioningJob?.id
     ? await supabase.from("provisioning_events").select("stage,event_type,message,created_at").eq("provisioning_job_id", text(provisioningJob.id)).order("created_at", { ascending: false }).limit(10)
     : { data: [] as Row[] };
@@ -249,6 +252,15 @@ export async function getPlatformCustomer360(clientId: string) {
       failedAt: text(provisioningJob?.failed_at) || null,
       failureCode: text(provisioningJob?.failure_code) || null,
       failureMessage: text(provisioningJob?.failure_message) || null,
+      shadowPlanning: shadowPlanning ? {
+        generated: true,
+        status: text(shadowPlanning.status) || null,
+        validationStatus: text(shadowValidation?.status) || null,
+        providerVersion: text(shadowPlanning.providerVersion) || null,
+        generatedAt: text(shadowPlanning.generatedAt) || null,
+        warnings: Array.isArray((shadowPlanning.proposedPlan as Row | undefined)?.warnings) ? (shadowPlanning.proposedPlan as Row).warnings as string[] : [],
+        differences: Array.isArray(shadowPlanning.differences) ? shadowPlanning.differences as Array<{ path?: string; classification?: string }> : [],
+      } : null,
       activationDate: text(entitlement?.activation_date) || null,
       events: ((provisioningEvents ?? []) as Row[]).map((row) => ({
         stage: text(row.stage),

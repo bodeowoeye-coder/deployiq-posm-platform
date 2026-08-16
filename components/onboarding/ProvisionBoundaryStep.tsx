@@ -30,6 +30,19 @@ type Props = {
     retryable: boolean;
   } | null;
   activationStarted?: boolean;
+  shadowPlanning?: {
+    status: string;
+    validation?: { status?: string };
+    proposedPlan?: {
+      customer?: { organisation?: string; country?: string; deploymentScale?: number };
+      commercial?: { productKey?: string; approvedCapabilities?: string[] };
+      configuration?: { modules?: string[] };
+      administration?: { verifiedAdministratorEmail?: string };
+    } | null;
+  } | null;
+  provisioningJob?: { status?: string; current_stage?: string; progress_percent?: number } | null;
+  workspaceLaunchUrl?: string | null;
+  onLaunchWorkspace?: () => void;
   onContinue: () => Promise<void> | void;
 };
 
@@ -55,11 +68,12 @@ const PROVISIONING_POLL_MS = 15000;
 
 export function ProvisionBoundaryStep({
   orgData, adminData, recommendation, quotation, billingCycle, paymentReference,
-  resumeToken, readyForProvisioning, saveRecoveryLabel, provisioningError, activationStarted = false, onContinue,
+  resumeToken, readyForProvisioning, saveRecoveryLabel, provisioningError, activationStarted = false, shadowPlanning, onContinue,
+  provisioningJob, workspaceLaunchUrl, onLaunchWorkspace,
 }: Props) {
   const [provisioningStarted, setProvisioningStarted] = useState(activationStarted);
   const [timedOut, setTimedOut] = useState(false);
-  const [activeStep, setActiveStep] = useState(0);
+  const [planAcknowledged, setPlanAcknowledged] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [notificationRequested, setNotificationRequested] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
@@ -71,8 +85,42 @@ export function ProvisionBoundaryStep({
   const commercialModel = resolveCommercialModel(quotation?.commercialModel);
   const isRecurring = isRecurringModel(commercialModel);
   const amountDue = quotation?.estimatedTotal ?? null;
-  const delayed = timedOut || (!readyForProvisioning && provisioningError && !provisioningError.retryable);
+  const hasCompletedBackendResult = provisioningJob?.status === "completed" && Boolean(shadowPlanning);
+  const delayed = !hasCompletedBackendResult && (timedOut || (!readyForProvisioning && provisioningError && !provisioningError.retryable));
   const retryableFailure = provisioningError?.retryable === true;
+
+  function ShadowPlanSummary() {
+    const plan = shadowPlanning?.proposedPlan;
+    if (!shadowPlanning || !plan) return null;
+    return (
+      <section className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 text-left" aria-label="DeployIQ AI provisioning plan">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo-600">DeployIQ AI · Shadow Mode</p>
+        <h3 className="mt-1 text-lg font-bold text-slate-950">Provisioning plan</h3>
+        <ol className="mt-4 grid gap-2 text-sm" aria-label="Completed DeployIQ AI planning stages">
+          {["Understanding your requirements", "Reviewing your approved configuration", "Preparing workspace configuration", "Validating capabilities", "Provisioning plan ready"].map((stage) => (
+            <li key={stage} className="flex items-center gap-2 text-slate-700"><CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden="true" />{stage}</li>
+          ))}
+        </ol>
+        <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+          <span className="text-slate-500">Organisation</span><span className="font-semibold text-slate-900">{plan.customer?.organisation || "—"}</span>
+          <span className="text-slate-500">Approved solution</span><span className="font-semibold text-slate-900">{plan.commercial?.productKey || "—"}</span>
+          <span className="text-slate-500">Market</span><span className="font-semibold text-slate-900">{plan.customer?.country || "—"}</span>
+          <span className="text-slate-500">Scale</span><span className="font-semibold text-slate-900">{plan.customer?.deploymentScale ?? "—"}</span>
+          <span className="text-slate-500">Verified administrator</span><span className="font-semibold text-emerald-700">{plan.administration?.verifiedAdministratorEmail || "Verified"}</span>
+          <span className="text-slate-500">Policy validation status</span><span className="font-semibold text-emerald-700">{shadowPlanning.validation?.status || "validated"}</span>
+        </div>
+        <div className="mt-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Approved capabilities</p>
+          <p className="mt-1 text-sm text-slate-700">{plan.commercial?.approvedCapabilities?.join(", ") || "Platform defaults"}</p>
+        </div>
+        <div className="mt-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Workspace modules</p>
+          <p className="mt-1 text-sm text-slate-700">{plan.configuration?.modules?.join(", ") || "Manifest defaults"}</p>
+        </div>
+        <p className="mt-4 text-xs text-slate-500">This plan was validated for inspection. DeployIQ’s deterministic provisioning engine remains authoritative.</p>
+      </section>
+    );
+  }
 
   useEffect(() => {
     if (!resumeToken) return;
@@ -91,19 +139,18 @@ export function ProvisionBoundaryStep({
 
   useEffect(() => {
     if (!provisioningStarted || retryableFailure) return;
-
-    const stepTimer = window.setInterval(() => {
-      setActiveStep((current) => Math.min(current + 1, PROVISION_STEPS.length - 1));
-    }, 3000);
     const timeoutTimer = window.setTimeout(() => {
       setTimedOut(true);
     }, PROVISIONING_TIMEOUT_MS);
 
     return () => {
-      window.clearInterval(stepTimer);
       window.clearTimeout(timeoutTimer);
     };
   }, [provisioningStarted, retryableFailure]);
+
+  useEffect(() => {
+    if (hasCompletedBackendResult) setTimedOut(false);
+  }, [hasCompletedBackendResult]);
 
   useEffect(() => {
     if (!activationStarted || retryableFailure || restoredStatusCheckInFlight.current) return;
@@ -233,16 +280,46 @@ export function ProvisionBoundaryStep({
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-6 py-3 text-sm font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {checkingStatus ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
-            Continue to Workspace
+            {workspaceLaunchUrl ? "Continue to Admin Workspace" : "Check Workspace Status"}
           </button>
           <NotificationAction />
         </div>
+        <ShadowPlanSummary />
         <p className="text-xs text-slate-400">Refresh automatically is active while this page remains open.</p>
       </div>
     );
   }
 
   if (provisioningStarted) {
+    const planValidated = shadowPlanning?.validation?.status === "valid";
+    const deterministicCompleted = provisioningJob?.status === "completed";
+    if (planValidated && !planAcknowledged) {
+      return (
+        <div className="mx-auto max-w-2xl space-y-8 py-8">
+          <div className="text-center space-y-3">
+            <div className="flex justify-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
+                <CheckCircle2 className="h-8 w-8 text-emerald-500" aria-hidden="true" />
+              </div>
+            </div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900">DeployIQ AI plan validated</h1>
+            <p className="text-base leading-relaxed text-slate-500">
+              Review the trusted configuration below before continuing to deterministic workspace setup.
+            </p>
+          </div>
+          <ShadowPlanSummary />
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => setPlanAcknowledged(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-8 py-4 text-base font-semibold text-white hover:bg-orange-600"
+            >
+              Continue with Workspace Setup
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="mx-auto max-w-2xl space-y-8 py-8">
         <div className="text-center space-y-3">
@@ -251,28 +328,36 @@ export function ProvisionBoundaryStep({
               <Loader2 className="h-8 w-8 animate-spin text-orange-500" aria-hidden="true" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Preparing your DeployIQ workspace</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+            {planValidated ? (deterministicCompleted ? "Your DeployIQ workspace is ready" : "Preparing your DeployIQ workspace") : "DeployIQ AI is preparing your workspace"}
+          </h1>
           <p className="text-base text-slate-500 leading-relaxed">
-            Keep this page open. We'll launch your admin workspace automatically when provisioning completes.
+            {planValidated
+              ? "DeployIQ policy approved the proposed plan. Deterministic provisioning remains the only workspace writer."
+              : "Your trusted commercial and identity context is being reviewed. No AI stage is marked complete until the backend returns its validated plan."}
           </p>
         </div>
 
-        <ol className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          {PROVISION_STEPS.map((step, index) => {
-            const isDone = index < activeStep;
-            const isActive = index === activeStep;
-            return (
+        {shadowPlanning ? (
+          <ol className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm" aria-label="Deterministic provisioning stages">
+            {PROVISION_STEPS.map((step, index) => (
               <li key={step} className="flex items-center gap-3">
-                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                  isDone ? "bg-emerald-500 text-white" : isActive ? "bg-orange-500 text-white" : "bg-slate-100 text-slate-400"
-                }`}>
-                  {isDone ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : isActive ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : index + 1}
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${deterministicCompleted ? "bg-emerald-500 text-white" : index === 0 ? "bg-orange-500 text-white" : "bg-slate-100 text-slate-400"}`}>
+                  {deterministicCompleted ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : index === 0 ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : index + 1}
                 </span>
-                <span className={`text-sm font-semibold ${isDone || isActive ? "text-slate-900" : "text-slate-400"}`}>{step}</span>
+                <span className={`text-sm font-semibold ${deterministicCompleted || index === 0 ? "text-slate-900" : "text-slate-400"}`}>{step}</span>
               </li>
-            );
-          })}
-        </ol>
+            ))}
+          </ol>
+        ) : null}
+
+        {deterministicCompleted && workspaceLaunchUrl ? (
+          <div className="text-center">
+            <button type="button" onClick={onLaunchWorkspace} className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-8 py-4 text-base font-semibold text-white hover:bg-orange-600">
+              Continue to Admin Workspace
+            </button>
+          </div>
+        ) : null}
 
         <p className="text-center text-xs text-slate-400">
           {saveRecoveryLabel ?? "Your secure activation state is saved while provisioning runs."}

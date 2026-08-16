@@ -117,15 +117,15 @@ export function GuidedDiscoveryStep({ initialData, onSubmit, onBack, loading }: 
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
+      <form onSubmit={handleSubmit} noValidate className="px-6 py-9 sm:px-10 lg:px-12 lg:py-12">
       <div className="space-y-8">
         <div className="space-y-3">
           <p className="text-xs font-semibold uppercase tracking-widest text-orange-500">
             Step 2 of 4
           </p>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+          <h2 className="text-3xl font-bold tracking-tight text-slate-900">
             Let's configure your DeployIQ workspace
-          </h1>
+          </h2>
           <p className="text-base text-slate-500 leading-relaxed">
             Answer a few questions so DeployIQ can recommend the right solution, configure your
             workspace, and prepare the appropriate commercial plan.
@@ -342,6 +342,6 @@ export function GuidedDiscoveryStep({ initialData, onSubmit, onBack, loading }: 
           </button>
         </div>
       </div>
-    </form>
+      </form>
   );
 }

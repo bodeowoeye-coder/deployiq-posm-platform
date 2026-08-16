@@ -1,6 +1,7 @@
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 
 export async function upsertPlatformProvisioningContext(input: {
+  acquisitionDraftId: string;
   organisationName: string;
   contactPerson: string;
   businessEmail: string;
@@ -12,7 +13,7 @@ export async function upsertPlatformProvisioningContext(input: {
   const { data: existingClient, error: clientLookupError } = await adminSupabase
     .from("clients")
     .select("id")
-    .ilike("name", input.organisationName)
+    .eq("acquisition_draft_id", input.acquisitionDraftId)
     .maybeSingle();
 
   if (clientLookupError) throw clientLookupError;
@@ -33,6 +34,7 @@ export async function upsertPlatformProvisioningContext(input: {
   const { data, error } = await adminSupabase
     .from("clients")
     .insert({
+      acquisition_draft_id: input.acquisitionDraftId,
       name: input.organisationName,
       status: "Active"
     })

@@ -194,11 +194,13 @@ export function DashboardSidebar({
           {items.map((item) => renderItem(item))}
         </nav>
 
-        <div className="mt-auto border-t border-slate-200 pt-4">
-          <div className="px-1">
-            <SignOutButton className="w-full" />
+        {audience === "client" ? (
+          <div className="mt-auto border-t border-slate-200 pt-4">
+            <div className="px-1">
+              <SignOutButton className="w-full" />
+            </div>
           </div>
-        </div>
+        ) : null}
         </div>
       </aside>
     </>

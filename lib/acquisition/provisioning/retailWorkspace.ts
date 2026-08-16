@@ -251,17 +251,21 @@ export function buildRetailHealthChecks(input: {
   manifestVersion: string | null;
   productKey: string | null;
   workspaceBelongsToDraft: boolean;
+  expectedWorkspaceExists: boolean;
   duplicateWorkspaceCount: number;
   crossTenantReferenceCount: number;
   ownerMembershipExists: boolean;
+  entitlementVerified: boolean;
+  destinationVerified: boolean;
   roleCount: number;
   permissionCount: number;
 }) {
   const checks = {
     organisationExists: Boolean(input.organisationId),
     workspaceIdentityExists: Boolean(input.workspaceSlug),
+    expectedWorkspaceExists: input.expectedWorkspaceExists,
     slugReserved: Boolean(input.workspaceSlug),
-    productEntitlementActive: Boolean(input.entitlementId),
+    productEntitlementActive: Boolean(input.entitlementId) && input.entitlementVerified,
     primaryAdministratorExists: Boolean(input.adminUserId),
     ownerMembershipExists: input.ownerMembershipExists,
     defaultRolesExist: input.roleCount >= getRetailWorkspaceManifest().roles.length,
@@ -273,6 +277,7 @@ export function buildRetailHealthChecks(input: {
     workspaceBelongsToAcquisitionDraft: input.workspaceBelongsToDraft,
     noDuplicateWorkspace: input.duplicateWorkspaceCount <= 1,
     noCrossTenantReferences: input.crossTenantReferenceCount === 0,
+    workspaceDestinationVerified: input.destinationVerified,
   };
   return {
     checks,

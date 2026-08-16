@@ -3,6 +3,7 @@ import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { getCurrentUserContext, readAccountSecurityState } from "@/lib/auth";
 import { getLatestActivationDraftForCustomer, getOnboardingDraftByToken } from "@/lib/commercial/onboarding/service";
 import { isActivationPendingDraft } from "@/lib/commercial/onboarding/stepMapping";
+import { getProvisioningJobForDraft } from "@/lib/acquisition/provisioning/service";
 
 export const dynamic = "force-dynamic";
 
@@ -29,9 +30,21 @@ export default async function WorkspaceActivationPage({
     const contextEmail = context.user.email?.toLowerCase() ?? "";
     const ownedByUser = draft?.authenticated_user_id === context.user.id;
     const ownedByVerifiedEmail = !draft?.authenticated_user_id && Boolean(draftEmail && draftEmail === contextEmail);
-    if (!draft || (!ownedByUser && !ownedByVerifiedEmail) || !isActivationPendingDraft(draft)) {
+    if (!draft || (!ownedByUser && !ownedByVerifiedEmail)) {
       redirect("/onboarding");
     }
+    if (draft.status === "provisioned" || draft.draft_data?.provisioningStatus === "completed") {
+      const completedJob = await getProvisioningJobForDraft(draft.id);
+      const destination = completedJob?.result_data?.workspaceDestination as { adminWorkspaceUrl?: unknown } | undefined;
+      const adminWorkspaceUrl = typeof destination?.adminWorkspaceUrl === "string"
+        ? destination.adminWorkspaceUrl
+        : typeof draft.draft_data?.adminWorkspaceUrl === "string"
+          ? draft.draft_data.adminWorkspaceUrl
+          : null;
+      if (completedJob?.status === "completed" && adminWorkspaceUrl) redirect(adminWorkspaceUrl);
+      redirect("/onboarding");
+    }
+    if (!isActivationPendingDraft(draft)) redirect("/onboarding");
     return <OnboardingShell />;
   }
 

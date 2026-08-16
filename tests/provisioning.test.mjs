@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { validateProvisioningEligibility, validateProvisioningProductChain } from "../lib/acquisition/provisioning/validation.ts";
-import { buildProvisioningFailureMetadata } from "../lib/acquisition/provisioning/failure.ts";
+import { buildProvisioningFailureMetadata, classifyProvisioningFailure } from "../lib/acquisition/provisioning/failure.ts";
 import { getProductProvisioningManifest, isProvisioningBlueprintEnabled } from "../lib/acquisition/provisioning/registry.ts";
 import {
   assertRetailWorkspaceAccess,
@@ -14,6 +14,7 @@ import {
 } from "../lib/acquisition/provisioning/retailManifest.ts";
 import { buildRetailHealthChecks } from "../lib/acquisition/provisioning/retailWorkspace.ts";
 import { verifyWorkspaceDestination } from "../lib/acquisition/provisioning/workspaceDestination.ts";
+import { assertProvisioningOwnership } from "../lib/acquisition/provisioning/ownership.ts";
 
 function makeQuotation(overrides = {}) {
   return {
@@ -102,10 +103,74 @@ test("provisioning: failure metadata persists failed safe stage and code", () =>
   assert.equal(failure.retryable, true);
 });
 
+test("provisioning hardening: failure taxonomy is bounded", () => {
+  assert.equal(classifyProvisioningFailure("draft_owner_mismatch"), "security_rejected");
+  assert.equal(classifyProvisioningFailure("provisioning_blueprint_not_enabled"), "approval_required");
+  assert.equal(classifyProvisioningFailure("product_chain_mismatch"), "permanent");
+  assert.equal(classifyProvisioningFailure("network_timeout"), "retryable");
+});
+
 test("provisioning: retry path reuses existing job by acquisition draft", () => {
   const source = readFileSync(new URL("../lib/acquisition/provisioning/service.ts", import.meta.url), "utf8");
   assert.match(source, /\.eq\("acquisition_draft_id", input\.draftId\)/);
   assert.match(source, /if \(existing\) return normaliseJob/);
+});
+
+test("provisioning hardening: authenticated owner and verified identity are required", () => {
+  const route = readFileSync(new URL("../app/api/acquisition/provision/route.ts", import.meta.url), "utf8");
+  const service = readFileSync(new URL("../lib/acquisition/provisioning/service.ts", import.meta.url), "utf8");
+  assert.match(route, /getCurrentAccessToken/);
+  assert.match(route, /authentication_required/);
+  assert.match(service, /assertProvisioningOwnership\(draft, user\)/);
+  const ownedDraft = makeDraft({
+    authenticated_user_id: "owner-1",
+    draft_data: { emailVerified: true, adminEmail: "owner@example.com" },
+  });
+  assert.doesNotThrow(() => assertProvisioningOwnership(ownedDraft, { id: "owner-1", email: "OWNER@example.com", emailConfirmed: true }));
+  assert.throws(
+    () => assertProvisioningOwnership(ownedDraft, { id: "attacker-1", email: "owner@example.com", emailConfirmed: true }),
+    (error) => error.code === "draft_owner_mismatch"
+  );
+  assert.throws(
+    () => assertProvisioningOwnership(ownedDraft, { id: "owner-1", email: "owner@example.com", emailConfirmed: false }),
+    (error) => error.code === "identity_not_verified"
+  );
+});
+
+test("provisioning hardening: immutable draft identity replaces organisation-name lookup", () => {
+  const platform = readFileSync(new URL("../lib/commercial/provisioning/platform.ts", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../supabase/migrations/20260816020000_harden_acquisition_provisioning_boundary.sql", import.meta.url), "utf8");
+  assert.match(platform, /\.eq\("acquisition_draft_id", input\.acquisitionDraftId\)/);
+  assert.doesNotMatch(platform, /\.ilike\("name"/);
+  assert.match(migration, /clients_acquisition_draft_id_uidx/);
+});
+
+test("provisioning hardening: legacy endpoint cannot bypass canonical eligibility", () => {
+  const legacy = readFileSync(new URL("../app/api/onboarding/provision/route.ts", import.meta.url), "utf8");
+  assert.match(legacy, /legacy_provisioning_retired/);
+  assert.match(legacy, /status: 410/);
+  assert.doesNotMatch(legacy, /provisionRetailProduct/);
+});
+
+test("provisioning hardening: database lease and winner recovery prevent concurrent execution", () => {
+  const service = readFileSync(new URL("../lib/acquisition/provisioning/service.ts", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../supabase/migrations/20260816020000_harden_acquisition_provisioning_boundary.sql", import.meta.url), "utf8");
+  assert.match(service, /claim_acquisition_provisioning_job/);
+  assert.match(service, /if \(winner\) return normaliseJob/);
+  assert.match(service, /if \(!claimed\)/);
+  assert.match(service, /job: canonicalJob/);
+  assert.match(migration, /execution_lock_token/);
+  assert.match(migration, /status in \('queued', 'failed'\)/);
+});
+
+test("provisioning hardening: verification reads real tenant relationships", () => {
+  const service = readFileSync(new URL("../lib/acquisition/provisioning/service.ts", import.meta.url), "utf8");
+  assert.match(service, /from\("workspace_settings"\)/);
+  assert.match(service, /from\("product_entitlements"\)/);
+  assert.match(service, /from\("workspace_memberships"\)/);
+  assert.match(service, /neq\("client_id", clientId\)/);
+  assert.doesNotMatch(service, /duplicateWorkspaceCount: 1/);
+  assert.doesNotMatch(service, /crossTenantReferenceCount: 0/);
 });
 
 test("provisioning: Set up my workspace marks activation state before job execution", () => {
@@ -191,7 +256,7 @@ test("provisioning: activation boundary shows staged progress and delayed fallba
   assert.match(boundary, /Your DeployIQ workspace is almost ready/);
   assert.match(boundary, /We’re preparing your DeployIQ workspace in the background/);
   assert.match(boundary, /We’ve sent a confirmation email containing a secure link/);
-  assert.match(boundary, /Continue to Workspace/);
+  assert.match(boundary, /Continue to Admin Workspace/);
   assert.match(boundary, /Notify me when ready/);
   assert.match(boundary, /Notification requested/);
   assert.match(boundary, /We’ll email you as soon as your DeployIQ workspace is ready/);
@@ -205,7 +270,7 @@ test("provisioning: pending account resumes activation status instead of Set up 
   assert.match(shell, /provisioningJobId/);
   assert.match(shell, /setActivationStarted\(hasStartedActivation && provisioningStatus !== "completed"\)/);
   assert.match(boundary, /const \[provisioningStarted, setProvisioningStarted\] = useState\(activationStarted\)/);
-  assert.match(boundary, /Preparing your DeployIQ workspace/);
+  assert.match(boundary, /DeployIQ AI is preparing your workspace/);
   assert.match(boundary, /Your DeployIQ workspace is almost ready/);
 });
 
@@ -481,9 +546,12 @@ test("retail reference: health checks must pass before completion", () => {
     manifestVersion: getRetailWorkspaceManifest().identity.manifestVersion,
     productKey: "retail",
     workspaceBelongsToDraft: true,
+    expectedWorkspaceExists: true,
     duplicateWorkspaceCount: 1,
     crossTenantReferenceCount: 0,
     ownerMembershipExists: true,
+    entitlementVerified: true,
+    destinationVerified: true,
     roleCount: 6,
     permissionCount: 10,
   });
@@ -501,9 +569,12 @@ test("retail reference: failed health checks block completion", () => {
     manifestVersion: getRetailWorkspaceManifest().identity.manifestVersion,
     productKey: "retail",
     workspaceBelongsToDraft: true,
+    expectedWorkspaceExists: true,
     duplicateWorkspaceCount: 1,
     crossTenantReferenceCount: 0,
     ownerMembershipExists: true,
+    entitlementVerified: false,
+    destinationVerified: true,
     roleCount: 6,
     permissionCount: 10,
   });
@@ -522,9 +593,12 @@ test("retail reference: missing Customer Admin membership blocks completion", ()
     manifestVersion: getRetailWorkspaceManifest().identity.manifestVersion,
     productKey: "retail",
     workspaceBelongsToDraft: true,
+    expectedWorkspaceExists: true,
     duplicateWorkspaceCount: 1,
     crossTenantReferenceCount: 0,
     ownerMembershipExists: false,
+    entitlementVerified: true,
+    destinationVerified: true,
     roleCount: 6,
     permissionCount: 10,
   });
