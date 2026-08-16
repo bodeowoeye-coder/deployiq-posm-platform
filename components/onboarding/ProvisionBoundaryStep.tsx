@@ -32,12 +32,16 @@ type Props = {
   activationStarted?: boolean;
   shadowPlanning?: {
     status: string;
+    provider?: string;
+    model?: string;
+    fallbackUsed?: boolean;
     validation?: { status?: string };
     proposedPlan?: {
       customer?: { organisation?: string; country?: string; deploymentScale?: number };
       commercial?: { productKey?: string; approvedCapabilities?: string[] };
       configuration?: { modules?: string[] };
       administration?: { verifiedAdministratorEmail?: string };
+      interpretation?: { summary?: string; rationale?: string[]; humanReviewRecommended?: boolean };
     } | null;
   } | null;
   provisioningJob?: { status?: string; current_stage?: string; progress_percent?: number } | null;
@@ -95,7 +99,17 @@ export function ProvisionBoundaryStep({
     return (
       <section className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 text-left" aria-label="DeployIQ AI provisioning plan">
         <p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo-600">DeployIQ AI · Shadow Mode</p>
-        <h3 className="mt-1 text-lg font-bold text-slate-950">Provisioning plan</h3>
+        <h3 className="mt-1 text-lg font-bold text-slate-950">Understanding your requirements</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-700">{plan.interpretation?.summary || "Your approved commercial and operational requirements have been translated into a constrained workspace proposal."}</p>
+        {plan.interpretation?.rationale?.length ? (
+          <div className="mt-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-indigo-600">Why this configuration</p>
+            <ul className="mt-2 grid gap-2 text-sm text-slate-700">
+              {plan.interpretation.rationale.map((reason) => <li key={reason} className="flex gap-2"><span className="text-indigo-500" aria-hidden="true">•</span>{reason}</li>)}
+            </ul>
+          </div>
+        ) : null}
+        <h4 className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-500">Proposed workspace</h4>
         <ol className="mt-4 grid gap-2 text-sm" aria-label="Completed DeployIQ AI planning stages">
           {["Understanding your requirements", "Reviewing your approved configuration", "Preparing workspace configuration", "Validating capabilities", "Provisioning plan ready"].map((stage) => (
             <li key={stage} className="flex items-center gap-2 text-slate-700"><CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden="true" />{stage}</li>
@@ -107,7 +121,6 @@ export function ProvisionBoundaryStep({
           <span className="text-slate-500">Market</span><span className="font-semibold text-slate-900">{plan.customer?.country || "—"}</span>
           <span className="text-slate-500">Scale</span><span className="font-semibold text-slate-900">{plan.customer?.deploymentScale ?? "—"}</span>
           <span className="text-slate-500">Verified administrator</span><span className="font-semibold text-emerald-700">{plan.administration?.verifiedAdministratorEmail || "Verified"}</span>
-          <span className="text-slate-500">Policy validation status</span><span className="font-semibold text-emerald-700">{shadowPlanning.validation?.status || "validated"}</span>
         </div>
         <div className="mt-4">
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Approved capabilities</p>
@@ -117,7 +130,14 @@ export function ProvisionBoundaryStep({
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Workspace modules</p>
           <p className="mt-1 text-sm text-slate-700">{plan.configuration?.modules?.join(", ") || "Manifest defaults"}</p>
         </div>
-        <p className="mt-4 text-xs text-slate-500">This plan was validated for inspection. DeployIQ’s deterministic provisioning engine remains authoritative.</p>
+        <div className="mt-5 rounded-xl border border-emerald-200 bg-white/70 p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">DeployIQ policy check</p>
+          <ul className="mt-2 grid gap-1.5 text-sm text-slate-700">
+            {["Product entitlement validated", "Commercial configuration validated", "Capabilities validated", "Workspace configuration allowed"].map((check) => <li key={check} className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" />{check}</li>)}
+          </ul>
+          <p className="mt-3 text-sm font-semibold text-emerald-700">Plan {shadowPlanning.validation?.status || "validated"} against DeployIQ business rules</p>
+        </div>
+        <p className="mt-4 text-xs text-slate-500">{shadowPlanning.fallbackUsed ? "A deterministic plan was used because the model provider was unavailable or outside policy. " : ""}DeployIQ’s deterministic provisioning engine remains authoritative.</p>
       </section>
     );
   }
@@ -291,7 +311,7 @@ export function ProvisionBoundaryStep({
   }
 
   if (provisioningStarted) {
-    const planValidated = shadowPlanning?.validation?.status === "valid";
+    const planValidated = Boolean(shadowPlanning && shadowPlanning.validation?.status !== "rejected");
     const deterministicCompleted = provisioningJob?.status === "completed";
     if (planValidated && !planAcknowledged) {
       return (

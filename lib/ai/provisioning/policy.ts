@@ -25,6 +25,6 @@ export function compareProvisioningPlans(proposed: ProvisioningPlan, baseline: P
   if (proposed.acquisitionDraftId !== baseline.acquisitionDraftId || proposed.authenticatedOwnerId !== baseline.authenticatedOwnerId || !same(proposed.administration, baseline.administration)) differences.push({ path: "identity", classification: "security_sensitive_difference" });
   if (!same(proposed.commercial, baseline.commercial)) differences.push({ path: "commercial", classification: "commercial_difference" });
   if (!same(proposed.configuration, baseline.configuration)) differences.push({ path: "configuration", classification: "unsupported_difference" });
-  if (!same(proposed.decisions, baseline.decisions) || !same(proposed.warnings, baseline.warnings)) differences.push({ path: "explanation", classification: "explanation_only_difference" });
+  if (!same(proposed.interpretation, baseline.interpretation) || !same(proposed.decisions, baseline.decisions) || !same(proposed.warnings, baseline.warnings)) differences.push({ path: "explanation", classification: "explanation_only_difference" });
   return differences.length ? differences : [{ path: "$", classification: "exact_match" }];
 }

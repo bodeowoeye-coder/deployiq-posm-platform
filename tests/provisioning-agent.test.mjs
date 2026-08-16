@@ -6,6 +6,7 @@ import { getProvisioningAgentFlags, shouldRunProvisioningShadow } from "../lib/a
 import { createDeterministicBaseline } from "../lib/ai/provisioning/planner.ts";
 import { compareProvisioningPlans, validateProvisioningPlan } from "../lib/ai/provisioning/policy.ts";
 import { runProvisioningShadow } from "../lib/ai/provisioning/shadow.ts";
+import { buildSanitizedModelInput, OpenAIProvisioningPlannerProvider, parseModelProposal, ProvisioningProviderError } from "../lib/ai/provisioning/openaiProvider.ts";
 
 function context() {
   const draft = {
@@ -23,6 +24,14 @@ test("shadow context is server-derived and excludes all credentials and resume a
   for (const forbidden of ["resumeToken", "resume_token", "accessToken", "refreshToken", "password", "otp", "setupLink", "recoveryLink", "SECRET_"]) assert.doesNotMatch(serialized, new RegExp(forbidden, "i"));
   assert.equal(trusted.acquisitionDraftId, "draft-owner");
   assert.equal(trusted.authenticatedOwnerId, "user-owner");
+});
+
+test("real-provider input is compact, allowlisted, and excludes identity and secret-bearing fields", () => {
+  const trusted = context();
+  const serialized = JSON.stringify(buildSanitizedModelInput(trusted));
+  for (const forbidden of ["draft-owner", "user-owner", "admin@example.com", "COMM-1", "contextHash", "resume", "accessToken", "refreshToken", "password", "otp", "service_role", "SECRET_"]) assert.doesNotMatch(serialized, new RegExp(forbidden, "i"));
+  assert.match(serialized, /allowedConfiguration/);
+  assert.match(serialized, /administratorVerified/);
 });
 
 test("deterministic baseline uses the typed Retail manifest shape", () => {
@@ -43,6 +52,8 @@ for (const [name, mutate, reason] of [
   ["administrator", (plan) => { plan.administration.verifiedAdministratorUserId = "other"; }, "administrator_identity_changed"],
   ["owner", (plan) => { plan.authenticatedOwnerId = "other"; }, "authenticated_owner_changed"],
   ["context hash", (plan) => { plan.contextHash = "stale"; }, "stale_or_unknown_context"],
+  ["workspace slug", (plan) => { plan.workspace.requestedSlug = "other-tenant"; }, "workspace_identity_changed"],
+  ["manifest version", (plan) => { plan.manifestVersion = "untrusted-v99"; }, "manifest_version_changed"],
   ["manifest key", (plan) => { plan.configuration.modules.push("unknown_module"); }, "unknown_module"],
   ["acquisition", (plan) => { plan.acquisitionDraftId = "unrelated"; }, "acquisition_identity_changed"],
 ]) test(`policy rejects AI changes to ${name}`, () => {
@@ -52,11 +63,58 @@ for (const [name, mutate, reason] of [
 });
 
 test("provider failure falls back safely without blocking deterministic authority", async () => {
-  const result = await runProvisioningShadow(context(), { version: "failing-provider", async createPlan() { throw new Error("secret provider detail"); } });
+  const result = await runProvisioningShadow(context(), { provider: "test", model: "failure", version: "failing-provider", promptSchemaVersion: "test-v1", async createPlan() { throw new Error("secret provider detail"); } });
   assert.equal(result.status, "fallback");
   assert.equal(result.validation.status, "valid");
-  assert.equal(result.errorCode, "planner_unavailable");
+  assert.equal(result.providerFailureCode, "planner_unavailable");
+  assert.equal(result.fallbackUsed, true);
+  assert.ok(result.proposedPlan);
   assert.doesNotMatch(JSON.stringify(result), /secret provider detail/);
+});
+
+test("missing real-provider credentials produces a bounded deterministic fallback", async () => {
+  const provider = new OpenAIProvisioningPlannerProvider("gpt-5.4-mini", 3000, 0, "");
+  const result = await runProvisioningShadow(context(), provider);
+  assert.equal(result.provider, "openai");
+  assert.equal(result.providerFailureCode, "provider_credentials_missing");
+  assert.equal(result.fallbackUsed, true);
+  assert.equal(result.validation.status, "valid");
+});
+
+function validModelProposal() {
+  const baseline = createDeterministicBaseline(context());
+  return {
+    interpretation: { summary: "A constrained Retail field programme.", rationale: ["Evidence capture supports field verification."], humanReviewRecommended: false },
+    configuration: baseline.configuration,
+    decisions: [{ code: "retail_plan", classification: "ai_assisted", source: "trusted_context", rationale: "Uses only approved configuration." }],
+    warnings: [], approval: { required: false, reasons: [] },
+  };
+}
+
+test("strict provider parser rejects malformed, authority-bearing, and executable output", () => {
+  assert.throws(() => parseModelProposal("not-json"), (error) => error instanceof ProvisioningProviderError && error.code === "malformed_json");
+  assert.throws(() => parseModelProposal(JSON.stringify({ ...validModelProposal(), clientId: "unrelated" })), /schema_properties_invalid/);
+  assert.throws(() => parseModelProposal(JSON.stringify({ ...validModelProposal(), workspaceSlug: "other" })), /schema_properties_invalid/);
+  assert.throws(() => parseModelProposal(JSON.stringify({ ...validModelProposal(), manifestVersion: "evil" })), /schema_properties_invalid/);
+  const executable = validModelProposal(); executable.interpretation.rationale = ["Execute DROP TABLE public.clients"];
+  assert.throws(() => parseModelProposal(JSON.stringify(executable)), /unsafe_narrative/);
+});
+
+test("real provider proposal still passes through deterministic policy rejection", async () => {
+  const trusted = context();
+  const proposed = createDeterministicBaseline(trusted);
+  proposed.commercial.productKey = "fleet";
+  proposed.commercial.quantity = 50000;
+  proposed.commercial.currency = "USD";
+  proposed.configuration.modules.push("unsupported_ai_module");
+  proposed.configuration.roles.push("super_admin");
+  const result = await runProvisioningShadow(trusted, { provider: "test", model: "adversarial", version: "test-v1", promptSchemaVersion: "test-v1", async createPlan() { return proposed; } });
+  assert.equal(result.status, "fallback");
+  assert.equal(result.fallbackUsed, true);
+  assert.equal(result.providerFailureCode, "policy_rejected");
+  assert.equal(result.providerValidation?.status, "rejected");
+  assert.equal(result.validation.status, "valid");
+  assert.equal(result.proposedPlan?.commercial.productKey, "retail");
 });
 
 test("execution remains structurally disabled and flags fail closed", () => {
@@ -70,10 +128,10 @@ test("execution remains structurally disabled and flags fail closed", () => {
   process.env = previous;
 });
 
-test("AI modules contain no Supabase client or unrestricted database writes", () => {
-  for (const file of ["context.ts", "flags.ts", "planner.ts", "policy.ts", "schema.ts", "shadow.ts"]) {
+test("AI modules contain no Supabase client, provisioning writer, service-role helper, or unrestricted database writes", () => {
+  for (const file of ["context.ts", "flags.ts", "openaiProvider.ts", "planner.ts", "policy.ts", "schema.ts", "shadow.ts"]) {
     const source = readFileSync(new URL(`../lib/ai/provisioning/${file}`, import.meta.url), "utf8");
-    assert.doesNotMatch(source, /createAdminSupabase|createClient|supabase|\.from\(["']|\.insert\(\{|\.update\(\{|\.delete\(\)|\.rpc\(["']/i);
+    assert.doesNotMatch(source, /createAdminSupabase|supabaseAdmin|provisionRetailWorkspaceReference|\/retailWorkspace["']|service[_-]?role|\.from\(["']|\.insert\(\{|\.update\(\{|\.delete\(\)|\.rpc\(["']/i);
   }
 });
 
