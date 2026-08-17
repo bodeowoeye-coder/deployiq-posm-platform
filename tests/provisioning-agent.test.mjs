@@ -7,6 +7,12 @@ import { createDeterministicBaseline } from "../lib/ai/provisioning/planner.ts";
 import { compareProvisioningPlans, validateProvisioningPlan } from "../lib/ai/provisioning/policy.ts";
 import { runProvisioningShadow } from "../lib/ai/provisioning/shadow.ts";
 import { buildSanitizedModelInput, OpenAIProvisioningPlannerProvider, parseModelProposal, ProvisioningProviderError } from "../lib/ai/provisioning/openaiProvider.ts";
+import {
+  advanceProvisioningPresentationPhase,
+  preserveShadowPlanning,
+  resolveProvisioningPresentationPhase,
+  shadowPlanAcknowledgementCookie,
+} from "../lib/ai/provisioning/presentation.ts";
 
 function context() {
   const draft = {
@@ -128,6 +134,19 @@ test("execution remains structurally disabled and flags fail closed", () => {
   process.env = previous;
 });
 
+test("Shadow presentation phases are monotonic around validated review", () => {
+  const shadowPlanning = { status: "completed", validation: { status: "valid" }, proposedPlan: { planId: "plan-1" } };
+  assert.equal(resolveProvisioningPresentationPhase({ shadowPlanning: null, jobStatus: "running", acknowledged: false, started: true }), "planning");
+  assert.equal(resolveProvisioningPresentationPhase({ shadowPlanning, jobStatus: "completed", acknowledged: false, started: true }), "validated_plan_review");
+  assert.equal(resolveProvisioningPresentationPhase({ shadowPlanning, jobStatus: "running", acknowledged: true, started: true }), "provisioning");
+  assert.equal(resolveProvisioningPresentationPhase({ shadowPlanning, jobStatus: "completed", acknowledged: true, started: true }), "completed");
+  assert.equal(preserveShadowPlanning(shadowPlanning, null), shadowPlanning);
+  assert.equal(advanceProvisioningPresentationPhase("validated_plan_review", "completed", false), "validated_plan_review");
+  assert.equal(advanceProvisioningPresentationPhase("validated_plan_review", "provisioning", true), "provisioning");
+  assert.equal(advanceProvisioningPresentationPhase("provisioning", "planning", true), "provisioning");
+  assert.equal(shadowPlanAcknowledgementCookie("job-1"), "deployiq-shadow-plan-ack-job-1");
+});
+
 test("AI modules contain no Supabase client, provisioning writer, service-role helper, or unrestricted database writes", () => {
   for (const file of ["context.ts", "flags.ts", "openaiProvider.ts", "planner.ts", "policy.ts", "schema.ts", "shadow.ts"]) {
     const source = readFileSync(new URL(`../lib/ai/provisioning/${file}`, import.meta.url), "utf8");
@@ -147,15 +166,22 @@ test("customer handoff receives and retains the persisted Shadow result before w
   const shell = readFileSync(new URL("../components/onboarding/OnboardingShell.tsx", import.meta.url), "utf8");
   const boundary = readFileSync(new URL("../components/onboarding/ProvisionBoundaryStep.tsx", import.meta.url), "utf8");
   assert.match(route, /shadowPlanning: result\.job\.result_data\.shadowPlanning \?\? null/);
-  assert.match(shell, /setShadowPlanning\(payload\.shadowPlanning \?\? null\)/);
+  assert.match(shell, /setShadowPlanning\(\(current\) => preserveShadowPlanning\(current \?\? null, incomingShadowPlanning\)\)/);
   assert.match(shell, /setProvisioningJob\(payload\.job \?\? null\)/);
   assert.match(boundary, /DeployIQ AI is preparing your workspace/);
   assert.match(boundary, /DeployIQ AI plan validated/);
   assert.match(boundary, /Continue with Workspace Setup/);
-  assert.match(boundary, /planAcknowledged/);
+  assert.match(boundary, /presentationPhase === "validated_plan_review"/);
   assert.match(boundary, /hasCompletedBackendResult/);
   assert.match(boundary, /deterministicCompleted/);
   assert.doesNotMatch(boundary, /setActiveStep|stepTimer/);
+});
+
+test("activation cannot bypass an unacknowledged validated plan", () => {
+  const activation = readFileSync(new URL("../app/workspace/activation/page.tsx", import.meta.url), "utf8");
+  assert.match(activation, /hasValidatedShadowPlan\(shadowPlanning\) \|\| planAcknowledged/);
+  assert.match(activation, /initialPlanAcknowledged=\{planAcknowledged\}/);
+  assert.match(activation, /shadowPlanAcknowledgementCookie\(completedJob\.id\)/);
 });
 
 test("completed localhost provisioning exposes only the existing tenant-checked admin route", () => {

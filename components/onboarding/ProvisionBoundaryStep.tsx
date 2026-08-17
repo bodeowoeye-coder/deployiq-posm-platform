@@ -9,6 +9,7 @@ import { getChargeForCycle, calculateBillingQuote, formatMoney, getPeriodLabel }
 import { billingPeriodLabel, isRecurringModel, resolveCommercialModel } from "@/lib/commercial/pricing/commercialModel";
 import type { IdentityOrgData } from "./IdentityOrganisationStep";
 import type { IdentityAdminData } from "./IdentityAdminStep";
+import type { ProvisioningPresentationPhase } from "@/lib/ai/provisioning/presentation";
 
 const DOMAIN = "deployiq.ng";
 
@@ -44,9 +45,11 @@ type Props = {
       interpretation?: { summary?: string; rationale?: string[]; humanReviewRecommended?: boolean };
     } | null;
   } | null;
-  provisioningJob?: { status?: string; current_stage?: string; progress_percent?: number } | null;
+  provisioningJob?: { id?: string; status?: string; current_stage?: string; progress_percent?: number } | null;
   workspaceLaunchUrl?: string | null;
   browserAuthenticated: boolean;
+  presentationPhase: ProvisioningPresentationPhase;
+  onAcknowledgeShadowPlan: () => Promise<void> | void;
   onLaunchWorkspace?: () => void;
   onContinue: () => Promise<void> | void;
 };
@@ -74,11 +77,9 @@ const PROVISIONING_POLL_MS = 15000;
 export function ProvisionBoundaryStep({
   orgData, adminData, recommendation, quotation, billingCycle, paymentReference,
   resumeToken, readyForProvisioning, saveRecoveryLabel, provisioningError, activationStarted = false, shadowPlanning, onContinue,
-  provisioningJob, workspaceLaunchUrl, browserAuthenticated, onLaunchWorkspace,
+  provisioningJob, workspaceLaunchUrl, browserAuthenticated, presentationPhase, onAcknowledgeShadowPlan, onLaunchWorkspace,
 }: Props) {
-  const [provisioningStarted, setProvisioningStarted] = useState(activationStarted);
   const [timedOut, setTimedOut] = useState(false);
-  const [planAcknowledged, setPlanAcknowledged] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [notificationRequested, setNotificationRequested] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
@@ -91,7 +92,9 @@ export function ProvisionBoundaryStep({
   const isRecurring = isRecurringModel(commercialModel);
   const amountDue = quotation?.estimatedTotal ?? null;
   const hasCompletedBackendResult = provisioningJob?.status === "completed" && Boolean(shadowPlanning);
-  const delayed = !hasCompletedBackendResult && (timedOut || (!readyForProvisioning && provisioningError && !provisioningError.retryable));
+  const delayed = presentationPhase !== "validated_plan_review"
+    && !hasCompletedBackendResult
+    && (timedOut || (!readyForProvisioning && provisioningError && !provisioningError.retryable));
   const retryableFailure = provisioningError?.retryable === true;
 
   function ShadowPlanSummary() {
@@ -159,7 +162,7 @@ export function ProvisionBoundaryStep({
   }, [browserAuthenticated, timedOut, retryableFailure, notificationRequested]);
 
   useEffect(() => {
-    if (!browserAuthenticated || !provisioningStarted || retryableFailure) return;
+    if (!browserAuthenticated || presentationPhase === "idle" || presentationPhase === "validated_plan_review" || presentationPhase === "completed" || retryableFailure) return;
     const timeoutTimer = window.setTimeout(() => {
       setTimedOut(true);
     }, PROVISIONING_TIMEOUT_MS);
@@ -167,7 +170,7 @@ export function ProvisionBoundaryStep({
     return () => {
       window.clearTimeout(timeoutTimer);
     };
-  }, [browserAuthenticated, provisioningStarted, retryableFailure]);
+  }, [browserAuthenticated, presentationPhase, retryableFailure]);
 
   useEffect(() => {
     if (hasCompletedBackendResult) setTimedOut(false);
@@ -176,7 +179,6 @@ export function ProvisionBoundaryStep({
   useEffect(() => {
     if (!browserAuthenticated || !activationStarted || retryableFailure || restoredStatusCheckInFlight.current) return;
     restoredStatusCheckInFlight.current = true;
-    setProvisioningStarted(true);
     setCheckingStatus(true);
     Promise.resolve(onContinue()).finally(() => {
       setCheckingStatus(false);
@@ -198,7 +200,6 @@ export function ProvisionBoundaryStep({
   }, [browserAuthenticated, delayed, onContinue, retryableFailure]);
 
   async function startProvisioning() {
-    setProvisioningStarted(true);
     setTimedOut(false);
     setCheckingStatus(true);
     try {
@@ -335,10 +336,9 @@ export function ProvisionBoundaryStep({
     );
   }
 
-  if (provisioningStarted) {
-    const planValidated = Boolean(shadowPlanning && shadowPlanning.validation?.status !== "rejected");
+  if (presentationPhase !== "idle") {
     const deterministicCompleted = provisioningJob?.status === "completed";
-    if (planValidated && !planAcknowledged) {
+    if (presentationPhase === "validated_plan_review") {
       return (
         <div className="mx-auto max-w-2xl space-y-8 py-8">
           <div className="text-center space-y-3">
@@ -356,7 +356,7 @@ export function ProvisionBoundaryStep({
           <div className="text-center">
             <button
               type="button"
-              onClick={() => setPlanAcknowledged(true)}
+              onClick={onAcknowledgeShadowPlan}
               className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-8 py-4 text-base font-semibold text-white hover:bg-orange-600"
             >
               Continue with Workspace Setup
@@ -374,10 +374,14 @@ export function ProvisionBoundaryStep({
             </div>
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-            {planValidated ? (deterministicCompleted ? "Your DeployIQ workspace is ready" : "Preparing your DeployIQ workspace") : "DeployIQ AI is preparing your workspace"}
+            {presentationPhase === "planning"
+              ? "DeployIQ AI is preparing your workspace"
+              : presentationPhase === "completed"
+                ? "Your DeployIQ workspace is ready"
+                : "Preparing your DeployIQ workspace"}
           </h1>
           <p className="text-base text-slate-500 leading-relaxed">
-            {planValidated
+            {presentationPhase !== "planning"
               ? "DeployIQ policy approved the proposed plan. Deterministic provisioning remains the only workspace writer."
               : "Your trusted commercial and identity context is being reviewed. No AI stage is marked complete until the backend returns its validated plan."}
           </p>

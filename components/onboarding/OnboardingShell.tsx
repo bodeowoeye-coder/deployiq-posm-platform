@@ -30,6 +30,13 @@ import { currencyForCountry } from "@/lib/commercial/onboarding/quotation";
 import type { BillingCycle, PaymentMethod } from "@/lib/commercial/checkout/types";
 import { restoreCurrentOnboardingStep, type CurrentOnboardingStep } from "@/lib/commercial/onboarding/stepMapping";
 import { getCanonicalProduct } from "@/lib/commercial/products/catalogue";
+import {
+  advanceProvisioningPresentationPhase,
+  preserveShadowPlanning,
+  resolveProvisioningPresentationPhase,
+  shadowPlanAcknowledgementCookie,
+  type ProvisioningPresentationPhase,
+} from "@/lib/ai/provisioning/presentation";
 
 type OnboardingStep = CurrentOnboardingStep | "quotation" | "setup";
 type ResumePromptDraft = {
@@ -74,7 +81,21 @@ const PROGRESS_INDEX: Partial<Record<OnboardingStep, number>> = {
   "provision-boundary": 5,
 };
 
-export function OnboardingShell({ initialBrowserAuthenticated = false }: { initialBrowserAuthenticated?: boolean }) {
+type OnboardingShellProps = {
+  initialBrowserAuthenticated?: boolean;
+  initialShadowPlanning?: React.ComponentProps<typeof ProvisionBoundaryStep>["shadowPlanning"];
+  initialProvisioningJob?: React.ComponentProps<typeof ProvisionBoundaryStep>["provisioningJob"];
+  initialWorkspaceLaunchUrl?: string | null;
+  initialPlanAcknowledged?: boolean;
+};
+
+export function OnboardingShell({
+  initialBrowserAuthenticated = false,
+  initialShadowPlanning = null,
+  initialProvisioningJob = null,
+  initialWorkspaceLaunchUrl = null,
+  initialPlanAcknowledged = false,
+}: OnboardingShellProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -118,9 +139,16 @@ export function OnboardingShell({ initialBrowserAuthenticated = false }: { initi
   const [enterprisePONumber, setEnterprisePONumber] = useState<string | null>(null);
   const [readyForProvisioning, setReadyForProvisioning] = useState(false);
   const [activationStarted, setActivationStarted] = useState(false);
-  const [shadowPlanning, setShadowPlanning] = useState<React.ComponentProps<typeof ProvisionBoundaryStep>["shadowPlanning"]>(null);
-  const [provisioningJob, setProvisioningJob] = useState<React.ComponentProps<typeof ProvisionBoundaryStep>["provisioningJob"]>(null);
-  const [workspaceLaunchUrl, setWorkspaceLaunchUrl] = useState<string | null>(null);
+  const [shadowPlanning, setShadowPlanning] = useState<React.ComponentProps<typeof ProvisionBoundaryStep>["shadowPlanning"]>(initialShadowPlanning);
+  const [provisioningJob, setProvisioningJob] = useState<React.ComponentProps<typeof ProvisionBoundaryStep>["provisioningJob"]>(initialProvisioningJob);
+  const [workspaceLaunchUrl, setWorkspaceLaunchUrl] = useState<string | null>(initialWorkspaceLaunchUrl);
+  const [planAcknowledged, setPlanAcknowledged] = useState(initialPlanAcknowledged);
+  const [presentationPhase, setPresentationPhase] = useState<ProvisioningPresentationPhase>(() => resolveProvisioningPresentationPhase({
+    shadowPlanning: initialShadowPlanning,
+    jobStatus: initialProvisioningJob?.status,
+    acknowledged: initialPlanAcknowledged,
+    started: Boolean(initialProvisioningJob),
+  }));
   const [provisioningError, setProvisioningError] = useState<{
     message: string;
     reference: string | null;
@@ -509,13 +537,14 @@ export function OnboardingShell({ initialBrowserAuthenticated = false }: { initi
     window.location.assign(payload.redirectTo ?? "/login?returnTo=%2Fonboarding&identityConfirmed=1");
   }
 
-  async function handleProvisionWorkspace() {
+  async function handleProvisionWorkspace(acknowledged = planAcknowledged) {
     if (!resumeToken) {
       setError("Your setup session has expired. Please restart workspace setup.");
       return;
     }
     setError(null);
     setLoading(true);
+    setPresentationPhase((phase) => phase === "idle" ? "planning" : phase);
     try {
       const res = await fetch("/api/acquisition/provision", {
         method: "POST",
@@ -523,7 +552,9 @@ export function OnboardingShell({ initialBrowserAuthenticated = false }: { initi
         body: JSON.stringify({ resumeToken }),
       });
       const payload = await res.json();
-      setShadowPlanning(payload.shadowPlanning ?? null);
+      const incomingShadowPlanning = payload.shadowPlanning ?? null;
+      const nextShadowPlanning = preserveShadowPlanning(shadowPlanning ?? null, incomingShadowPlanning);
+      setShadowPlanning((current) => preserveShadowPlanning(current ?? null, incomingShadowPlanning));
       setProvisioningJob(payload.job ?? null);
       if (!res.ok) {
         if (res.status === 401 || payload.code === "authentication_required") {
@@ -553,6 +584,13 @@ export function OnboardingShell({ initialBrowserAuthenticated = false }: { initi
         ? payload.localDevelopmentAdminWorkspaceUrl
         : null;
       const completedLaunchUrl = launchUrl ?? localDevelopmentLaunchUrl;
+      const nextPhase = resolveProvisioningPresentationPhase({
+        shadowPlanning: nextShadowPlanning,
+        jobStatus: payload.job?.status,
+        acknowledged,
+        started: true,
+      });
+      setPresentationPhase((current) => advanceProvisioningPresentationPhase(current, nextPhase, acknowledged));
       if (payload.job?.status === "completed" && completedLaunchUrl) {
         setReadyForProvisioning(true);
         setActivationStarted(false);
@@ -588,6 +626,15 @@ export function OnboardingShell({ initialBrowserAuthenticated = false }: { initi
     } finally {
       setLoading(false);
     }
+  }
+
+  async function acknowledgeShadowPlan() {
+    const jobId = typeof provisioningJob?.id === "string" ? provisioningJob.id : "";
+    if (!jobId || !shadowPlanning) return;
+    document.cookie = `${shadowPlanAcknowledgementCookie(jobId)}=1; Path=/; Max-Age=2592000; SameSite=Lax${window.location.protocol === "https:" ? "; Secure" : ""}`;
+    setPlanAcknowledged(true);
+    setPresentationPhase("provisioning");
+    await handleProvisionWorkspace(true);
   }
 
   const progressIndex = PROGRESS_INDEX[step] ?? 0;
@@ -968,6 +1015,8 @@ export function OnboardingShell({ initialBrowserAuthenticated = false }: { initi
             provisioningJob={provisioningJob}
             workspaceLaunchUrl={workspaceLaunchUrl}
             browserAuthenticated={browserAuthenticated}
+            presentationPhase={presentationPhase}
+            onAcknowledgeShadowPlan={acknowledgeShadowPlan}
             onLaunchWorkspace={() => {
               if (workspaceLaunchUrl) window.location.assign(workspaceLaunchUrl);
             }}

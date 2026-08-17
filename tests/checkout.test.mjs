@@ -613,7 +613,7 @@ test("routing: provision-boundary shows guard when readyForProvisioning=false", 
 test("routing: provision-boundary guard does not return to checkout-review", () => {
   const boundary = readFileSync(new URL("../components/onboarding/ProvisionBoundaryStep.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(boundary, /Return to activation summary/);
-  assert.match(boundary, /Continue to Workspace/);
+  assert.match(boundary, /Continue to Admin Workspace/);
   assert.match(boundary, /Refresh automatically/);
 });
 

@@ -4,6 +4,8 @@ import { getCurrentUserContext, readAccountSecurityState } from "@/lib/auth";
 import { getLatestActivationDraftForCustomer, getOnboardingDraftByToken } from "@/lib/commercial/onboarding/service";
 import { isActivationPendingDraft } from "@/lib/commercial/onboarding/stepMapping";
 import { getProvisioningJobForDraft } from "@/lib/acquisition/provisioning/service";
+import { cookies } from "next/headers";
+import { hasValidatedShadowPlan, shadowPlanAcknowledgementCookie } from "@/lib/ai/provisioning/presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +43,20 @@ export default async function WorkspaceActivationPage({
         : typeof draft.draft_data?.adminWorkspaceUrl === "string"
           ? draft.draft_data.adminWorkspaceUrl
           : null;
-      if (completedJob?.status === "completed" && adminWorkspaceUrl) redirect(adminWorkspaceUrl);
+      const shadowPlanning = completedJob?.result_data?.shadowPlanning as React.ComponentProps<typeof OnboardingShell>["initialShadowPlanning"];
+      const planAcknowledged = Boolean(completedJob?.id && cookies().get(shadowPlanAcknowledgementCookie(completedJob.id))?.value === "1");
+      if (completedJob?.status === "completed" && adminWorkspaceUrl && (!hasValidatedShadowPlan(shadowPlanning) || planAcknowledged)) redirect(adminWorkspaceUrl);
+      if (completedJob?.status === "completed" && hasValidatedShadowPlan(shadowPlanning)) {
+        return (
+          <OnboardingShell
+            initialBrowserAuthenticated
+            initialShadowPlanning={shadowPlanning}
+            initialProvisioningJob={completedJob}
+            initialWorkspaceLaunchUrl={adminWorkspaceUrl}
+            initialPlanAcknowledged={planAcknowledged}
+          />
+        );
+      }
       redirect("/onboarding");
     }
     if (!isActivationPendingDraft(draft)) redirect("/onboarding");

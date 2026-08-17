@@ -269,7 +269,7 @@ test("provisioning: pending account resumes activation status instead of Set up 
   assert.match(shell, /activationStartedAt/);
   assert.match(shell, /provisioningJobId/);
   assert.match(shell, /setActivationStarted\(hasStartedActivation && provisioningStatus !== "completed"\)/);
-  assert.match(boundary, /const \[provisioningStarted, setProvisioningStarted\] = useState\(activationStarted\)/);
+  assert.match(shell, /ProvisioningPresentationPhase/);
   assert.match(boundary, /DeployIQ AI is preparing your workspace/);
   assert.match(boundary, /Your DeployIQ workspace is almost ready/);
 });
@@ -295,7 +295,7 @@ test("provisioning: never-started paid account alone sees Set up my workspace", 
   assert.match(shell, /data\.readyForProvisioning === true/);
   assert.match(shell, /data\.activationStartedAt/);
   assert.match(shell, /data\.provisioningJobId/);
-  assert.match(boundary, /if \(provisioningStarted\)/);
+  assert.match(boundary, /if \(presentationPhase !== "idle"\)/);
   assert.match(boundary, /Your workspace is ready to set up/);
   assert.match(boundary, /Set up my workspace/);
 });
