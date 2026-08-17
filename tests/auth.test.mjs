@@ -315,6 +315,57 @@ describe("mandatory password change routing", () => {
     assert.match(sessionRoute, /redirectTo,/);
   });
 
+  test("fresh recovery link renders password form only when authority still requires it", () => {
+    const page = readFileSync(new URL("../app/login/create-password/page.tsx", import.meta.url), "utf8");
+    assert.match(page, /if \(isCreatePasswordDestination\(payload\.redirectTo\)\)/);
+    assert.match(page, /setSetupState\("password_required"\)/);
+    assert.match(page, /setupState === "completed_or_unavailable"/);
+    assert.match(page, /Create a new password/);
+  });
+
+  test("fresh recovery link honors an authoritative onboarding redirect", () => {
+    const page = readFileSync(new URL("../app/login/create-password/page.tsx", import.meta.url), "utf8");
+    assert.match(page, /const payload = \(await response\.json\(\)\.catch\(\(\) => null\)\)/);
+    assert.match(page, /router\.replace\(payload\.redirectTo\)/);
+    assert.match(page, /body: JSON\.stringify\(\{ accessToken, refreshToken, returnTo: resolvedReturnTo \}\)/);
+  });
+
+  test("already-authenticated completed account is resolved through the cookie session", () => {
+    const page = readFileSync(new URL("../app/login/create-password/page.tsx", import.meta.url), "utf8");
+    assert.match(page, /fetch\(`\/api\/auth\/session\?returnTo=\$\{encodeURIComponent\(resolvedReturnTo\)\}`/);
+    assert.match(page, /method: "GET"/);
+    assert.match(page, /credentials: "include"/);
+    assert.match(page, /await applyAuthoritativeResponse\(response\)/);
+  });
+
+  test("consumed or expired recovery link shows a bounded sign-in state", () => {
+    const page = readFileSync(new URL("../app/login/create-password/page.tsx", import.meta.url), "utf8");
+    assert.match(page, /Account setup already completed or this secure link is no longer available\./);
+    assert.match(page, /Sign in to continue your DeployIQ workspace setup\./);
+    assert.match(page, /href="\/login\?returnTo=%2Fonboarding"/);
+    assert.match(page, />\s*Sign in to continue\s*</);
+  });
+
+  test("Supabase recovery errors cannot bypass the current-session check", () => {
+    const page = readFileSync(new URL("../app/login/create-password/page.tsx", import.meta.url), "utf8");
+    assert.match(page, /recovery\.get\("error"\)/);
+    assert.match(page, /recovery\.get\("error_code"\)/);
+    assert.match(page, /recovery\.get\("error_description"\)/);
+    assert.match(page, /if \(!hasRecoveryError && accessToken && refreshToken\)/);
+    assert.match(page, /window\.history\.replaceState/);
+  });
+
+  test("password form is not visible while recovery authority is resolving", () => {
+    const page = readFileSync(new URL("../app/login/create-password/page.tsx", import.meta.url), "utf8");
+    const resolvingStart = page.indexOf('if (setupState === "resolving")');
+    const unavailableStart = page.indexOf('if (setupState === "completed_or_unavailable")');
+    const passwordFormStart = page.indexOf('<form onSubmit={handleSubmit}');
+    assert.ok(resolvingStart > -1);
+    assert.ok(unavailableStart > resolvingStart);
+    assert.ok(passwordFormStart > unavailableStart);
+    assert.doesNotMatch(page.slice(resolvingStart, unavailableStart), /Create a new password|type="password"/);
+  });
+
   test("login client consumes redirectTo after parsing successful session JSON exactly once", () => {
     const login = readFileSync(new URL("../app/login/page.tsx", import.meta.url), "utf8");
     const sessionPostIndex = login.indexOf('fetch("/api/auth/session"');
