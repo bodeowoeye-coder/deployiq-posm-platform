@@ -45,7 +45,7 @@ export default async function WorkspaceActivationPage({
       redirect("/onboarding");
     }
     if (!isActivationPendingDraft(draft)) redirect("/onboarding");
-    return <OnboardingShell />;
+    return <OnboardingShell initialBrowserAuthenticated />;
   }
 
   const activationDraft = await getLatestActivationDraftForCustomer({

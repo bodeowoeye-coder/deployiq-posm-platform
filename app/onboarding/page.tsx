@@ -18,7 +18,7 @@ export default async function OnboardingPage() {
         <p className="text-sm text-slate-400">Loading…</p>
       </div>
     }>
-      <OnboardingShell />
+      <OnboardingShell initialBrowserAuthenticated={Boolean(context?.user)} />
     </Suspense>
   );
 }

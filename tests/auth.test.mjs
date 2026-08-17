@@ -209,6 +209,17 @@ describe("mandatory password change routing", () => {
     assert.doesNotMatch(shell, /else if \(payload\?\.draft\) setResumePromptDraft\(payload\.draft\)/);
   });
 
+  test("onboarding header uses authoritative browser-session state, not draft verification", () => {
+    const page = readFileSync(new URL("../app/onboarding/page.tsx", import.meta.url), "utf8");
+    const shell = readFileSync(new URL("../components/onboarding/OnboardingShell.tsx", import.meta.url), "utf8");
+    assert.match(page, /initialBrowserAuthenticated=\{Boolean\(context\?\.user\)\}/);
+    assert.match(shell, /const \[browserAuthenticated, setBrowserAuthenticated\] = useState\(initialBrowserAuthenticated\)/);
+    assert.match(shell, /const savedProgressLabel = browserAuthenticated/);
+    assert.match(shell, /browserAuthenticated \? \(/);
+    assert.match(shell, /Your workspace setup is saved securely\./);
+    assert.doesNotMatch(shell, /const savedProgressLabel = identityVerified\s*\?/);
+  });
+
   test("OTP verification proves generated security metadata before returning temporary password", () => {
     const verifyRoute = readFileSync(new URL("../app/api/acquisition/verify/route.ts", import.meta.url), "utf8");
     const checkIndex = verifyRoute.indexOf("generated credential persistence check failed");

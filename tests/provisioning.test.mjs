@@ -274,6 +274,21 @@ test("provisioning: pending account resumes activation status instead of Set up 
   assert.match(boundary, /Your DeployIQ workspace is almost ready/);
 });
 
+test("provisioning: eligible signed-out browser receives a purposeful sign-in boundary", () => {
+  const shell = readFileSync(new URL("../components/onboarding/OnboardingShell.tsx", import.meta.url), "utf8");
+  const boundary = readFileSync(new URL("../components/onboarding/ProvisionBoundaryStep.tsx", import.meta.url), "utf8");
+  assert.match(boundary, /if \(!browserAuthenticated && readyForProvisioning\)/);
+  assert.match(boundary, /Sign in to continue your workspace setup/);
+  assert.match(boundary, /Your account and workspace configuration are ready\. Sign in on this device to continue with DeployIQ AI planning and workspace setup\./);
+  assert.match(boundary, /href="\/login\?returnTo=%2Fonboarding"/);
+  assert.match(shell, /res\.status === 401 \|\| payload\.code === "authentication_required"/);
+  assert.match(shell, /setBrowserAuthenticated\(false\)/);
+  assert.match(shell, /setReadyForProvisioning\(true\)/);
+  assert.match(boundary, /if \(!browserAuthenticated \|\| !resumeToken \|\| notificationRequested/);
+  assert.match(boundary, /if \(!browserAuthenticated \|\| !activationStarted/);
+  assert.ok(boundary.indexOf("if (!browserAuthenticated && readyForProvisioning)") < boundary.indexOf("if (!readyForProvisioning || delayed)"));
+});
+
 test("provisioning: never-started paid account alone sees Set up my workspace", () => {
   const shell = readFileSync(new URL("../components/onboarding/OnboardingShell.tsx", import.meta.url), "utf8");
   const boundary = readFileSync(new URL("../components/onboarding/ProvisionBoundaryStep.tsx", import.meta.url), "utf8");

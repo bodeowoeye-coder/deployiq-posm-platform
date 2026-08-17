@@ -46,6 +46,7 @@ type Props = {
   } | null;
   provisioningJob?: { status?: string; current_stage?: string; progress_percent?: number } | null;
   workspaceLaunchUrl?: string | null;
+  browserAuthenticated: boolean;
   onLaunchWorkspace?: () => void;
   onContinue: () => Promise<void> | void;
 };
@@ -73,7 +74,7 @@ const PROVISIONING_POLL_MS = 15000;
 export function ProvisionBoundaryStep({
   orgData, adminData, recommendation, quotation, billingCycle, paymentReference,
   resumeToken, readyForProvisioning, saveRecoveryLabel, provisioningError, activationStarted = false, shadowPlanning, onContinue,
-  provisioningJob, workspaceLaunchUrl, onLaunchWorkspace,
+  provisioningJob, workspaceLaunchUrl, browserAuthenticated, onLaunchWorkspace,
 }: Props) {
   const [provisioningStarted, setProvisioningStarted] = useState(activationStarted);
   const [timedOut, setTimedOut] = useState(false);
@@ -143,22 +144,22 @@ export function ProvisionBoundaryStep({
   }
 
   useEffect(() => {
-    if (!resumeToken) return;
+    if (!resumeToken || !browserAuthenticated) return;
     fetch(`/api/acquisition/provision/notification?token=${encodeURIComponent(resumeToken)}`)
       .then((res) => res.ok ? res.json() : null)
       .then((payload) => {
         if (payload?.requested === true) setNotificationRequested(true);
       })
       .catch(() => {});
-  }, [resumeToken]);
+  }, [resumeToken, browserAuthenticated]);
 
   useEffect(() => {
-    if (!timedOut || retryableFailure || notificationRequested || notificationRequestInFlight.current) return;
+    if (!browserAuthenticated || !timedOut || retryableFailure || notificationRequested || notificationRequestInFlight.current) return;
     void requestNotification();
-  }, [timedOut, retryableFailure, notificationRequested]);
+  }, [browserAuthenticated, timedOut, retryableFailure, notificationRequested]);
 
   useEffect(() => {
-    if (!provisioningStarted || retryableFailure) return;
+    if (!browserAuthenticated || !provisioningStarted || retryableFailure) return;
     const timeoutTimer = window.setTimeout(() => {
       setTimedOut(true);
     }, PROVISIONING_TIMEOUT_MS);
@@ -166,24 +167,24 @@ export function ProvisionBoundaryStep({
     return () => {
       window.clearTimeout(timeoutTimer);
     };
-  }, [provisioningStarted, retryableFailure]);
+  }, [browserAuthenticated, provisioningStarted, retryableFailure]);
 
   useEffect(() => {
     if (hasCompletedBackendResult) setTimedOut(false);
   }, [hasCompletedBackendResult]);
 
   useEffect(() => {
-    if (!activationStarted || retryableFailure || restoredStatusCheckInFlight.current) return;
+    if (!browserAuthenticated || !activationStarted || retryableFailure || restoredStatusCheckInFlight.current) return;
     restoredStatusCheckInFlight.current = true;
     setProvisioningStarted(true);
     setCheckingStatus(true);
     Promise.resolve(onContinue()).finally(() => {
       setCheckingStatus(false);
     });
-  }, [activationStarted, onContinue, retryableFailure]);
+  }, [activationStarted, browserAuthenticated, onContinue, retryableFailure]);
 
   useEffect(() => {
-    if (!delayed || retryableFailure) return;
+    if (!browserAuthenticated || !delayed || retryableFailure) return;
 
     const pollTimer = window.setInterval(() => {
       if (autoRefreshInFlight.current) return;
@@ -194,7 +195,7 @@ export function ProvisionBoundaryStep({
     }, PROVISIONING_POLL_MS);
 
     return () => window.clearInterval(pollTimer);
-  }, [delayed, onContinue, retryableFailure]);
+  }, [browserAuthenticated, delayed, onContinue, retryableFailure]);
 
   async function startProvisioning() {
     setProvisioningStarted(true);
@@ -208,7 +209,7 @@ export function ProvisionBoundaryStep({
   }
 
   async function requestNotification() {
-    if (!resumeToken || notificationRequested || notificationRequestInFlight.current) return;
+    if (!browserAuthenticated || !resumeToken || notificationRequested || notificationRequestInFlight.current) return;
     notificationRequestInFlight.current = true;
     setNotificationLoading(true);
     setNotificationError(null);
@@ -254,6 +255,30 @@ export function ProvisionBoundaryStep({
         {notificationError ? (
           <p className="text-xs text-rose-600" role="alert">{notificationError}</p>
         ) : null}
+      </div>
+    );
+  }
+
+  if (!browserAuthenticated && readyForProvisioning) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-7 py-12 text-center">
+        <div className="flex justify-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-orange-50">
+            <ShieldCheck className="h-8 w-8 text-orange-500" aria-hidden="true" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold text-slate-900">Sign in to continue your workspace setup</h2>
+          <p className="text-sm leading-relaxed text-slate-500">
+            Your account and workspace configuration are ready. Sign in on this device to continue with DeployIQ AI planning and workspace setup.
+          </p>
+        </div>
+        <a
+          href="/login?returnTo=%2Fonboarding"
+          className="inline-flex items-center justify-center rounded-xl bg-orange-500 px-6 py-3 text-sm font-semibold text-white hover:bg-orange-600"
+        >
+          Sign in to continue
+        </a>
       </div>
     );
   }

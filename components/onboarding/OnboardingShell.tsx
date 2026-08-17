@@ -74,7 +74,7 @@ const PROGRESS_INDEX: Partial<Record<OnboardingStep, number>> = {
   "provision-boundary": 5,
 };
 
-export function OnboardingShell() {
+export function OnboardingShell({ initialBrowserAuthenticated = false }: { initialBrowserAuthenticated?: boolean }) {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -110,6 +110,7 @@ export function OnboardingShell() {
     acceptedPrivacy: false,
   });
   const [identityVerified, setIdentityVerified] = useState(false);
+  const [browserAuthenticated, setBrowserAuthenticated] = useState(initialBrowserAuthenticated);
   const [debugOtp, setDebugOtp] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<BillingCycle>("annual");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("card");
@@ -525,6 +526,13 @@ export function OnboardingShell() {
       setShadowPlanning(payload.shadowPlanning ?? null);
       setProvisioningJob(payload.job ?? null);
       if (!res.ok) {
+        if (res.status === 401 || payload.code === "authentication_required") {
+          setBrowserAuthenticated(false);
+          setReadyForProvisioning(true);
+          setActivationStarted(false);
+          setProvisioningError(null);
+          return;
+        }
         setReadyForProvisioning(false);
         setProvisioningError({
           message: payload.error ?? "Unable to finish workspace setup.",
@@ -588,8 +596,10 @@ export function OnboardingShell() {
   const isWideStep = identitySteps.includes(step) || checkoutSteps.includes(step);
   const isFreshObjectiveStep = step === "objective" && !resumePromptDraft && resumePromptDrafts.length === 0;
   const isGetStartedStep = isFreshObjectiveStep || step === "discovery";
-  const savedProgressLabel = identityVerified
+  const savedProgressLabel = browserAuthenticated
     ? "Your progress has been saved to your account."
+    : identityVerified
+      ? "Your workspace setup is saved securely."
     : draftPersisted
       ? "Your progress has been saved on this device and securely stored."
       : "Saving progress…";
@@ -631,7 +641,7 @@ export function OnboardingShell() {
           {resumeToken ? (
             <p className="max-w-[16rem] text-right text-xs text-slate-400 sm:max-w-none">{savedProgressLabel}</p>
           ) : null}
-          {identityVerified ? (
+          {browserAuthenticated ? (
             <a href="/logout" className="text-xs font-semibold text-slate-500 hover:text-slate-800">
               Sign out
             </a>
@@ -957,6 +967,7 @@ export function OnboardingShell() {
             shadowPlanning={shadowPlanning}
             provisioningJob={provisioningJob}
             workspaceLaunchUrl={workspaceLaunchUrl}
+            browserAuthenticated={browserAuthenticated}
             onLaunchWorkspace={() => {
               if (workspaceLaunchUrl) window.location.assign(workspaceLaunchUrl);
             }}
