@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getOnboardingDraftByToken, updateOnboardingDraft } from "@/lib/commercial/onboarding/service";
 import type { CustomerQuotation } from "@/lib/commercial/onboarding/quotation";
+import { validateQuotationAgainstSnapshot, type AuthoritativePricingSnapshot } from "@/lib/commercial/onboarding/quotationAuthority";
+import { createAdminSupabase } from "@/lib/supabaseAdmin";
 
 /**
  * POST /api/acquisition/checkout/confirm-plan
@@ -32,9 +34,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Acquisition session not found." }, { status: 404 });
     }
 
+    const snapshotId = draft.pricing_snapshot_id;
+    if (!snapshotId) {
+      return NextResponse.json({ error: "The commercial plan must be recalculated before it can be confirmed.", code: "pricing_snapshot_required" }, { status: 409 });
+    }
+    const { data: snapshot, error: snapshotError } = await createAdminSupabase()
+      .from("commercial_pricing_snapshots")
+      .select("id,onboarding_draft_id,product_key,pricing_template_id,pricing_template_name,currency,quantity,subtotal,discount,total,included_admin_users,requires_enterprise_review,expires_at,status")
+      .eq("id", snapshotId)
+      .maybeSingle();
+    if (snapshotError) throw snapshotError;
+    const authority = validateQuotationAgainstSnapshot({
+      draftId: draft.id,
+      selectedProduct: draft.selected_product,
+      snapshot: snapshot as AuthoritativePricingSnapshot | null,
+      quotation,
+    });
+    if (!authority.ok) {
+      return NextResponse.json({ error: authority.message, code: authority.code }, { status: 409 });
+    }
+
     // Idempotent: preserve existing commercial reference — do not re-generate on retries.
     const existingRef = draft.draft_data?.commercialReference as string | undefined;
     const commercialReference = existingRef || generateCommercialReference(draft.id);
+
+    const { error: acceptError } = await createAdminSupabase()
+      .from("commercial_pricing_snapshots")
+      .update({ status: "accepted", updated_at: new Date().toISOString() })
+      .eq("id", snapshotId)
+      .eq("onboarding_draft_id", draft.id)
+      .in("status", ["calculated", "accepted"]);
+    if (acceptError) throw acceptError;
 
     await updateOnboardingDraft({
       resumeToken: draftToken,
@@ -46,6 +76,7 @@ export async function POST(request: Request) {
         commercialReference,
         quotationConfirmedAt: new Date().toISOString(),
       },
+      pricingSnapshotId: snapshotId,
     });
 
     return NextResponse.json({ commercialReference });

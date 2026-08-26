@@ -125,8 +125,14 @@ export async function POST(request: Request) {
         market: country ?? templateResolution.template.country,
       });
       snapshotId = snapshot.id;
-    } catch {
-      // Non-fatal — snapshot creation failure does not block quotation display
+    } catch (error) {
+      console.error("[quotation] Unable to create authoritative pricing snapshot", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+      return NextResponse.json(
+        { error: "We could not prepare an authoritative commercial plan. Please try again." },
+        { status: 503 }
+      );
     }
 
     if (draft && draftToken) {

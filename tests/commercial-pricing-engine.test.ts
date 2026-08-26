@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { calculateProgressivePricing, validatePricingTemplate } from "../lib/commercial/pricing/service";
-import type { PricingTemplate, PricingTier } from "../lib/commercial/pricing/types";
+import { calculateProgressivePricing, validatePricingTemplate } from "../lib/commercial/pricing/service.ts";
+import type { PricingTemplate, PricingTier } from "../lib/commercial/pricing/types.ts";
 
 function makeTemplate(overrides: Partial<PricingTemplate> = {}): PricingTemplate {
   const tiers: PricingTier[] = [

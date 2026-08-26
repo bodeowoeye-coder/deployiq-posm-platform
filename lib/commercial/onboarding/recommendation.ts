@@ -115,7 +115,13 @@ const PRODUCT_FIT_EXPLANATIONS: Record<string, string> = {
 
 export function resolveRecommendation(input: RecommendationInput): RecommendationResult {
   const objective = getObjectiveById(input.objectiveId);
-  const rawProductKey = objective?.maps_to_product ?? "retail";
+  if (!objective) {
+    throw Object.assign(new Error("The selected business objective is not supported."), {
+      status: 400,
+      code: "unsupported_objective",
+    });
+  }
+  const rawProductKey = objective.maps_to_product;
   const productKey = resolveProductKey(rawProductKey) as OnboardingProductKey;
 
   const canonicalProduct = getCanonicalProduct(productKey);
@@ -147,7 +153,7 @@ export function resolveRecommendation(input: RecommendationInput): Recommendatio
     capabilities: PRODUCT_CAPABILITIES[productKey] ?? [],
     isAvailable: true,
     pricingReady: true,
-    deploymentMode: getDeploymentMode(productKey) === "SELF_SERVICE" ? "SELF_SERVICE" : "SELF_SERVICE",
+    deploymentMode: getDeploymentMode(productKey),
     requiresAssistedOnboarding: false,
     assistedOnboardingReason: null,
     provisioningManifestKey: canonicalProduct?.provisioningManifestKey ?? null,

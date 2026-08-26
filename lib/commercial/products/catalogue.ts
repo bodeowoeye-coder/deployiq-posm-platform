@@ -150,12 +150,24 @@ export const LEGACY_PRODUCT_KEY_ALIASES: Readonly<Record<string, OnboardingProdu
   "event-activation":    "field_operations",
 } as const;
 
+/** Parse untrusted input into a known canonical product key. Unknown values fail closed. */
+export function parseCanonicalProductKey(key: unknown): OnboardingProductKey | null {
+  if (typeof key !== "string") return null;
+  const normalized = key.trim().toLowerCase();
+  if (!normalized) return null;
+  const aliased = Object.prototype.hasOwnProperty.call(LEGACY_PRODUCT_KEY_ALIASES, normalized)
+    ? LEGACY_PRODUCT_KEY_ALIASES[normalized]
+    : normalized;
+  return CANONICAL_PRODUCTS.some((product) => product.productKey === aliased)
+    ? aliased as OnboardingProductKey
+    : null;
+}
+
 /** Resolve a product key through legacy aliases to the canonical form. */
 export function resolveProductKey(key: string): OnboardingProductKey {
-  if (key in LEGACY_PRODUCT_KEY_ALIASES) {
-    return LEGACY_PRODUCT_KEY_ALIASES[key];
-  }
-  return key as OnboardingProductKey;
+  const canonical = parseCanonicalProductKey(key);
+  if (!canonical) throw new Error(`Unknown DeployIQ product key: ${key}`);
+  return canonical;
 }
 
 /** Return canonical and legacy database values that resolve to the same product. */

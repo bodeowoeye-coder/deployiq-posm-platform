@@ -13,7 +13,13 @@
     "seed:godrej-client": "node scripts/seed-test-client.mjs godrej-client",
     "seed:darling-client": "node scripts/seed-test-client.mjs darling-client",
     "seed:test-client": "node scripts/seed-test-client.mjs",
-    "seed:installer": "node scripts/seed-test-client.mjs installer"
+    "seed:installer": "node scripts/seed-test-client.mjs installer",
+    "staging:bootstrap": "node --env-file=.env.local scripts/bootstrap-staging-database.mjs",
+    "staging:verify": "node --env-file=.env.local scripts/verify-staging-baseline.mjs",
+    "staging:seed-reference": "node --env-file=.env.local scripts/bootstrap-staging-database.mjs --reference",
+    "staging:seed-fixtures": "node --env-file=.env.local scripts/bootstrap-staging-database.mjs --fixtures",
+    "staging:test": "node --test tests/staging-foundation.test.mjs",
+    "staging:test-guard": "node --test --test-name-pattern=guard tests/staging-foundation.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

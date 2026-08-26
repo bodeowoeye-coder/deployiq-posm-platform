@@ -41,7 +41,7 @@ type Props = {
   resumeToken: string | null;
   orgName: string;
   workspaceSlug: string;
-  onConfirm: (result: CommercialPlanResult) => void;
+  onConfirm: (result: CommercialPlanResult) => Promise<void>;
   onBack: () => void;
 };
 
@@ -303,17 +303,25 @@ export function CommercialPlanStep({
   // -------------------------------------------------------------------------
   // Confirm — updates shell state once, then navigates
   // -------------------------------------------------------------------------
-  function handleConfirm() {
+  async function handleConfirm() {
     if (!liveQuotation) return;
     if (!liveRecommendation.pricingReady) return;
     const qty = parseInt(quantityInput, 10) || parseInt(discovery.rolloutQuantity, 10);
-    onConfirm({
-      quotation: liveQuotation,
-      recommendation: liveRecommendation,
-      billingCycle,
-      quantity: qty,
-      capabilities,
-    });
+    setCalculating(true);
+    setCalcError(null);
+    try {
+      await onConfirm({
+        quotation: liveQuotation,
+        recommendation: liveRecommendation,
+        billingCycle,
+        quantity: qty,
+        capabilities,
+      });
+    } catch (error) {
+      setCalcError(error instanceof Error ? error.message : "Unable to confirm this commercial plan.");
+    } finally {
+      setCalculating(false);
+    }
   }
 
   const isEnterprise =

@@ -95,6 +95,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ recommendation });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = typeof (error as { status?: unknown })?.status === "number"
+      ? (error as { status: number }).status
+      : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

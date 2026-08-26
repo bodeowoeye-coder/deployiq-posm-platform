@@ -855,7 +855,17 @@ export function OnboardingShell({
             orgName={identityOrg.organisationName}
             workspaceSlug={identityOrg.workspaceSlug}
             onConfirm={async (result: CommercialPlanResult) => {
-              // Apply confirmed plan to shell state
+              // Persist confirmed quotation and generate commercial reference server-side
+              if (!resumeToken) throw new Error("Your acquisition session is unavailable. Refresh the page and try again.");
+              const response = await fetch("/api/acquisition/checkout/confirm-plan", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ resumeToken, quotation: result.quotation }),
+              });
+              const payload = await response.json().catch(() => ({})) as { error?: string };
+              if (!response.ok) throw new Error(payload.error ?? "Unable to confirm this commercial plan.");
+
+              // Apply confirmed plan only after the server accepts its authoritative snapshot.
               setQuotation(result.quotation);
               setRecommendation(result.recommendation);
               setBillingCycle(result.billingCycle);
@@ -864,18 +874,6 @@ export function OnboardingShell({
                 rolloutQuantity: String(result.quantity),
                 capabilities: result.capabilities,
               }));
-              // Persist confirmed quotation and generate commercial reference server-side
-              if (resumeToken) {
-                try {
-                  await fetch("/api/acquisition/checkout/confirm-plan", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ resumeToken, quotation: result.quotation }),
-                  });
-                } catch {
-                  // Non-blocking — plan proceeds; reference will be generated at payment
-                }
-              }
               setStep("checkout-review");
             }}
             onBack={goBack}

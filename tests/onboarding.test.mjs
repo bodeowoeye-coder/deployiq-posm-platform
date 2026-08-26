@@ -63,10 +63,10 @@ test("onboarding: retail_visibility objective maps to retail product", () => {
   assert.equal(obj.maps_to_product, "retail");
 });
 
-test("onboarding: location_audit objective also maps to retail product", () => {
+test("onboarding: location_audit objective maps to its distinct product", () => {
   const obj = getObjectiveById("location_audit");
   assert.ok(obj, "location_audit must exist");
-  assert.equal(obj.maps_to_product, "retail");
+  assert.equal(obj.maps_to_product, "location_audit");
 });
 
 // ---------------------------------------------------------------------------
@@ -316,7 +316,7 @@ test("commercial decision: deploymentMode is always present in recommendation re
   }
 });
 
-test("commercial decision: location_audit also maps to SELF_SERVICE (retail product)", () => {
+test("commercial decision: location_audit remains assisted until product pricing is configured", () => {
   const rec = resolveRecommendation({
     objectiveId: "location_audit",
     quantity: 2000,
@@ -325,24 +325,19 @@ test("commercial decision: location_audit also maps to SELF_SERVICE (retail prod
     needsClientPortal: false,
     needsAnalytics: false,
   });
-  assert.equal(rec.deploymentMode, "SELF_SERVICE");
-  assert.equal(rec.productKey, "retail");
+  assert.equal(rec.deploymentMode, "ENTERPRISE");
+  assert.equal(rec.productKey, "location_audit");
 });
 
-test("commercial decision: unknown product key defaults to ENTERPRISE mode", () => {
-  // resolveRecommendation handles unknown objectives by defaulting to retail
-  // but the mode config defaults unknown keys to ENTERPRISE
-  // Test the mode config logic directly
-  const validModes = ["SELF_SERVICE", "ENTERPRISE"];
-  const rec = resolveRecommendation({
-    objectiveId: "field_operations",  // maps to survey
+test("commercial decision: unknown objective fails closed", () => {
+  assert.throws(() => resolveRecommendation({
+    objectiveId: "unknown-objective",
     quantity: 500,
     country: "Nigeria",
     needsInstallers: false,
     needsClientPortal: false,
     needsAnalytics: false,
-  });
-  assert.ok(validModes.includes(rec.deploymentMode), "survey mode must be valid");
+  }), /not supported/i);
 });
 
 test("commercial decision: self-service recommendation does not require assisted onboarding", () => {
@@ -451,14 +446,13 @@ test("flow fix: DeployIQ Retail capabilities include AI-assisted evidence valida
   assert.equal(hasAI, true, "retail capabilities must include an AI capability");
 });
 
-test("flow fix: AI capability appears in central capability source (not hardcoded in component)", () => {
-  // Both retail_visibility and location_audit map to the same retail product capabilities
+test("flow fix: each product receives capabilities from the central product source", () => {
   const rec1 = resolveRecommendation({ objectiveId: "retail_visibility", quantity: 1000, country: "Nigeria", needsInstallers: false, needsClientPortal: false, needsAnalytics: false });
   const rec2 = resolveRecommendation({ objectiveId: "location_audit",    quantity: 1000, country: "Nigeria", needsInstallers: false, needsClientPortal: false, needsAnalytics: false });
   const ai1 = rec1.capabilities.find((c) => c.toLowerCase().includes("ai"));
-  const ai2 = rec2.capabilities.find((c) => c.toLowerCase().includes("ai"));
-  assert.ok(ai1 && ai2, "both retail objectives must include AI capability from central source");
-  assert.equal(ai1, ai2, "AI capability text must be identical from central source");
+  assert.ok(ai1, "Retail must include its AI evidence capability");
+  assert.ok(rec2.capabilities.some((cap) => cap.toLowerCase().includes("audit")), "Location Audit must receive audit capabilities");
+  assert.notDeepEqual(rec1.capabilities, rec2.capabilities, "Distinct products must not silently share Retail capabilities");
 });
 
 // ---------------------------------------------------------------------------
