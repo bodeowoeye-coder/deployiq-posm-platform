@@ -9,9 +9,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastProvider";
 import {
   isLoginCarouselAlwaysShown,
-  LOGIN_CAROUSEL_STORAGE_KEY,
-  nextLoginCarouselCycle,
-  readLoginCarouselCycle,
+  LOGIN_CAROUSEL_SESSION_STORAGE_KEY,
   shouldShowLoginCarousel,
 } from "@/lib/loginCarousel";
 import { persistRememberedLoginEmail, readRememberedLoginEmail } from "@/lib/loginPreferences";
@@ -317,7 +315,7 @@ export default function LoginPage() {
     router.replace(returnTo || "/workspace/admin");
   }
 
-  // Presentation only: the counter advances once per login visit and never gates authentication.
+  // Presentation only: dismissal lasts for this browser session and never gates authentication.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const alwaysShowCarousel = isLoginCarouselAlwaysShown(
@@ -325,15 +323,19 @@ export default function LoginPage() {
       process.env.NODE_ENV,
     );
     try {
-      const cycle = readLoginCarouselCycle(window.localStorage.getItem(LOGIN_CAROUSEL_STORAGE_KEY));
-      setCarouselState(alwaysShowCarousel || shouldShowLoginCarousel(cycle) ? "show" : "hide");
-      window.localStorage.setItem(LOGIN_CAROUSEL_STORAGE_KEY, String(nextLoginCarouselCycle(cycle)));
+      const sessionDismissed = window.sessionStorage.getItem(LOGIN_CAROUSEL_SESSION_STORAGE_KEY);
+      setCarouselState(alwaysShowCarousel || shouldShowLoginCarousel(sessionDismissed) ? "show" : "hide");
     } catch {
-      setCarouselState(alwaysShowCarousel ? "show" : "hide");
+      setCarouselState("show");
     }
   }, []);
 
   function dismissBrandCarousel() {
+    try {
+      window.sessionStorage.setItem(LOGIN_CAROUSEL_SESSION_STORAGE_KEY, "1");
+    } catch {
+      // The mounted login journey still remains dismissed through component state.
+    }
     setCarouselState("hide");
   }
 

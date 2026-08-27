@@ -46,25 +46,14 @@ export const LOGIN_CAROUSEL_SLIDES: LoginCarouselSlide[] = [
   },
 ];
 
-export const LOGIN_CAROUSEL_STORAGE_KEY = "deployiq:login-carousel-cycle";
-export const LOGIN_CAROUSEL_INTERVAL = 5;
+export const LOGIN_CAROUSEL_SESSION_STORAGE_KEY = "deployiq:login-carousel-dismissed";
+export const LEGACY_LOGIN_CAROUSEL_STORAGE_KEY = "deployiq:login-carousel-cycle";
 
 export function isLoginCarouselAlwaysShown(flag: string | undefined, nodeEnv: string | undefined) {
   return nodeEnv !== "production" && flag === "1";
 }
 
-// Show on the first visit, then resurface on every fifth visit. Never permanently suppressed.
-export function shouldShowLoginCarousel(cycle: number) {
-  if (!Number.isFinite(cycle) || cycle < 0) return true;
-  return cycle % LOGIN_CAROUSEL_INTERVAL === 0;
-}
-
-export function nextLoginCarouselCycle(cycle: number) {
-  if (!Number.isFinite(cycle) || cycle < 0) return 1;
-  return cycle + 1;
-}
-
-export function readLoginCarouselCycle(raw: string | null) {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+// A fresh browser session is eligible. Skip/completion suppresses only that session.
+export function shouldShowLoginCarousel(sessionDismissedValue: string | null) {
+  return sessionDismissedValue !== "1";
 }
