@@ -3,11 +3,9 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import {
   isLoginCarouselAlwaysShown,
-  LOGIN_CAROUSEL_INTERVAL,
   LOGIN_CAROUSEL_SLIDES,
-  LOGIN_CAROUSEL_STORAGE_KEY,
-  nextLoginCarouselCycle,
-  readLoginCarouselCycle,
+  LOGIN_CAROUSEL_SESSION_STORAGE_KEY,
+  LEGACY_LOGIN_CAROUSEL_STORAGE_KEY,
   shouldShowLoginCarousel,
 } from "../lib/loginCarousel.ts";
 import {
@@ -95,7 +93,7 @@ test("Skip is present on every slide and opens the sign-in stage", () => {
   // Skip lives in the persistent header, not inside a per-slide branch.
   assert.match(source, /<button\s+type="button"\s+onClick=\{onComplete\}[\s\S]{0,220}Skip/);
   assert.match(loginPage(), /<MobileBrandCarousel onComplete=\{dismissBrandCarousel\} \/>/);
-  assert.match(loginPage(), /function dismissBrandCarousel\(\) \{\s*setCarouselState\("hide"\);\s*\}/);
+  assert.match(loginPage(), /function dismissBrandCarousel\(\) \{[\s\S]*?sessionStorage\.setItem\(LOGIN_CAROUSEL_SESSION_STORAGE_KEY, "1"\)[\s\S]*?setCarouselState\("hide"\);\s*\}/);
 });
 
 test("final slide upgrades the CTA and completing the carousel opens sign-in", () => {
@@ -105,26 +103,22 @@ test("final slide upgrades the CTA and completing the carousel opens sign-in", (
   assert.match(source, /if \(isFinalSlide\) \{\s*onComplete\(\);\s*return;\s*\}/);
 });
 
-test("first visit shows the carousel and the next four visits suppress it", () => {
-  assert.equal(shouldShowLoginCarousel(0), true, "first visit must show the carousel");
-  for (const cycle of [1, 2, 3, 4]) {
-    assert.equal(shouldShowLoginCarousel(cycle), false, `visit ${cycle} must go straight to sign in`);
-  }
+test("fresh mobile browser session is eligible for the carousel", () => {
+  assert.equal(shouldShowLoginCarousel(null), true);
 });
 
-test("carousel resurfaces on every fifth cycle and never disappears permanently", () => {
-  assert.equal(LOGIN_CAROUSEL_INTERVAL, 5);
-  assert.equal(shouldShowLoginCarousel(5), true);
-  assert.equal(shouldShowLoginCarousel(10), true);
-  assert.equal(shouldShowLoginCarousel(50), true);
-  // Walking many cycles keeps resurfacing at a steady rate.
-  let cycle = 0;
-  let shown = 0;
-  for (let visit = 0; visit < 30; visit += 1) {
-    if (shouldShowLoginCarousel(cycle)) shown += 1;
-    cycle = nextLoginCarouselCycle(cycle);
-  }
-  assert.equal(shown, 6, "30 visits should surface the carousel 6 times");
+test("skip and completion suppress the carousel for the active browser session", () => {
+  assert.equal(shouldShowLoginCarousel("1"), false);
+  const source = loginPage();
+  assert.match(source, /window\.sessionStorage\.setItem\(LOGIN_CAROUSEL_SESSION_STORAGE_KEY, "1"\)/);
+  assert.match(source, /<MobileBrandCarousel onComplete=\{dismissBrandCarousel\} \/>/);
+  assert.match(carousel(), /onClick=\{onComplete\}[\s\S]{0,220}Skip/);
+  assert.match(carousel(), /if \(isFinalSlide\) \{\s*onComplete\(\)/);
+});
+
+test("a future browser session becomes eligible again", () => {
+  assert.equal(shouldShowLoginCarousel(null), true);
+  assert.equal(LOGIN_CAROUSEL_SESSION_STORAGE_KEY, "deployiq:login-carousel-dismissed");
 });
 
 test("local/test override always shows the carousel but production ignores it", () => {
@@ -136,27 +130,24 @@ test("local/test override always shows the carousel but production ignores it", 
 
   const source = loginPage();
   assert.match(source, /process\.env\.NEXT_PUBLIC_DEPLOYIQ_ALWAYS_SHOW_LOGIN_CAROUSEL/);
-  assert.match(source, /alwaysShowCarousel \|\| shouldShowLoginCarousel\(cycle\)/);
-  assert.match(source, /setCarouselState\(alwaysShowCarousel \? "show" : "hide"\)/);
+  assert.match(source, /alwaysShowCarousel \|\| shouldShowLoginCarousel\(sessionDismissed\)/);
+  assert.match(source, /setCarouselState\("show"\)/);
 });
 
-test("cycle counter is resilient to missing or corrupt storage values", () => {
-  assert.equal(readLoginCarouselCycle(null), 0);
-  assert.equal(readLoginCarouselCycle(""), 0);
-  assert.equal(readLoginCarouselCycle("not-a-number"), 0);
-  assert.equal(readLoginCarouselCycle("-3"), 0);
-  assert.equal(readLoginCarouselCycle("7"), 7);
-  assert.equal(nextLoginCarouselCycle(7), 8);
-  assert.equal(nextLoginCarouselCycle(Number.NaN), 1);
+test("only an explicit same-session dismissal suppresses the carousel", () => {
+  for (const value of [null, "", "0", "true", "not-a-number"]) {
+    assert.equal(shouldShowLoginCarousel(value), true);
+  }
 });
 
-test("presentation state uses the existing client-side storage convention", () => {
-  assert.equal(LOGIN_CAROUSEL_STORAGE_KEY, "deployiq:login-carousel-cycle");
+test("legacy persistent cycle state cannot suppress the carousel", () => {
+  assert.equal(LEGACY_LOGIN_CAROUSEL_STORAGE_KEY, "deployiq:login-carousel-cycle");
   const source = loginPage();
-  assert.match(source, /window\.localStorage\.getItem\(LOGIN_CAROUSEL_STORAGE_KEY\)/);
-  assert.match(source, /window\.localStorage\.setItem\(LOGIN_CAROUSEL_STORAGE_KEY, String\(nextLoginCarouselCycle\(cycle\)\)\)/);
-  // Storage failures must not block sign-in.
-  assert.match(source, /\} catch \{\s*setCarouselState\(alwaysShowCarousel \? "show" : "hide"\);\s*\}/);
+  assert.doesNotMatch(source, /localStorage\.(?:getItem|setItem)\(LOGIN_CAROUSEL/);
+  assert.doesNotMatch(source, /deployiq:login-carousel-cycle/);
+  assert.match(source, /window\.sessionStorage\.getItem\(LOGIN_CAROUSEL_SESSION_STORAGE_KEY\)/);
+  // Storage failures show the presentation and never block sign-in.
+  assert.match(source, /\} catch \{\s*setCarouselState\("show"\);\s*\}/);
 });
 
 test("mobile initial render is explicitly unresolved and masks the sign-in form", () => {
