@@ -26,6 +26,13 @@ function amount(value: number | string): number {
   return typeof value === "number" ? value : Number(value);
 }
 
+function sameTimestamp(left: string | null, right: string | null): boolean {
+  if (left === null || right === null) return left === right;
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  return Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime === rightTime;
+}
+
 export function validateQuotationAgainstSnapshot(input: {
   draftId: string;
   selectedProduct: string | null;
@@ -54,7 +61,7 @@ export function validateQuotationAgainstSnapshot(input: {
     && quotation.estimatedTotal === amount(snapshot.total)
     && quotation.includedAdminUsers === amount(snapshot.included_admin_users)
     && quotation.requiresEnterpriseReview === snapshot.requires_enterprise_review
-    && quotation.quotationExpiry === snapshot.expires_at;
+    && sameTimestamp(quotation.quotationExpiry, snapshot.expires_at);
 
   if (!matches) return { ok: false, code: "commercial_configuration_mismatch", message: "The commercial plan has changed. Please recalculate it before continuing." };
   return { ok: true, productKey: snapshotProduct };

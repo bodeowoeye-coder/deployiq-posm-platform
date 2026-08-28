@@ -59,6 +59,58 @@ test("quotation authority: matching server snapshot is accepted", () => {
   assert.deepEqual(validateQuotationAgainstSnapshot({ draftId: "draft-retail", selectedProduct: "retail", snapshot, quotation }), { ok: true, productKey: "retail" });
 });
 
+test("quotation authority: recalculated Retail plan survives equivalent PostgreSQL timestamp formatting", () => {
+  const allRetailCapabilities = [
+    "fieldEvidence", "clientVisibility", "aiValidation",
+    "projectAnalytics", "approvalWorkflow", "offlineOperation",
+  ];
+  const recalculatedQuotation = {
+    ...quotation,
+    quantity: 100,
+    subtotal: 50_000,
+    estimatedTotal: 50_000,
+    quotationExpiry: "2026-09-10T18:11:15.018Z",
+  };
+  const persistedSnapshot = {
+    ...snapshot,
+    quantity: 100,
+    subtotal: 50_000,
+    total: 50_000,
+    expires_at: "2026-09-10T18:11:15.018+00:00",
+  };
+
+  assert.equal(allRetailCapabilities.length, 6);
+  assert.deepEqual(
+    validateQuotationAgainstSnapshot({
+      draftId: "draft-retail",
+      selectedProduct: "retail",
+      snapshot: persistedSnapshot,
+      quotation: recalculatedQuotation,
+    }),
+    { ok: true, productKey: "retail" },
+  );
+});
+
+test("quotation authority: genuine post-recalculation commercial changes remain stale", () => {
+  const currentQuotation = { ...quotation, quotationExpiry: "2026-09-10T18:11:15.018Z" };
+  const currentSnapshot = { ...snapshot, expires_at: "2026-09-10T18:11:15.018+00:00" };
+  for (const changedQuotation of [
+    { ...currentQuotation, quantity: currentQuotation.quantity + 1 },
+    { ...currentQuotation, productKey: "build" },
+    { ...currentQuotation, currency: "USD" },
+    { ...currentQuotation, estimatedTotal: currentQuotation.estimatedTotal + 1 },
+    { ...currentQuotation, quotationExpiry: "2026-09-10T18:11:16.018Z" },
+    { ...currentQuotation, quotationExpiry: "not-a-timestamp" },
+  ]) {
+    assert.equal(validateQuotationAgainstSnapshot({
+      draftId: "draft-retail",
+      selectedProduct: "retail",
+      snapshot: currentSnapshot,
+      quotation: changedQuotation,
+    }).ok, false);
+  }
+});
+
 for (const [name, changed] of [
   ["product", { productKey: "build" }],
   ["template", { pricingTemplateId: "template-build" }],
