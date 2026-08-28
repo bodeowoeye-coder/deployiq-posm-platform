@@ -429,13 +429,13 @@ async function loadTeamAssignmentSummaries(workspace: CustomerWorkspaceContext, 
     if (projectIds.size > 0) {
       const { data: projects, error: projectsError } = await supabase
         .from("projects")
-        .select("id,name,campaign")
+        .select("id,project_name,campaign_name")
         .eq("client_id", workspace.clientId)
         .in("id", [...projectIds]);
       if (projectsError) throw projectsError;
       for (const row of (projects ?? []) as Array<Record<string, unknown>>) {
         const projectId = text(row.id);
-        if (projectId) projectNameById.set(projectId, text(row.name) || text(row.campaign) || projectId);
+        if (projectId) projectNameById.set(projectId, text(row.project_name) || text(row.campaign_name) || projectId);
       }
     }
 
@@ -672,7 +672,7 @@ export async function getWorkspaceTeamDashboard(): Promise<WorkspaceTeamDashboar
     roleDefinitionsForWorkspace(workspace.clientId),
     supabase.from("workspace_memberships").select("id,user_id,role_key,status,created_at,updated_at").eq("client_id", workspace.clientId).order("created_at", { ascending: true }),
     supabase.schema("public").from("user_profiles").select("user_id,full_name,email,status,created_at,updated_at,assigned_project_ids,assigned_regions,assigned_states").limit(1000),
-    supabase.from("projects").select("id,name,primary_target_region,project_regions,regions_covered").eq("client_id", workspace.clientId).order("name", { ascending: true }),
+    supabase.from("projects").select("id,project_name,primary_target_region,project_regions,regions_covered").eq("client_id", workspace.clientId).order("project_name", { ascending: true }),
     supabase.from("audit_logs").select("id,action_type,actor_user_id,target_user_id,created_at,new_value").order("created_at", { ascending: false }).limit(25),
   ]);
   if (membershipsError) throw membershipsError;
@@ -680,9 +680,9 @@ export async function getWorkspaceTeamDashboard(): Promise<WorkspaceTeamDashboar
   if (projectsError) throw projectsError;
 
   const projectRows = (projects ?? []) as Array<Record<string, unknown>>;
-  const projectNameById = new Map(projectRows.map((project) => [text(project.id), text(project.name)]));
+  const projectNameById = new Map(projectRows.map((project) => [text(project.id), text(project.project_name)]));
   const assignmentOptions = {
-    projects: projectRows.map((project) => ({ id: text(project.id), name: text(project.name) })).filter((project) => project.id && project.name),
+    projects: projectRows.map((project) => ({ id: text(project.id), name: text(project.project_name) })).filter((project) => project.id && project.name),
     regions: [...new Set(projectRows.flatMap((project) => deriveProjectRegions({
       states: Array.isArray(project.regions_covered) ? (project.regions_covered as string[]) : [],
       storedRegions: [...(Array.isArray(project.project_regions) ? (project.project_regions as string[]) : []), text(project.primary_target_region)],

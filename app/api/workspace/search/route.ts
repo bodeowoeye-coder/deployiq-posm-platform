@@ -70,9 +70,9 @@ export async function GET(request: Request) {
       optionalResults(async () => {
         const { data, error } = await supabase
           .from("projects")
-          .select("id,project_name:name,status")
+          .select("id,project_name,status")
           .eq("client_id", workspace.clientId)
-          .ilike("name", pattern)
+          .ilike("project_name", pattern)
           .limit(5);
         if (error) throw error;
         return ((data ?? []) as Array<Record<string, unknown>>).filter((project) => !isLegacyProvisioningPlaceholderProject(project)).map((project) => ({
@@ -85,13 +85,13 @@ export async function GET(request: Request) {
       optionalResults(async () => {
         const { data, error } = await supabase
           .from("deployment_locations")
-          .select("id,location_name,outlet_name,outlet_code,external_id")
+          .select("id,outlet_name,outlet_code,external_id")
           .eq("client_id", workspace.clientId)
-          .or(`location_name.ilike.${pattern},outlet_name.ilike.${pattern},outlet_code.ilike.${pattern},external_id.ilike.${pattern}`)
+          .or(`outlet_name.ilike.${pattern},outlet_code.ilike.${pattern},external_id.ilike.${pattern}`)
           .limit(5);
         if (error) throw error;
         return ((data ?? []) as Array<Record<string, unknown>>).map((location) => {
-          const label = text(location.location_name) || text(location.outlet_name) || text(location.outlet_code) || "Deployment location";
+          const label = text(location.outlet_name) || text(location.outlet_code) || "Deployment location";
           const sublabel = text(location.outlet_code) || text(location.external_id) || "Deployment Locations";
           return {
             group: "Deployment Locations" as const,

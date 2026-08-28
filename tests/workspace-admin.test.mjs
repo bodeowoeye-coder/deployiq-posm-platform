@@ -741,6 +741,9 @@ test("workspace admin: Global Search resolves tenant scope server-side and retur
   assert.match(route, /workspace_memberships/);
   assert.match(route, /deployment_locations/);
   assert.match(route, /projects/);
+  assert.match(route, /select\("id,project_name,status"\)/);
+  assert.match(route, /ilike\("project_name", pattern\)/);
+  assert.doesNotMatch(route, /project_name:name|ilike\("name"/);
   assert.match(route, /result\.href\.startsWith\("\/workspace\/admin"\)/);
   assert.doesNotMatch(route, /resolveCustomerWorkspaceContext|resolveCustomerWorkspaceHomeContext|setupProgress|workspaceHealth/);
   assert.doesNotMatch(route, /searchParams\.get\("clientId"\)|searchParams\.get\("workspaceId"\)|searchParams\.get\("tenantId"\)/);
@@ -995,7 +998,7 @@ test("workspace admin: campaign setup milestone follows Core project campaign me
   const resolver = readFileSync(new URL("../lib/workspace/customerAdmin.ts", import.meta.url), "utf8");
   const foundation = readFileSync(new URL("../lib/workspace/customerAdminFoundation.ts", import.meta.url), "utf8");
   assert.match(resolver, /Campaign count lookup/);
-  assert.match(resolver, /from\("projects"\)\.select\("id", \{ count: "exact", head: true \}\)\.eq\("client_id", workspace\.clientId\)\.not\("campaign", "is", null\)/);
+  assert.match(resolver, /from\("projects"\)\.select\("id", \{ count: "exact", head: true \}\)\.eq\("client_id", workspace\.clientId\)\.not\("campaign_name", "is", null\)/);
   assert.match(resolver, /campaignCount: countValue\(campaignCountResult\.count\)/);
   assert.match(foundation, /const campaignDone = metrics\.campaignCount > 0/);
   assert.match(foundation, /Review Campaign Metadata/);
@@ -1199,6 +1202,22 @@ test("workspace admin: error state uses customer-safe copy and route-wide loadin
   assert.match(errorPage, /border-t-\[var\(--accent\)\]/);
   assert.match(errorPage, /motion-safe:animate-spin/);
   assert.doesNotMatch(errorPage, /Customer workspace access is required|loads your dashboard|access token|refresh token|cookie/i);
+});
+
+test("workspace admin: fresh-workspace loaders use canonical project columns", () => {
+  const team = readFileSync(new URL("../lib/workspace/team.ts", import.meta.url), "utf8");
+  const resources = readFileSync(new URL("../lib/workspace/fieldResources.ts", import.meta.url), "utf8");
+  const execution = readFileSync(new URL("../lib/workspace/deploymentExecution.ts", import.meta.url), "utf8");
+  const home = readFileSync(new URL("../lib/workspace/customerAdmin.ts", import.meta.url), "utf8");
+  assert.match(team, /select\("id,project_name,primary_target_region,project_regions,regions_covered"\)/);
+  assert.match(team, /order\("project_name"/);
+  assert.match(team + resources, /select\("id,project_name,campaign_name"\)/);
+  assert.doesNotMatch(team + resources, /select\("id,name,campaign"\)/);
+  assert.match(execution, /select\("id,project_name"\)/);
+  assert.match(execution, /\.eq\("client_id", clientId\)/);
+  assert.doesNotMatch(execution, /projects\(project_name(?::name)?\)/);
+  assert.doesNotMatch(execution, /workspace_field_assignments[\s\S]{0,500}(projects|deployment_locations|agencies|installers)\(/);
+  assert.match(home, /not\("campaign_name", "is", null\)/);
 });
 
 test("workspace admin: opening overlay is owned by login transition only", () => {

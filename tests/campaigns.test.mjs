@@ -80,26 +80,27 @@ test("campaigns: workspace_campaigns is retained as compatibility assignment anc
   assert.match(migration, /project_id uuid not null references public\.projects\(id\)/);
 });
 
-test("campaigns: project display name uses runtime projects.name column with project_name UI alias", () => {
+test("campaigns: project reads use the canonical staging projects columns", () => {
   const service = readFileSync(new URL("../lib/workspace/campaigns.ts", import.meta.url), "utf8");
-  const projectService = readFileSync(new URL("../lib/core/projects/service.ts", import.meta.url), "utf8");
+  const baseline = readFileSync(new URL("../supabase/baselines/20260816020000_pre_core2a.sql", import.meta.url), "utf8");
   const searchRoute = readFileSync(new URL("../app/api/workspace/search/route.ts", import.meta.url), "utf8");
   const executionService = readFileSync(new URL("../lib/workspace/deploymentExecution.ts", import.meta.url), "utf8");
-  assert.match(projectService, /name: text\(input\.projectName\)/);
-  assert.doesNotMatch(projectService.match(/export function buildCoreProjectInsertPayload[\s\S]*?\n\}/)?.[0] ?? "", /project_name: text\(input\.projectName\)/);
-  assert.match(service, /\.select\("id,client_id,project_name:name,campaign_name:campaign,brand_name:brand,status,start_date,end_date,regions_covered,target_quantity,assigned_installers,primary_target_region,primary_target_state,archived_at,created_at"\)/);
-  assert.match(searchRoute, /\.select\("id,project_name:name,status"\)/);
-  assert.match(searchRoute, /\.ilike\("name", pattern\)/);
-  assert.match(executionService, /projects\(project_name:name\)/);
+  assert.match(baseline, /create table if not exists public\.projects[\s\S]*project_name text[\s\S]*campaign_name text[\s\S]*project_type text/i);
+  assert.match(service, /\.select\("id,client_id,brand_id,project_name,campaign_name,project_type,status,start_date,end_date,regions_covered,target_quantity,assigned_installers,primary_target_region,primary_target_state,archived_at,created_at"\)/);
+  assert.doesNotMatch(service, /project_name:name|campaign_name:campaign|brand_name:brand/);
+  assert.match(searchRoute, /\.select\("id,project_name,status"\)/);
+  assert.match(searchRoute, /\.ilike\("project_name", pattern\)/);
+  assert.match(executionService, /\.select\("id,project_name"\)/);
+  assert.doesNotMatch(executionService, /projects\(project_name(?::name)?\)/);
   assert.match(service, /projectName: project\.project_name/);
 });
 
-test("campaigns: create options do not select nonexistent projects.project_type", () => {
+test("campaigns: create options use canonical project identity columns", () => {
   const service = readFileSync(new URL("../lib/workspace/campaigns.ts", import.meta.url), "utf8");
   const newPage = readFileSync(new URL("../app/workspace/admin/campaigns/new/page.tsx", import.meta.url), "utf8");
   const projectSelects = [...service.matchAll(/\.from\("projects"\)[\s\S]*?\.select\("([^"]+)"\)/g)].map((match) => match[1]);
   assert.ok(projectSelects.length >= 2);
-  assert.ok(projectSelects.every((selection) => !selection.split(",").map((field) => field.trim()).includes("project_type")));
+  assert.ok(projectSelects.every((selection) => !/project_name:name|campaign_name:campaign/.test(selection)));
   assert.match(service, /function normalizeCampaignProjectOption/);
   assert.match(service, /CUSTOMER_CAMPAIGN_DEPLOYMENT_TYPES\.includes\(projectType as ProjectType\)/);
   assert.match(service, /: "Retail Deployment"/);

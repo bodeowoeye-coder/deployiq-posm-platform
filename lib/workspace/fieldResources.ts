@@ -381,13 +381,13 @@ export async function getInstallerDashboard(filters: InstallerFilters = {}) {
   if (projectIds.length > 0) {
     const { data: projects, error: projectsError } = await supabase
       .from("projects")
-      .select("id,name,campaign")
+      .select("id,project_name,campaign_name")
       .eq("client_id", resolvedWorkspace.clientId)
       .in("id", projectIds);
     if (projectsError) console.warn("[field-resource-performance]", { step: "Optional installer project names skipped", diagnostic: diagnosticFor(projectsError) });
     for (const row of (projects ?? []) as Row[]) {
       const projectId = text(row.id);
-      if (projectId) projectNameById.set(projectId, text(row.name) || text(row.campaign) || projectId);
+      if (projectId) projectNameById.set(projectId, text(row.project_name) || text(row.campaign_name) || projectId);
     }
   }
   const installerRows = (data ?? []) as Row[];
@@ -714,13 +714,13 @@ export async function getInstallerProfile(installerId: string) {
   if (projectIds.length > 0) {
     const { data: projects, error: projectsError } = await supabase
       .from("projects")
-      .select("id,name,campaign")
+      .select("id,project_name,campaign_name")
       .eq("client_id", resolvedWorkspace.clientId)
       .in("id", projectIds);
     if (projectsError) console.warn("[field-resource-performance]", { step: "Optional installer profile project names skipped", diagnostic: diagnosticFor(projectsError) });
     for (const row of (projects ?? []) as Row[]) {
       const projectId = text(row.id);
-      if (projectId) projectNameById.set(projectId, text(row.name) || text(row.campaign) || projectId);
+      if (projectId) projectNameById.set(projectId, text(row.project_name) || text(row.campaign_name) || projectId);
     }
   }
   const approved = submissions.filter((row) => text(row.status).toLowerCase() === "approved").length;

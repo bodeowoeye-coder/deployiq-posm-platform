@@ -216,11 +216,44 @@ function normalizeAssignment(row: Row): DeploymentAssignment {
 function assignmentQuery(clientId: string) {
   return createAdminSupabase()
     .from("workspace_field_assignments")
-    .select("id,client_id,workspace_id,product_key,campaign_id,project_id,campaign_location_id,deployment_location_id,agency_id,installer_id,assignment_status,target_quantity,assigned_at,workspace_campaigns(campaign_name,brand_name,description,end_date,status),projects(project_name:name),deployment_locations(outlet_name,location_name,address,state,outlet_code,external_id,latitude,longitude,gps_latitude,gps_longitude),agencies(agency_name),installers(installer_name)")
+    .select("id,client_id,workspace_id,product_key,campaign_id,project_id,campaign_location_id,deployment_location_id,agency_id,installer_id,assignment_status,target_quantity,assigned_at")
     .eq("client_id", clientId)
     .is("removed_at", null)
     .order("assigned_at", { ascending: false })
     .limit(500);
+}
+
+async function attachAssignmentReferences(rows: Row[], clientId: string) {
+  if (rows.length === 0) return rows;
+  const projectIds = [...new Set(rows.map((row) => text(row.project_id)).filter(Boolean))];
+  const campaignIds = [...new Set(rows.map((row) => text(row.campaign_id)).filter(Boolean))];
+  const locationIds = [...new Set(rows.map((row) => text(row.deployment_location_id)).filter(Boolean))];
+  const agencyIds = [...new Set(rows.map((row) => text(row.agency_id)).filter(Boolean))];
+  const installerIds = [...new Set(rows.map((row) => text(row.installer_id)).filter(Boolean))];
+  const supabase = createAdminSupabase();
+  const [projects, campaigns, locations, agencies, installers] = await Promise.all([
+    projectIds.length ? supabase.from("projects").select("id,project_name").eq("client_id", clientId).in("id", projectIds) : Promise.resolve({ data: [], error: null }),
+    campaignIds.length ? supabase.from("workspace_campaigns").select("id,campaign_name,brand_name,description,end_date,status").eq("client_id", clientId).in("id", campaignIds) : Promise.resolve({ data: [], error: null }),
+    locationIds.length ? supabase.from("deployment_locations").select("id,outlet_name,address,state,outlet_code,external_id,latitude,longitude").eq("client_id", clientId).in("id", locationIds) : Promise.resolve({ data: [], error: null }),
+    agencyIds.length ? supabase.from("agencies").select("id,agency_name").eq("client_id", clientId).in("id", agencyIds) : Promise.resolve({ data: [], error: null }),
+    installerIds.length ? supabase.from("installers").select("id,installer_name").eq("client_id", clientId).in("id", installerIds) : Promise.resolve({ data: [], error: null }),
+  ]);
+  const failed = [projects, campaigns, locations, agencies, installers].find((result) => result.error);
+  if (failed?.error) throw failed.error;
+  const byId = (data: unknown[] | null) => new Map(((data ?? []) as Row[]).map((row) => [text(row.id), row]));
+  const projectById = byId(projects.data);
+  const campaignById = byId(campaigns.data);
+  const locationById = byId(locations.data);
+  const agencyById = byId(agencies.data);
+  const installerById = byId(installers.data);
+  return rows.map((row) => ({
+    ...row,
+    projects: projectById.get(text(row.project_id)) ?? { project_name: "Project" },
+    workspace_campaigns: campaignById.get(text(row.campaign_id)) ?? {},
+    deployment_locations: locationById.get(text(row.deployment_location_id)) ?? {},
+    agencies: agencyById.get(text(row.agency_id)) ?? {},
+    installers: installerById.get(text(row.installer_id)) ?? {},
+  }));
 }
 
 export async function getInstallerAssignments() {
@@ -231,7 +264,7 @@ export async function getInstallerAssignments() {
     ? await query.eq("installer_id", context.installerId)
     : await query;
   if (error) throw error;
-  const rows = ((data ?? []) as Row[]).map(normalizeAssignment);
+  const rows = (await attachAssignmentReferences((data ?? []) as Row[], context.clientId)).map(normalizeAssignment);
   const today = new Date().toISOString().slice(0, 10);
   const pending = rows.filter((row) => ["assigned", "ready", "in_progress"].includes(row.status));
   const completed = rows.filter((row) => row.status === "completed");
@@ -266,7 +299,8 @@ export async function getDeploymentAssignment(assignmentId: string) {
     : await query.eq("id", assignmentId).maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  const assignment = normalizeAssignment(data as Row);
+  const [assignmentRow] = await attachAssignmentReferences([data as Row], context.clientId);
+  const assignment = normalizeAssignment(assignmentRow);
   const { data: submissions } = await createAdminSupabase()
     .from("submissions")
     .select("id,status,submitted_at,rejection_reason,correction_notes")

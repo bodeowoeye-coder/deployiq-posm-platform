@@ -440,7 +440,7 @@ export async function getWorkspaceCampaignDashboard(filters: CampaignDashboardFi
   const [{ data: projects, error }, { data: legacyRows, error: legacyError }] = await Promise.all([
     supabase
       .from("projects")
-      .select("id,client_id,project_name:name,campaign_name:campaign,brand_name:brand,status,start_date,end_date,regions_covered,target_quantity,assigned_installers,primary_target_region,primary_target_state,archived_at,created_at")
+      .select("id,client_id,brand_id,project_name,campaign_name,project_type,status,start_date,end_date,regions_covered,target_quantity,assigned_installers,primary_target_region,primary_target_state,archived_at,created_at")
       .eq("client_id", resolvedWorkspace.clientId)
       .order("created_at", { ascending: false }),
     supabase
@@ -550,7 +550,7 @@ export async function getCampaignCreateOptions(workspaceContext?: CustomerWorksp
   const [{ data: projects, error: projectError }, { data: brands }] = await Promise.all([
     supabase
       .from("projects")
-      .select("id,project_name:name,campaign_name:campaign,start_date,end_date,regions_covered,target_quantity")
+      .select("id,project_name,campaign_name,start_date,end_date,regions_covered,target_quantity")
       .eq("client_id", resolvedWorkspace.clientId)
       .is("archived_at", null)
       .order("created_at", { ascending: false }),
@@ -575,7 +575,7 @@ export async function getCampaignCreateOptions(workspaceContext?: CustomerWorksp
 async function assertProjectBelongsToWorkspace(projectId: string, workspaceContext: CustomerWorkspaceContext) {
   const { data, error } = await createAdminSupabase()
     .from("projects")
-    .select("id,project_name:name,campaign_name:campaign,start_date,end_date,regions_covered,target_quantity")
+    .select("id,project_name,campaign_name,start_date,end_date,regions_covered,target_quantity")
     .eq("id", projectId)
     .eq("client_id", workspaceContext.clientId)
     .is("archived_at", null)
@@ -682,13 +682,13 @@ export async function getWorkspaceCampaign(campaignId: string, workspaceContext?
   const [{ data: legacy, error: legacyError }, { data: project, error: projectError }] = await Promise.all([
     supabase
       .from("workspace_campaigns")
-      .select("id,client_id,project_id,campaign_name,brand_name,description,deployment_type,states,regions,cities,start_date,end_date,launch_date,target_quantity,target_unit,state_targets,deployment_location_ids,campaign_manager_user_id,agency_name,field_team_name,status,created_by,launched_at,archived_at,closed_at,created_at,updated_at,projects!workspace_campaigns_project_client_fk(id,project_name:name,campaign_name:campaign,start_date,end_date,regions_covered,target_quantity)")
+      .select("id,client_id,project_id,campaign_name,brand_name,description,deployment_type,states,regions,cities,start_date,end_date,launch_date,target_quantity,target_unit,state_targets,deployment_location_ids,campaign_manager_user_id,agency_name,field_team_name,status,created_by,launched_at,archived_at,closed_at,created_at,updated_at,projects!workspace_campaigns_project_client_fk(id,project_name,campaign_name,start_date,end_date,regions_covered,target_quantity)")
       .eq("id", campaignId)
       .eq("client_id", resolvedWorkspace.clientId)
       .maybeSingle(),
     supabase
       .from("projects")
-      .select("id,client_id,project_name:name,campaign_name:campaign,brand_name:brand,status,start_date,end_date,regions_covered,target_quantity,assigned_installers,primary_target_region,primary_target_state,archived_at,created_at")
+      .select("id,client_id,brand_id,project_name,campaign_name,project_type,status,start_date,end_date,regions_covered,target_quantity,assigned_installers,primary_target_region,primary_target_state,archived_at,created_at")
       .eq("id", campaignId)
       .eq("client_id", resolvedWorkspace.clientId)
       .maybeSingle(),
@@ -769,7 +769,7 @@ export async function updateWorkspaceCampaignStatus(input: { campaignId: string;
     .update(updates)
     .eq("id", existing.campaign.project_id)
     .eq("client_id", resolvedWorkspace.clientId)
-    .select("id,client_id,project_name:name,campaign_name:campaign,brand_name:brand,status,start_date,end_date,regions_covered,target_quantity,assigned_installers,primary_target_region,primary_target_state,archived_at,created_at")
+    .select("id,client_id,brand_id,project_name,campaign_name,project_type,status,start_date,end_date,regions_covered,target_quantity,assigned_installers,primary_target_region,primary_target_state,archived_at,created_at")
     .single();
   if (error) throw error;
   return { campaign: normalizeProjectCampaign(normalizeCampaignProjectRow(data as Record<string, unknown>), existing.campaign.compatibility_campaign_id ? legacyAnchor(existing.campaign as unknown as Record<string, unknown>) : null, { actualDeployments: existing.campaign.actualDeployments, approved: existing.campaign.approved, pending: existing.campaign.pending, rejected: existing.campaign.rejected, gpsVerified: existing.campaign.gpsVerified }) };

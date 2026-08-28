@@ -726,7 +726,7 @@ async function loadCustomerWorkspaceHomeContext(): Promise<CustomerWorkspaceCont
     checklistResult,
   ] = await Promise.all([
     optionalWorkspaceLookup<Record<string, unknown>>(diagnosticContext, "Branding lookup", () =>
-      supabase.from("workspace_branding").select("organisation_display_name,workspace_initials,logo_url,accent_colour,theme").eq("client_id", workspace.clientId).maybeSingle(),
+      supabase.from("workspace_branding").select("organisation_display_name,workspace_initials,accent_colour,theme").eq("client_id", workspace.clientId).maybeSingle(),
       { data: null },
       { missingResult: "Missing workspace_branding record" },
     ),
@@ -735,7 +735,7 @@ async function loadCustomerWorkspaceHomeContext(): Promise<CustomerWorkspaceCont
       { data: [], count: 0 },
     ),
     optionalWorkspaceLookup<Array<Record<string, unknown>>>(diagnosticContext, "Campaign count lookup", () =>
-      supabase.from("projects").select("id", { count: "exact", head: true }).eq("client_id", workspace.clientId).not("campaign", "is", null).is("archived_at", null),
+      supabase.from("projects").select("id", { count: "exact", head: true }).eq("client_id", workspace.clientId).not("campaign_name", "is", null).is("archived_at", null),
       { data: [], count: 0 },
     ),
     optionalWorkspaceLookup<Array<Record<string, unknown>>>(diagnosticContext, "Membership count lookup", () =>

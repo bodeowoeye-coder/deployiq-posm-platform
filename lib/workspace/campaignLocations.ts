@@ -213,7 +213,7 @@ export async function getCampaignLocationDashboard(campaignId: string, filters: 
   const [{ data: locations, error: locationError }, { data: assignments, error: assignmentError }, { data: activityRows }, { data: agencies }, { data: installers }, { data: fieldAssignments, error: fieldAssignmentError }] = await Promise.all([
     supabase
       .from("deployment_locations")
-      .select("id,state,outlet_name,location_name,address,outlet_code,external_id,region,state_region,city,lga")
+      .select("id,state,outlet_name,address,outlet_code,external_id")
       .eq("client_id", resolvedWorkspace.clientId)
       .eq("workspace_id", resolvedWorkspace.clientId)
       .eq("product_key", resolvedWorkspace.productKey)
