@@ -7,6 +7,24 @@ const migrationUrl = new URL(
   import.meta.url
 );
 const sql = readFileSync(migrationUrl, "utf8");
+const privilegeMigrationUrl = new URL(
+  "../supabase/migrations/20260828020000_normalize_build_function_privileges.sql",
+  import.meta.url
+);
+const privilegeSql = readFileSync(privilegeMigrationUrl, "utf8");
+const privilegeStatements = privilegeSql.replace(/^\s*--.*$/gm, "");
+
+const buildTriggerFunctions = [
+  "prevent_build_category_template_change",
+  "prevent_build_resource_scope_change",
+  "prevent_build_template_scope_change",
+  "touch_build_updated_at",
+  "validate_build_activity_template_category",
+  "validate_build_activity_template_dependency",
+  "validate_build_site_authority",
+  "validate_build_template_resource_requirement",
+  "validate_build_work_package_template_assignment"
+];
 
 function functionDefinition(name) {
   const match = sql.match(new RegExp(
@@ -165,4 +183,24 @@ test("BH-1B protects trigger-only definer execution without broad canonical gran
   assert.doesNotMatch(sql, /grant\s+(select|all)[\s\S]*on\s+(table\s+)?public\.projects[\s\S]*to\s+service_role/i);
   assert.doesNotMatch(sql, /grant\s+(select|insert|update|delete|all)[\s\S]*on\s+(table\s+)?public\.projects[\s\S]*to\s+(anon|authenticated)/i);
   assert.match(sql, /revoke all privileges on table public\.%I from anon, authenticated/i);
+});
+
+test("BH-3A removes environment-default direct service-role execution from every Build trigger function", () => {
+  for (const name of buildTriggerFunctions) {
+    assert.match(
+      privilegeSql,
+      new RegExp(`revoke\\s+execute\\s+on\\s+function\\s+public\\.${name}\\(\\)\\s+from\\s+service_role`, "i"),
+      name
+    );
+  }
+  assert.equal(
+    privilegeSql.match(/revoke\s+execute\s+on\s+function/gi)?.length,
+    buildTriggerFunctions.length
+  );
+});
+
+test("BH-3A is a privilege-only, narrowly scoped correction", () => {
+  assert.doesNotMatch(privilegeStatements, /\b(create|alter|drop|truncate|insert|update|delete|grant)\b/i);
+  assert.doesNotMatch(privilegeStatements, /public\.projects|\bon\s+table\b|\bpolicy\b|\brow\s+level\s+security\b/i);
+  assert.doesNotMatch(privilegeStatements, /\b(public|anon|authenticated)\b\s*;/i);
 });
