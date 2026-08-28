@@ -4,16 +4,52 @@ The production Supabase project `vmurvcpmqwnxgruhqevf` must never be used by
 the staging bootstrap, reference seed, fixture seed, or migration-development
 commands.
 
-## Required local environment
+The only registered remote staging project is **DeployIQ Staging** in
+`eu-west-1` (West EU, Ireland), project ref `pmdgpgfbtolrgmuusszy`. The guard
+requires this repository-known identity, a matching declared project ref, and
+an explicit runtime allowlist entry. None of those checks can override the
+production hard denial.
 
-Set server-side values without committing them:
+## Local staging secret environment
+
+Create `.env.staging.local` at the repository root by copying
+`.env.staging.example`, then replace only the three placeholder values locally.
+The real file is explicitly Git-ignored. Staging npm commands load this file;
+they do not load or overwrite `.env.local`.
 
 ```text
 DEPLOYIQ_ENVIRONMENT=staging
-DEPLOYIQ_ALLOWED_MUTATION_PROJECT_REFS=<staging-project-ref>
-NEXT_PUBLIC_SUPABASE_URL=https://<staging-project-ref>.supabase.co
-SUPABASE_DB_URL=<staging-or-local-postgres-connection>
+SUPABASE_PROJECT_REF=pmdgpgfbtolrgmuusszy
+DEPLOYIQ_ALLOWED_MUTATION_PROJECT_REFS=pmdgpgfbtolrgmuusszy
+NEXT_PUBLIC_SUPABASE_URL=https://pmdgpgfbtolrgmuusszy.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<staging-publishable-or-legacy-anon-key>
+SUPABASE_SERVICE_ROLE_KEY=<staging-secret-or-legacy-service-role-key>
+SUPABASE_DB_URL=<staging-postgres-connection-string>
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
+
+`NEXT_PUBLIC_SUPABASE_URL`, the publishable/legacy anon key, and the
+secret/legacy service-role key come from the DeployIQ Staging project Connect
+dialog or **Project Settings → API Keys**. The Postgres connection string comes
+from **Connect → Connection string**; use the staging database password when
+the displayed string contains a password placeholder. The project ref and
+region are visible under **Project Settings → General**.
+
+Store these values only in an approved local secret store or deployment
+environment scoped to Staging/Preview. The publishable or legacy anon key is
+the only browser-exposed key and is assigned to
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`; `SUPABASE_SERVICE_ROLE_KEY` and
+`SUPABASE_DB_URL` are server-only and must never use a `NEXT_PUBLIC_` prefix.
+Do not add a populated staging environment file to Git.
+
+Use `npm run dev:staging` when the local Next.js application must consume this
+staging-specific environment. Its launcher creates a temporary project view
+that excludes every repository `.env*` file. The App Router tree is exposed as
+real directories with source-file links so Next can discover routes while edits
+remain visible. The launcher passes only the explicitly parsed staging values
+plus a small OS-variable allowlist and fixes the local staging application URL
+at `http://localhost:3000`. The ordinary `npm run dev` retains the existing
+Next.js environment-file behavior.
 
 For the Supabase CLI local stack, use `DEPLOYIQ_ENVIRONMENT=local`,
 `DEPLOYIQ_ALLOWED_MUTATION_PROJECT_REFS=local`, the CLI's loopback API URL, and
@@ -47,6 +83,27 @@ staging project and `DEPLOYIQ_SYNTHETIC_ADMIN_USER_ID` set to that user's UUID.
 Historical migration files remain in Git as production lineage. Fresh databases
 use the baseline and repair markers; they do not replay the historical files.
 Never write the migration ledger directly.
+
+## Accepted pre-CORE-2A fingerprint
+
+The accepted deterministic schema fingerprint for
+`20260816020000_pre_core2a.sql` plus `canonical_reference_data.sql` is:
+
+```text
+b35de7769e399d8f463614f4031d95dd75feb3f00d7a56eb1e988bce5ab141e6
+```
+
+Acceptance was established with two fresh disposable local databases and the
+isolated remote staging database. All three current inventories were identical
+across tables, columns, indexes, foreign keys, RLS, policies, functions, routine
+grants, and storage configuration.
+
+The earlier fingerprint
+`d95fcd2f0247436727d1cc3bf0566fd4a70a06c322069029eb22e58080fa4cc1`
+is stale. Its inventory payload was not retained, so it cannot be reconstructed;
+no application-schema difference was detected between the current fresh local
+and remote inventories. The change is therefore attributed to local Supabase
+runtime/image drift only after current three-way reproducibility was proven.
 
 ## Supabase dashboard checklist
 

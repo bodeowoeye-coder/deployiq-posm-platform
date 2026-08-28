@@ -1,4 +1,5 @@
 const PRODUCTION_PROJECT_REF = "vmurvcpmqwnxgruhqevf";
+const STAGING_PROJECT_REF = "pmdgpgfbtolrgmuusszy";
 
 export function parseSupabaseProjectRef(rawUrl) {
   if (!rawUrl) throw new Error("supabase_url_missing");
@@ -45,6 +46,16 @@ export function assertSafeSupabaseTarget({
 
   const projectRef = parseSupabaseProjectRef(env.NEXT_PUBLIC_SUPABASE_URL);
   if (projectRef === PRODUCTION_PROJECT_REF) throw new Error("production_project_rejected");
+  if (environment === "staging") {
+    if (projectRef !== STAGING_PROJECT_REF) throw new Error("canonical_staging_project_required");
+    const declaredProjectRef = env.SUPABASE_PROJECT_REF?.trim().toLowerCase();
+    if (!declaredProjectRef) throw new Error("supabase_project_ref_missing");
+    if (declaredProjectRef !== STAGING_PROJECT_REF || declaredProjectRef !== projectRef) {
+      throw new Error("supabase_project_ref_mismatch");
+    }
+  } else if (projectRef === STAGING_PROJECT_REF) {
+    throw new Error("staging_environment_required");
+  }
 
   const allowed = new Set((env.DEPLOYIQ_ALLOWED_MUTATION_PROJECT_REFS ?? "")
     .split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
@@ -75,4 +86,4 @@ export function assertSafeSupabaseTarget({
   return { environment, projectRef };
 }
 
-export { PRODUCTION_PROJECT_REF };
+export { PRODUCTION_PROJECT_REF, STAGING_PROJECT_REF };

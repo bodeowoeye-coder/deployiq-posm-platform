@@ -4,6 +4,7 @@
 node_modules
 .npm-cache
 .env.local
+.env.staging.local
 .env
 dist
 coverage
