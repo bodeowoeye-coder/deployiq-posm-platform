@@ -73,16 +73,17 @@ export async function defaultDestinationForResolvedUser(input: {
   if (input.role === "installer") return "/submit";
   if (input.role !== "client") return "/";
 
-  const incompleteDraft = await getLatestEligibleIncompleteDraftForCustomer({
-    userId: input.userId,
-    email: input.email,
-  });
+  const [incompleteDraft, activationDraft] = await Promise.all([
+    getLatestEligibleIncompleteDraftForCustomer({
+      userId: input.userId,
+      email: input.email,
+    }),
+    getLatestActivationDraftForCustomer({
+      userId: input.userId,
+      email: input.email,
+    }),
+  ]);
   if (incompleteDraft) return "/onboarding";
-
-  const activationDraft = await getLatestActivationDraftForCustomer({
-    userId: input.userId,
-    email: input.email,
-  });
   if (activationDraft) return `/workspace/activation?token=${encodeURIComponent(activationDraft.resume_token)}`;
   if (!input.clientId) return "/onboarding";
   const isCustomerAdmin = await hasCustomerAdminMembership(input.userId, input.clientId);

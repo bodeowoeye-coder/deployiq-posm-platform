@@ -11,7 +11,16 @@ import { workspaceNotificationsEnabled } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
+function nowMs() {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function elapsedMs(startedAt: number) {
+  return Math.round((nowMs() - startedAt) * 10) / 10;
+}
+
 export default async function CustomerWorkspaceAdminLayout({ children }: { children: React.ReactNode }) {
+  const totalStartedAt = nowMs();
   let workspace;
   try {
     workspace = await requireCustomerWorkspace();
@@ -40,7 +49,18 @@ export default async function CustomerWorkspaceAdminLayout({ children }: { child
     throw error;
   }
 
-  const projectScope = await getCustomerWorkspaceProjectScope(workspace);
-  const notificationEnabled = await workspaceNotificationsEnabled(workspace);
+  const shellDependenciesStartedAt = nowMs();
+  const [projectScope, notificationEnabled] = await Promise.all([
+    getCustomerWorkspaceProjectScope(workspace),
+    workspaceNotificationsEnabled(workspace),
+  ]);
+  if (process.env.NODE_ENV === "development") {
+    console.info("[workspace-performance]", {
+      route: "/workspace/admin",
+      step: "Workspace shell dependencies",
+      elapsedMs: elapsedMs(shellDependenciesStartedAt),
+      totalElapsedMs: elapsedMs(totalStartedAt),
+    });
+  }
   return <CustomerWorkspaceShell workspace={workspace} projectScope={projectScope} notificationEnabled={notificationEnabled}>{children}</CustomerWorkspaceShell>;
 }

@@ -18,22 +18,22 @@ export default function CustomerWorkspaceError({ error, reset }: Props) {
     });
   }, [error]);
 
-  const transient = error.name === "CustomerWorkspaceTransientError";
+  const workspaceUnavailable = error.name === "CustomerWorkspaceTransientError";
 
   return (
     <main className="grid min-h-[100dvh] place-items-center bg-slate-50 px-6 text-slate-950">
       <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-xl">
         <div
-          className={transient ? "mx-auto mb-4 h-10 w-10 rounded-full border-[3px] border-slate-200 border-t-[var(--accent)] motion-safe:animate-spin" : "mx-auto mb-4 h-10 w-10 rounded-full border border-amber-200 bg-amber-50"}
+          className={workspaceUnavailable ? "mx-auto mb-4 h-10 w-10 rounded-full border-[3px] border-slate-200 border-t-[var(--accent)] motion-safe:animate-spin" : "mx-auto mb-4 h-10 w-10 rounded-full border border-amber-200 bg-amber-50"}
           aria-hidden="true"
         />
         <h1 className="text-xl font-bold">
-          {transient ? "We're having trouble opening your workspace." : "We couldn't open this workspace."}
+          {workspaceUnavailable ? "This workspace is temporarily unavailable." : "We couldn't load this workspace page."}
         </h1>
         <p className="mt-3 text-sm leading-6 text-slate-600">
-          {transient
+          {workspaceUnavailable
             ? "Please try again. Your account and workspace have not been changed."
-            : "Your account does not currently have access to this workspace."}
+            : "Your workspace access is active, but this page could not be loaded. Try again or contact support if the problem continues."}
         </p>
         <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
           <button

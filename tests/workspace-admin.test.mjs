@@ -1187,13 +1187,14 @@ test("workspace admin: context cache no longer wraps the whole resolver retry", 
   assert.doesNotMatch(resolver, /cache\(async \(\) => null|resolveCustomerWorkspaceContext[\s\S]*return null/);
 });
 
-test("workspace admin: error state uses customer-safe copy and route-wide loading is retired", () => {
+test("workspace admin: nested module failures are distinct from access denial and workspace unavailability", () => {
   const errorPage = readFileSync(new URL("../app/workspace/admin/error.tsx", import.meta.url), "utf8");
   const layout = readFileSync(new URL("../app/workspace/admin/layout.tsx", import.meta.url), "utf8");
   const loginPage = readFileSync(new URL("../app/login/page.tsx", import.meta.url), "utf8");
-  assert.match(errorPage, /We couldn't open this workspace\./);
-  assert.match(errorPage, /Your account does not currently have access to this workspace\./);
-  assert.match(errorPage, /We're having trouble opening your workspace\./);
+  assert.match(errorPage, /We couldn't load this workspace page\./);
+  assert.match(errorPage, /Your workspace access is active, but this page could not be loaded\./);
+  assert.match(errorPage, /This workspace is temporarily unavailable\./);
+  assert.doesNotMatch(errorPage, /Your account does not currently have access to this workspace\./);
   assert.match(layout, /We're having trouble loading your workspace\./);
   assert.match(errorPage, /Please try again\. Your account and workspace have not been changed\./);
   assert.match(errorPage, /Try Again/);
@@ -1232,6 +1233,9 @@ test("workspace admin: opening overlay is owned by login transition only", () =>
   assert.match(loginPage, /console\.info\("\[workspace-overlay\]"/);
   assert.match(loginPage, /pathname: window\.location\.pathname/);
   assert.match(loginPage, /hasCompletedInitialWorkspaceLoad \|\| !isRedirecting/);
+  assert.match(shell, /\[workspace-interactive\]/);
+  assert.match(shell, /redirectToInteractiveMs/);
+  assert.match(shell, /loginToInteractiveMs/);
   assert.doesNotMatch(shell + layout + loadingPage, /Opening workspace\.\.\.|WorkspaceLoadingOverlay|setLoading\(true\)|setIsRedirecting\(true\)/);
 });
 

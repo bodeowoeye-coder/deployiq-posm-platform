@@ -42,6 +42,7 @@ const ACCOUNT_SECTION_DESCRIPTIONS: Record<string, string> = {
   "Billing & Plan": "Review your active subscription and product entitlement.",
   "Audit Logs": "Review workspace configuration activity.",
 };
+const WORKSPACE_LOGIN_TIMING_KEY = "deployiq:workspace-login-timing";
 
 type EffectiveTheme = "light" | "dark";
 
@@ -107,6 +108,24 @@ export function CustomerWorkspaceShell({ workspace, projectScope, notificationEn
     groups[result.group] = [...(groups[result.group] ?? []), result];
     return groups;
   }, {}), [searchResults]);
+
+  useEffect(() => {
+    try {
+      const timing = JSON.parse(window.sessionStorage.getItem(WORKSPACE_LOGIN_TIMING_KEY) || "{}") as {
+        loginStartedAt?: number | null;
+        redirectStartedAt?: number | null;
+      };
+      const interactiveAt = Date.now();
+      console.info("[workspace-interactive]", {
+        route: pathname,
+        redirectToInteractiveMs: timing.redirectStartedAt ? interactiveAt - timing.redirectStartedAt : null,
+        loginToInteractiveMs: timing.loginStartedAt ? interactiveAt - timing.loginStartedAt : null,
+      });
+      window.sessionStorage.removeItem(WORKSPACE_LOGIN_TIMING_KEY);
+    } catch {
+      // Performance diagnostics must never affect workspace interaction.
+    }
+  }, []);
 
   useLayoutEffect(() => {
     const appearance = readCustomerWorkspaceAppearance(workspace.userId);

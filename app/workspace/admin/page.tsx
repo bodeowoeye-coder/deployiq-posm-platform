@@ -14,6 +14,14 @@ import { hasValidGps } from "@/lib/reporting";
 
 export const dynamic = "force-dynamic";
 
+function nowMs() {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function elapsedMs(startedAt: number) {
+  return Math.round((nowMs() - startedAt) * 10) / 10;
+}
+
 function greeting() {
   const hour = new Date().getHours();
   if (hour < 12) return "Good morning";
@@ -31,12 +39,22 @@ function displayMilestoneStatus(status: string) {
 }
 
 export default async function WorkspaceAdminPage({ searchParams }: { searchParams?: { projectId?: string } }) {
+  const totalStartedAt = nowMs();
   let workspace;
   let dashboard;
   let alerts;
   try {
     workspace = await resolveCustomerWorkspaceContext();
+    const initialModuleStartedAt = nowMs();
     [dashboard, alerts] = await Promise.all([getWorkspaceAnalytics({ projectId: searchParams?.projectId }), getWorkspaceAlertsDashboard(searchParams?.projectId)]);
+    if (process.env.NODE_ENV === "development") {
+      console.info("[workspace-performance]", {
+        route: "/workspace/admin",
+        step: "Initial module data",
+        elapsedMs: elapsedMs(initialModuleStartedAt),
+        totalElapsedMs: elapsedMs(totalStartedAt),
+      });
+    }
   } catch (error) {
     if (error instanceof CustomerWorkspaceRedirect) redirect(error.redirectTo);
     throw error;

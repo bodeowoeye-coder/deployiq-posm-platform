@@ -141,7 +141,7 @@ describe("mandatory password change routing", () => {
   test("session creation reads authoritative Auth metadata before redirecting", () => {
     const sessionRoute = readFileSync(new URL("../app/api/auth/session/route.ts", import.meta.url), "utf8");
     assert.match(sessionRoute, /getAuthoritativeAccountSecurityState/);
-    assert.match(sessionRoute, /const accountSecurity = await getAuthoritativeAccountSecurityState\(data\.user\.id\)/);
+    assert.match(sessionRoute, /const \[, accountSecurity\] = await Promise\.all\(\[[\s\S]*getAuthoritativeAccountSecurityState\(data\.user\.id\)/);
     assert.match(sessionRoute, /accountSecurity\.passwordChangeRequired/);
     assert.match(sessionRoute, /\/login\/create-password\?returnTo=/);
     assert.match(sessionRoute, /role: resolvedRole/);
@@ -268,12 +268,14 @@ describe("mandatory password change routing", () => {
 
   test("post-auth destination keeps active customer-admin accounts on workspace admin", () => {
     const destinations = readFileSync(new URL("../lib/authDestinations.ts", import.meta.url), "utf8");
-    const incompleteIndex = destinations.indexOf("const incompleteDraft = await getLatestEligibleIncompleteDraftForCustomer");
-    const activationIndex = destinations.indexOf("const activationDraft = await getLatestActivationDraftForCustomer");
+    const parallelIndex = destinations.indexOf("const [incompleteDraft, activationDraft] = await Promise.all");
+    const incompleteIndex = destinations.indexOf("getLatestEligibleIncompleteDraftForCustomer", parallelIndex);
+    const activationIndex = destinations.indexOf("getLatestActivationDraftForCustomer", parallelIndex);
     const noClientIndex = destinations.indexOf('if (!input.clientId) return "/onboarding"');
     const adminIndex = destinations.indexOf('await hasCustomerAdminMembership(input.userId, input.clientId)');
-    assert.ok(incompleteIndex > -1);
-    assert.ok(activationIndex > -1);
+    assert.ok(parallelIndex > -1);
+    assert.ok(incompleteIndex > parallelIndex);
+    assert.ok(activationIndex > parallelIndex);
     assert.ok(activationIndex > incompleteIndex);
     assert.ok(noClientIndex > activationIndex);
     assert.ok(adminIndex > noClientIndex);
@@ -522,6 +524,8 @@ describe("mandatory password change routing", () => {
     assert.match(login, /MAX_WORKSPACE_OPEN_ATTEMPTS = 3/);
     assert.match(login, /workspaceOpenAttemptRef\.current < MAX_WORKSPACE_OPEN_ATTEMPTS/);
     assert.match(login, /workspace-open-timeout/);
+    assert.match(login, /deployiq:workspace-login-timing/);
+    assert.match(login, /loginStartedAt: Date\.now\(\)/);
     assert.match(login, /Try Again/);
     assert.match(login, /Sign Out/);
     assert.match(login, /Please hold on while DeployIQ loads your workspace\./);

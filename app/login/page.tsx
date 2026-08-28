@@ -19,6 +19,7 @@ type PublicSupabaseConfig = { url: string; anonKey: string };
 type LoginCarouselState = "pending" | "show" | "hide";
 const WORKSPACE_OPEN_TIMEOUT_MS = 12_000;
 const MAX_WORKSPACE_OPEN_ATTEMPTS = 3;
+const WORKSPACE_LOGIN_TIMING_KEY = "deployiq:workspace-login-timing";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -118,6 +119,15 @@ export default function LoginPage() {
   }
 
   function openWorkspaceDestination(destination: string, source: string) {
+    try {
+      const existing = JSON.parse(window.sessionStorage.getItem(WORKSPACE_LOGIN_TIMING_KEY) || "{}") as Record<string, unknown>;
+      window.sessionStorage.setItem(WORKSPACE_LOGIN_TIMING_KEY, JSON.stringify({
+        loginStartedAt: existing.loginStartedAt ?? null,
+        redirectStartedAt: Date.now(),
+      }));
+    } catch {
+      // Performance diagnostics must never block authentication or navigation.
+    }
     pendingWorkspaceDestinationRef.current = destination;
     workspaceOpenAttemptRef.current += 1;
     setOpeningTrouble(false);
@@ -356,6 +366,11 @@ export default function LoginPage() {
     setIsRedirecting(true);
     setError("");
     console.info("[login] submit", { emailPresent: Boolean(email.trim()), passwordPresent: Boolean(password), online: typeof navigator !== "undefined" ? navigator.onLine : null });
+    try {
+      window.sessionStorage.setItem(WORKSPACE_LOGIN_TIMING_KEY, JSON.stringify({ loginStartedAt: Date.now(), redirectStartedAt: null }));
+    } catch {
+      // Performance diagnostics must never block authentication.
+    }
     const totalStart = performance.now();
     let didStartRedirect = false;
 

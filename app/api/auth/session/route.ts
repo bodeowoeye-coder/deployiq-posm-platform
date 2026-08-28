@@ -140,6 +140,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid app role configured for this user." }, { status: 403 });
     }
 
+    const destinationStart = nowMs();
     const destination = await resolveAuthoritativeSessionDestination({
       role: resolvedRole,
       userId: data.user.id,
@@ -147,8 +148,13 @@ export async function POST(request: Request) {
       email: data.user.email,
       requestedReturnTo,
     });
-    await acceptWorkspaceInvitations(data.user.id);
-    const accountSecurity = await getAuthoritativeAccountSecurityState(data.user.id);
+    console.info("[login-server-timing]", { stage: "authoritative-destination", durationMs: timingMs(destinationStart) });
+    const finalizationStart = nowMs();
+    const [, accountSecurity] = await Promise.all([
+      acceptWorkspaceInvitations(data.user.id),
+      getAuthoritativeAccountSecurityState(data.user.id),
+    ]);
+    console.info("[login-server-timing]", { stage: "session-finalization", durationMs: timingMs(finalizationStart) });
     const redirectTo = accountSecurity.passwordChangeRequired
       ? `/login/create-password?returnTo=${encodeURIComponent(destination.destination)}`
       : destination.destination;
