@@ -16,6 +16,7 @@ export async function POST(request: Request) {
     }
     const body = await request.json();
     const resumeToken = typeof body.resumeToken === "string" ? body.resumeToken : null;
+    const shadowPlanAcknowledged = body.shadowPlanAcknowledged === true;
     if (!resumeToken) {
       return NextResponse.json({ error: "Acquisition session is required." }, { status: 400 });
     }
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
       id: authData.user.id,
       email: authData.user.email ?? null,
       emailConfirmed: Boolean(authData.user.email_confirmed_at || authData.user.confirmed_at),
-    });
+    }, { shadowPlanAcknowledged });
     return NextResponse.json({
       job: result.job,
       completed: result.completed,

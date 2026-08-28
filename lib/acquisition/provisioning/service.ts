@@ -14,6 +14,8 @@ import { assertProvisioningOwnership } from "./ownership";
 import { shouldRunProvisioningShadow } from "../../ai/provisioning/flags";
 import { buildTrustedProvisioningContext } from "../../ai/provisioning/context";
 import { runProvisioningShadow } from "../../ai/provisioning/shadow";
+import { hasValidatedShadowPlan } from "../../ai/provisioning/presentation";
+import type { ShadowPlanningResult } from "../../ai/provisioning/schema";
 
 export type ProvisioningJobRecord = {
   id: string;
@@ -348,7 +350,7 @@ export async function provisionAcquisitionWorkspace(resumeToken: string, user: {
   id: string;
   email: string | null;
   emailConfirmed: boolean;
-}): Promise<ProvisioningResult> {
+}, options: { shadowPlanAcknowledged?: boolean } = {}): Promise<ProvisioningResult> {
   const draft = await getOnboardingDraftByToken(resumeToken);
   if (!draft) {
     throw Object.assign(new Error("Acquisition session not found."), { status: 404, code: "draft_not_found" });
@@ -416,14 +418,13 @@ export async function provisionAcquisitionWorkspace(resumeToken: string, user: {
       workspaceDestination: canonicalJob.result_data.workspaceDestination as WorkspaceDestinationReadiness | undefined,
     };
   }
-  job = await incrementAttempt(job);
-
   try {
     job = await updateJob(job, "validating");
     if (shouldRunProvisioningShadow(eligibility.productKey)) {
-      try {
+      let shadowPlanning = job.result_data.shadowPlanning as ShadowPlanningResult | undefined;
+      if (!hasValidatedShadowPlan(shadowPlanning)) try {
         const trustedContext = buildTrustedProvisioningContext(draft, eligibility);
-        const shadowPlanning = await runProvisioningShadow(trustedContext);
+        shadowPlanning = await runProvisioningShadow(trustedContext);
         job = await updateJob(job, "validating", {
           result_data: mergeResult(job, { shadowPlanning }),
         });
@@ -444,9 +445,27 @@ export async function provisionAcquisitionWorkspace(resumeToken: string, user: {
           generatedAt: shadowPlanning.generatedAt,
         });
       } catch {
+        job = await updateJob(job, "validating", {
+          result_data: mergeResult(job, { shadowPlanningStatus: "failed" }),
+        });
         await recordEvent(job.id, "validating", "provisioning_shadow_plan_failed", "DeployIQ AI Shadow Mode planning was unavailable; deterministic provisioning continued.", { errorCode: "shadow_planning_unavailable" });
       }
+      if (hasValidatedShadowPlan(shadowPlanning) && !options.shadowPlanAcknowledged) {
+        job = await updateJob(job, "validating", {
+          status: "queued",
+          execution_lock_token: null,
+          execution_locked_at: null,
+          result_data: mergeResult(job, { shadowPlanning }),
+        });
+        return {
+          job,
+          completed: false,
+          customerMessage: "Review the validated DeployIQ AI plan before workspace setup continues.",
+          workspaceReady: false,
+        };
+      }
     }
+    job = await incrementAttempt(job);
     const manifest = getProductProvisioningManifest(eligibility.productKey);
     if (!manifest) {
       throw Object.assign(new Error("No provisioning manifest is configured for this product."), { code: "manifest_not_configured" });

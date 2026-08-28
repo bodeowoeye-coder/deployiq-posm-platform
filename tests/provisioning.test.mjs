@@ -286,7 +286,7 @@ test("provisioning: eligible signed-out browser receives a purposeful sign-in bo
   assert.match(shell, /setReadyForProvisioning\(true\)/);
   assert.match(boundary, /if \(!browserAuthenticated \|\| !resumeToken \|\| notificationRequested/);
   assert.match(boundary, /if \(!browserAuthenticated \|\| !activationStarted/);
-  assert.ok(boundary.indexOf("if (!browserAuthenticated && readyForProvisioning)") < boundary.indexOf("if (!readyForProvisioning || delayed)"));
+  assert.ok(boundary.indexOf("if (!browserAuthenticated && readyForProvisioning)") < boundary.indexOf('if ((!readyForProvisioning && presentationPhase !== "validated_plan_review") || delayed)'));
 });
 
 test("provisioning: never-started paid account alone sees Set up my workspace", () => {

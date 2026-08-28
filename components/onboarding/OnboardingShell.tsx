@@ -32,6 +32,7 @@ import { restoreCurrentOnboardingStep, type CurrentOnboardingStep } from "@/lib/
 import { getCanonicalProduct } from "@/lib/commercial/products/catalogue";
 import {
   advanceProvisioningPresentationPhase,
+  hasValidatedShadowPlan,
   preserveShadowPlanning,
   resolveProvisioningPresentationPhase,
   shadowPlanAcknowledgementCookie,
@@ -83,6 +84,7 @@ const PROGRESS_INDEX: Partial<Record<OnboardingStep, number>> = {
 
 type OnboardingShellProps = {
   initialBrowserAuthenticated?: boolean;
+  initialShadowModeEnabled?: boolean;
   initialShadowPlanning?: React.ComponentProps<typeof ProvisionBoundaryStep>["shadowPlanning"];
   initialProvisioningJob?: React.ComponentProps<typeof ProvisionBoundaryStep>["provisioningJob"];
   initialWorkspaceLaunchUrl?: string | null;
@@ -91,6 +93,7 @@ type OnboardingShellProps = {
 
 export function OnboardingShell({
   initialBrowserAuthenticated = false,
+  initialShadowModeEnabled = false,
   initialShadowPlanning = null,
   initialProvisioningJob = null,
   initialWorkspaceLaunchUrl = null,
@@ -549,7 +552,7 @@ export function OnboardingShell({
       const res = await fetch("/api/acquisition/provision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resumeToken }),
+        body: JSON.stringify({ resumeToken, shadowPlanAcknowledged: acknowledged }),
       });
       const payload = await res.json();
       const incomingShadowPlanning = payload.shadowPlanning ?? null;
@@ -591,6 +594,12 @@ export function OnboardingShell({
         started: true,
       });
       setPresentationPhase((current) => advanceProvisioningPresentationPhase(current, nextPhase, acknowledged));
+      if (hasValidatedShadowPlan(nextShadowPlanning) && !acknowledged) {
+        setReadyForProvisioning(true);
+        setActivationStarted(false);
+        setProvisioningError(null);
+        return;
+      }
       if (payload.job?.status === "completed" && completedLaunchUrl) {
         setReadyForProvisioning(true);
         setActivationStarted(false);
@@ -1014,6 +1023,7 @@ export function OnboardingShell({
             workspaceLaunchUrl={workspaceLaunchUrl}
             browserAuthenticated={browserAuthenticated}
             presentationPhase={presentationPhase}
+            shadowModeEnabled={initialShadowModeEnabled}
             onAcknowledgeShadowPlan={acknowledgeShadowPlan}
             onLaunchWorkspace={() => {
               if (workspaceLaunchUrl) window.location.assign(workspaceLaunchUrl);

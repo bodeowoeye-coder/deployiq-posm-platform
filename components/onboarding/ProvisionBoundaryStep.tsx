@@ -49,6 +49,7 @@ type Props = {
   workspaceLaunchUrl?: string | null;
   browserAuthenticated: boolean;
   presentationPhase: ProvisioningPresentationPhase;
+  shadowModeEnabled: boolean;
   onAcknowledgeShadowPlan: () => Promise<void> | void;
   onLaunchWorkspace?: () => void;
   onContinue: () => Promise<void> | void;
@@ -77,7 +78,7 @@ const PROVISIONING_POLL_MS = 15000;
 export function ProvisionBoundaryStep({
   orgData, adminData, recommendation, quotation, billingCycle, paymentReference,
   resumeToken, readyForProvisioning, saveRecoveryLabel, provisioningError, activationStarted = false, shadowPlanning, onContinue,
-  provisioningJob, workspaceLaunchUrl, browserAuthenticated, presentationPhase, onAcknowledgeShadowPlan, onLaunchWorkspace,
+  provisioningJob, workspaceLaunchUrl, browserAuthenticated, presentationPhase, shadowModeEnabled, onAcknowledgeShadowPlan, onLaunchWorkspace,
 }: Props) {
   const [timedOut, setTimedOut] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
@@ -285,7 +286,7 @@ export function ProvisionBoundaryStep({
   }
 
   // Guard: only render the provisioning experience if eligibility is confirmed.
-  if (!readyForProvisioning || delayed) {
+  if ((!readyForProvisioning && presentationPhase !== "validated_plan_review") || delayed) {
     const message = provisioningError?.message
       ?? "Your DeployIQ workspace is currently being prepared. This is taking a little longer than expected.";
     return (
@@ -374,7 +375,7 @@ export function ProvisionBoundaryStep({
             </div>
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-            {presentationPhase === "planning"
+            {presentationPhase === "planning" && shadowModeEnabled
               ? "DeployIQ AI is preparing your workspace"
               : presentationPhase === "completed"
                 ? "Your DeployIQ workspace is ready"
@@ -382,8 +383,14 @@ export function ProvisionBoundaryStep({
           </h1>
           <p className="text-base text-slate-500 leading-relaxed">
             {presentationPhase !== "planning"
-              ? "DeployIQ policy approved the proposed plan. Deterministic provisioning remains the only workspace writer."
-              : "Your trusted commercial and identity context is being reviewed. No AI stage is marked complete until the backend returns its validated plan."}
+              ? shadowPlanning
+                ? "DeployIQ policy approved the proposed plan. Deterministic provisioning remains the only workspace writer."
+                : shadowModeEnabled
+                  ? "AI planning was unavailable. Deterministic provisioning remained authoritative and completed safely."
+                  : "Deterministic provisioning completed using your approved commercial and identity details."
+              : shadowModeEnabled
+                ? "Your trusted commercial and identity context is being reviewed. No AI stage is marked complete until the backend returns its validated plan."
+                : "Your approved commercial and identity details are being used to prepare the workspace deterministically."}
           </p>
         </div>
 

@@ -51,6 +51,33 @@ plus a small OS-variable allowlist and fixes the local staging application URL
 at `http://localhost:3000`. The ordinary `npm run dev` retains the existing
 Next.js environment-file behavior.
 
+### Advisory AI Shadow Mode
+
+To exercise Retail Shadow Mode in the isolated staging runtime, add the
+following values only to the ignored `.env.staging.local` file:
+
+```dotenv
+OPENAI_API_KEY=<STAGING_OPENAI_API_KEY>
+DEPLOYIQ_PROVISIONING_AGENT_ENABLED=1
+DEPLOYIQ_PROVISIONING_AGENT_MODE=shadow
+DEPLOYIQ_PROVISIONING_AGENT_PRODUCTS=retail
+DEPLOYIQ_PROVISIONING_AGENT_PROVIDER=openai
+DEPLOYIQ_PROVISIONING_AGENT_MODEL=gpt-5.4-mini
+DEPLOYIQ_PROVISIONING_AGENT_EXECUTION_ENABLED=0
+```
+
+Obtain the API key from the approved staging OpenAI project and never place it
+in `.env.local`, the tracked example, shell history, logs, or Git. When Shadow
+Mode is enabled, the launcher fails closed if the key, mode, Retail eligibility,
+provider, or model is absent. It rejects AI execution enablement unconditionally.
+When Shadow Mode is disabled, no OpenAI key is required.
+
+The shadow planner is advisory. A valid or deterministic-fallback plan is
+persisted and returned for customer review before the provisioning service
+releases its execution lease. Deterministic provisioning resumes only after the
+authenticated customer acknowledges that plan. The proposed plan is never used
+as database-write authority, and `executionEnabled` remains hard-coded false.
+
 For the Supabase CLI local stack, use `DEPLOYIQ_ENVIRONMENT=local`,
 `DEPLOYIQ_ALLOWED_MUTATION_PROJECT_REFS=local`, the CLI's loopback API URL, and
 its loopback Postgres URL.

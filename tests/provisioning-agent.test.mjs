@@ -169,12 +169,45 @@ test("customer handoff receives and retains the persisted Shadow result before w
   assert.match(shell, /setShadowPlanning\(\(current\) => preserveShadowPlanning\(current \?\? null, incomingShadowPlanning\)\)/);
   assert.match(shell, /setProvisioningJob\(payload\.job \?\? null\)/);
   assert.match(boundary, /DeployIQ AI is preparing your workspace/);
+  assert.match(boundary, /Preparing your DeployIQ workspace/);
+  assert.match(boundary, /shadowModeEnabled/);
   assert.match(boundary, /DeployIQ AI plan validated/);
   assert.match(boundary, /Continue with Workspace Setup/);
   assert.match(boundary, /presentationPhase === "validated_plan_review"/);
   assert.match(boundary, /hasCompletedBackendResult/);
   assert.match(boundary, /deterministicCompleted/);
   assert.doesNotMatch(boundary, /setActiveStep|stepTimer/);
+});
+
+test("validated Shadow planning pauses deterministic provisioning until acknowledgement", () => {
+  const route = readFileSync(new URL("../app/api/acquisition/provision/route.ts", import.meta.url), "utf8");
+  const service = readFileSync(new URL("../lib/acquisition/provisioning/service.ts", import.meta.url), "utf8");
+  const shell = readFileSync(new URL("../components/onboarding/OnboardingShell.tsx", import.meta.url), "utf8");
+  const pause = service.indexOf("hasValidatedShadowPlan(shadowPlanning) && !options.shadowPlanAcknowledged");
+  const deterministicWriter = service.indexOf("provisionRetailWorkspaceReference", pause);
+  assert.ok(pause >= 0 && deterministicWriter > pause);
+  assert.match(service, /status: "queued"[\s\S]*execution_lock_token: null[\s\S]*execution_locked_at: null/);
+  assert.match(route, /shadowPlanAcknowledged = body\.shadowPlanAcknowledged === true/);
+  assert.match(shell, /shadowPlanAcknowledged: acknowledged/);
+  assert.match(shell, /hasValidatedShadowPlan\(nextShadowPlanning\) && !acknowledged[\s\S]*setReadyForProvisioning\(true\)[\s\S]*setActivationStarted\(false\)/);
+});
+
+test("validated plan review takes precedence over delayed polling and exposes acknowledgement", () => {
+  const boundary = readFileSync(new URL("../components/onboarding/ProvisionBoundaryStep.tsx", import.meta.url), "utf8");
+  const delayedGuard = boundary.indexOf('if ((!readyForProvisioning && presentationPhase !== "validated_plan_review") || delayed)');
+  const review = boundary.indexOf('if (presentationPhase === "validated_plan_review")');
+  assert.ok(delayedGuard >= 0 && review > delayedGuard);
+  assert.match(boundary.slice(review), /onClick=\{onAcknowledgeShadowPlan\}[\s\S]*Continue with Workspace Setup/);
+});
+
+test("repeat acknowledgement remains idempotent and does not invoke the provider again", () => {
+  const service = readFileSync(new URL("../lib/acquisition/provisioning/service.ts", import.meta.url), "utf8");
+  const completedReturn = service.indexOf('if (job.status === "completed")');
+  const claim = service.indexOf("const claimed = await claimJob(job)");
+  const existingPlanCheck = service.indexOf("if (!hasValidatedShadowPlan(shadowPlanning))");
+  const plannerCall = service.indexOf("shadowPlanning = await runProvisioningShadow", existingPlanCheck);
+  assert.ok(completedReturn >= 0 && claim > completedReturn);
+  assert.ok(existingPlanCheck >= 0 && plannerCall > existingPlanCheck);
 });
 
 test("activation cannot bypass an unacknowledged validated plan", () => {

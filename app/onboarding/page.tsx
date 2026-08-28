@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { getCurrentUserContext, readAccountSecurityState } from "@/lib/auth";
+import { shouldRunProvisioningShadow } from "@/lib/ai/provisioning/flags";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,10 @@ export default async function OnboardingPage() {
         <p className="text-sm text-slate-400">Loading…</p>
       </div>
     }>
-      <OnboardingShell initialBrowserAuthenticated={Boolean(context?.user)} />
+      <OnboardingShell
+        initialBrowserAuthenticated={Boolean(context?.user)}
+        initialShadowModeEnabled={shouldRunProvisioningShadow("retail")}
+      />
     </Suspense>
   );
 }
