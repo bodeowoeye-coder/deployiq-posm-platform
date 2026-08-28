@@ -3,6 +3,7 @@ import { buildResourceTypeConfig, buildResourceTypeOrder, type BuildResourceType
 import type { Project } from "@/lib/types";
 import type { BuildSite } from "@/lib/build/sites/types";
 import type { BuildWorkPackage } from "@/lib/build/workPackages/types";
+import { isBuildProjectType } from "@/lib/build/projects/types";
 
 const dashboardTabs = [
   "Overview",
@@ -25,11 +26,11 @@ function normalizedTab(value: string | null | undefined): DashboardTab {
 }
 
 function projectTypeLabel(project: Project) {
-  return project.project_type || "Retail Deployment";
+  return project.project_type || "Not set";
 }
 
 function isBuildProject(project: Project) {
-  return projectTypeLabel(project).toLowerCase() !== "retail deployment";
+  return isBuildProjectType(project.project_type);
 }
 
 export function ProjectDashboardShell({
@@ -76,7 +77,9 @@ export function ProjectDashboardShell({
     <main className="min-h-screen bg-[var(--page-bg)] px-4 py-6 text-[var(--text-primary)] sm:px-6">
       <div className="mx-auto flex max-w-7xl flex-col gap-4">
         <section className="rounded-xl border border-[var(--border-soft)] bg-[var(--card-bg)] p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-600">DeployIQ Build Foundation</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-600">
+            {buildProject ? "DeployIQ Build Foundation" : "Project Dashboard"}
+          </p>
           <h1 className="mt-2 text-2xl font-semibold">{project.project_name}</h1>
           <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-[var(--text-muted)]">
             <span>Project Type: {projectTypeLabel(project)}</span>
@@ -114,7 +117,9 @@ export function ProjectDashboardShell({
         <section className="rounded-xl border border-dashed border-[var(--border-soft)] bg-[var(--card-bg)] p-6 shadow-sm">
           <h2 className="text-lg font-semibold">{selectedTab}</h2>
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            This tab is intentionally a foundation placeholder for DeployIQ Build. Functional workflows will be added in a later sprint.
+            {buildProject
+              ? "This tab is intentionally a foundation placeholder for DeployIQ Build. Functional workflows will be added in a later sprint."
+              : "Project information and operational context are available from the existing project modules."}
           </p>
           <p className="mt-4 text-xs uppercase tracking-[0.14em] text-slate-500">Audience: {audience}</p>
 

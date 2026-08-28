@@ -6,6 +6,7 @@ import type { BuildResourceType } from "@/lib/build/resources/types";
 import { getTemplateResourceRequirements } from "@/lib/build/resources/service";
 import { getBuildSitesForProject } from "@/lib/build/sites/service";
 import { getWorkPackages } from "@/lib/build/workPackages/service";
+import { isBuildProjectType } from "@/lib/build/projects/types";
 import { normalizeProjectRecord } from "@/lib/projects";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { Project } from "@/lib/types";
@@ -26,10 +27,9 @@ export default async function AdminProjectDashboardPage({
   if (!project) notFound();
 
   const normalized = normalizeProjectRecord(project) as Project;
-  const sites =
-    (normalized.project_type || "Retail Deployment").toLowerCase() === "retail deployment"
-      ? []
-      : await getBuildSitesForProject({ projectId: normalized.id });
+  const sites = isBuildProjectType(normalized.project_type)
+    ? await getBuildSitesForProject({ projectId: normalized.id })
+    : [];
   const selectedSite = searchParams?.siteId ? sites.find((site) => site.id === searchParams.siteId) ?? null : null;
   const workPackages = selectedSite
     ? await getWorkPackages({

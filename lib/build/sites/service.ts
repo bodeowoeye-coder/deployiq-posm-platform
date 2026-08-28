@@ -1,17 +1,9 @@
-import { AccessControlError, getAuthenticatedUserContext } from "@/lib/accessControl";
-import { getProjectAccessRegistry } from "@/lib/core/auth";
-import { isRetailProjectType, validateProjectSiteOwnership } from "@/lib/core/enterpriseHierarchy";
+import { AccessControlError } from "@/lib/accessControl";
+import { validateProjectSiteOwnership } from "@/lib/core/enterpriseHierarchy";
+import { resolveCanonicalBuildProject } from "@/lib/build/projects/service";
+import type { CanonicalBuildProject } from "@/lib/build/projects/types";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type { BuildSite, BuildSiteStatus, CreateBuildSiteInput, UpdateBuildSiteInput } from "@/lib/build/sites/types";
-
-type BuildProjectRow = {
-  id: string;
-  client_id: string;
-  project_name: string | null;
-  project_code: string | null;
-  project_type: string | null;
-  archived_at: string | null;
-};
 
 type BuildSiteRow = BuildSite;
 
@@ -27,20 +19,13 @@ function siteCodeToken(value: string) {
     .slice(0, 24);
 }
 
-function slugFromProject(project: BuildProjectRow) {
+function slugFromProject(project: CanonicalBuildProject) {
   const preferred = textValue(project.project_code) || textValue(project.project_name);
   const compact = preferred
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return compact.slice(0, 8) || "SITE";
-}
-
-function assertModulePermission(canWrite: boolean, permissions: string[]) {
-  const needed = canWrite ? "projects:write" : "projects:read";
-  if (!permissions.includes(needed)) {
-    throw new AccessControlError("You do not have permission to access Build Sites.", 403);
-  }
 }
 
 function normalizeSite(row: BuildSiteRow): BuildSite {
@@ -65,20 +50,6 @@ function normalizeSite(row: BuildSiteRow): BuildSite {
   };
 }
 
-async function getBuildProject(projectId: string) {
-  const supabase = createAdminSupabase();
-  const { data: project, error } = await supabase
-    .from("projects")
-    .select("id, client_id, project_name:name, archived_at")
-    .eq("id", projectId)
-    .maybeSingle();
-
-  if (error) throw new AccessControlError(`Could not resolve project: ${error.message}`, 500);
-  if (!project) throw new AccessControlError("Project not found.", 404);
-
-  return { ...(project as Record<string, unknown>), project_code: null, project_type: null } as BuildProjectRow;
-}
-
 async function getSiteByIdOrThrow(siteId: string) {
   const supabase = createAdminSupabase();
   const { data: site, error } = await supabase.from("build_sites").select("*").eq("id", siteId).maybeSingle();
@@ -87,7 +58,7 @@ async function getSiteByIdOrThrow(siteId: string) {
   return site as BuildSiteRow;
 }
 
-async function generateSiteCode(project: BuildProjectRow) {
+async function generateSiteCode(project: CanonicalBuildProject) {
   const supabase = createAdminSupabase();
   const prefix = slugFromProject(project);
 
@@ -118,31 +89,12 @@ export async function assertBuildSiteAccess(params: {
   const projectId = textValue(params.projectId);
   if (!projectId) throw new AccessControlError("projectId is required.", 400);
 
-  const authContext = await getAuthenticatedUserContext(params.request);
-  const registry = await getProjectAccessRegistry(params.request);
-  assertModulePermission(Boolean(params.canWrite), registry.permissions);
-
-  const project = await getBuildProject(projectId);
-  if (isRetailProjectType(project.project_type)) {
-    throw new AccessControlError("Build Sites are not available for Retail projects.", 400);
-  }
-
-  if (params.clientId && textValue(params.clientId) !== project.client_id) {
-    throw new AccessControlError("Project and client mismatch for site access.", 400);
-  }
-
-  if (!authContext.is_admin) {
-    if (authContext.role === "client") {
-      if (!authContext.client_id || authContext.client_id !== project.client_id) {
-        throw new AccessControlError("You do not have access to this project client.", 403);
-      }
-      if (!authContext.allowed_project_ids.includes(project.id)) {
-        throw new AccessControlError("You do not have access to this project.", 403);
-      }
-    } else {
-      throw new AccessControlError("Only admin or client users can access Build Sites.", 403);
-    }
-  }
+  const { authContext, registry, project } = await resolveCanonicalBuildProject({
+    request: params.request,
+    projectId,
+    requiredPermission: params.canWrite ? "projects:write" : "projects:read",
+    requestedClientId: params.clientId
+  });
 
   let site: BuildSiteRow | null = null;
   const siteId = textValue(params.siteId);

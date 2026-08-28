@@ -1,6 +1,7 @@
-import { AccessControlError, getAuthenticatedUserContext } from "@/lib/accessControl";
-import { getProjectAccessRegistry } from "@/lib/core/auth";
-import { isRetailProjectType, validateProjectSiteOwnership, validateWorkPackageOwnership } from "@/lib/core/enterpriseHierarchy";
+import { AccessControlError } from "@/lib/accessControl";
+import { validateProjectSiteOwnership, validateWorkPackageOwnership } from "@/lib/core/enterpriseHierarchy";
+import { resolveCanonicalBuildProject } from "@/lib/build/projects/service";
+import type { CanonicalBuildProject } from "@/lib/build/projects/types";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import type {
   BuildWorkPackage,
@@ -8,15 +9,6 @@ import type {
   CreateBuildWorkPackageInput,
   UpdateBuildWorkPackageInput
 } from "@/lib/build/workPackages/types";
-
-type BuildProjectRow = {
-  id: string;
-  client_id: string;
-  project_name: string | null;
-  project_code: string | null;
-  project_type: string | null;
-  archived_at: string | null;
-};
 
 type BuildWorkPackageRow = BuildWorkPackage;
 
@@ -39,13 +31,6 @@ function slugFromSite(siteCode: string, projectCode: string | null, projectName:
     .replace(/[^A-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return compact.slice(0, 10) || "WP";
-}
-
-function assertModulePermission(canWrite: boolean, permissions: string[]) {
-  const needed = canWrite ? "projects:write" : "projects:read";
-  if (!permissions.includes(needed)) {
-    throw new AccessControlError("You do not have permission to access Work Packages.", 403);
-  }
 }
 
 function normalizeWorkPackage(row: BuildWorkPackageRow): BuildWorkPackage {
@@ -104,20 +89,6 @@ async function attachTemplateNames(rows: BuildWorkPackageRow[]) {
   });
 }
 
-async function getBuildProject(projectId: string) {
-  const supabase = createAdminSupabase();
-  const { data: project, error } = await supabase
-    .from("projects")
-    .select("id, client_id, project_name:name, archived_at")
-    .eq("id", projectId)
-    .maybeSingle();
-
-  if (error) throw new AccessControlError(`Could not resolve project: ${error.message}`, 500);
-  if (!project) throw new AccessControlError("Project not found.", 404);
-
-  return { ...(project as Record<string, unknown>), project_code: null, project_type: null } as BuildProjectRow;
-}
-
 async function getWorkPackageByIdOrThrow(workPackageId: string) {
   const supabase = createAdminSupabase();
   const { data, error } = await supabase.from("build_work_packages").select("*").eq("id", workPackageId).maybeSingle();
@@ -127,7 +98,7 @@ async function getWorkPackageByIdOrThrow(workPackageId: string) {
 }
 
 async function generateWorkPackageCode(params: {
-  project: BuildProjectRow;
+  project: CanonicalBuildProject;
   siteId: string;
 }) {
   const supabase = createAdminSupabase();
@@ -171,35 +142,21 @@ export async function assertWorkPackageAccess(params: {
   if (!projectId) throw new AccessControlError("projectId is required.", 400);
   if (!siteId) throw new AccessControlError("siteId is required.", 400);
 
-  const authContext = await getAuthenticatedUserContext(params.request);
-  const registry = await getProjectAccessRegistry(params.request);
-  assertModulePermission(Boolean(params.canWrite), registry.permissions);
-
-  const project = await getBuildProject(projectId);
-  if (isRetailProjectType(project.project_type)) {
-    throw new AccessControlError("Work Packages are not available for Retail projects.", 400);
-  }
+  const { authContext, registry, project } = await resolveCanonicalBuildProject({
+    request: params.request,
+    projectId,
+    requiredPermission: params.canWrite ? "projects:write" : "projects:read",
+    requestedClientId: params.clientId
+  });
 
   const { site } = await validateProjectSiteOwnership({
     projectId: project.id,
     siteId,
-    clientId: params.clientId ?? project.client_id
+    clientId: project.client_id
   });
 
-  if (!authContext.is_admin) {
-    if (authContext.role === "client") {
-      if (!authContext.client_id || authContext.client_id !== project.client_id) {
-        throw new AccessControlError("You do not have access to this project client.", 403);
-      }
-      if (!authContext.allowed_project_ids.includes(project.id)) {
-        throw new AccessControlError("You do not have access to this project.", 403);
-      }
-      if (params.canWrite) {
-        throw new AccessControlError("Only admins can modify Work Packages at this stage.", 403);
-      }
-    } else {
-      throw new AccessControlError("Only admin or client users can access Work Packages.", 403);
-    }
+  if (!authContext.is_admin && params.canWrite) {
+    throw new AccessControlError("Only admins can modify Work Packages at this stage.", 403);
   }
 
   let workPackage: BuildWorkPackageRow | null = null;
