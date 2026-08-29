@@ -471,7 +471,7 @@ export async function requireRole(allowedRoles: UserRole[], requestedPath?: stri
     const fallbackPath = allowedRoles.includes("admin")
       ? "/admin"
       : allowedRoles.includes("client")
-        ? "/client"
+        ? "/workspace/admin"
         : allowedRoles.includes("installer")
           ? "/submit"
           : "/portal";
@@ -487,7 +487,7 @@ export async function requireRole(allowedRoles: UserRole[], requestedPath?: stri
 
 export function defaultRouteForRole(role: UserRole) {
   if (role === "admin") return "/admin";
-  if (role === "client") return "/client";
+  if (role === "client") return "/workspace/admin";
   return "/submit";
 }
 
@@ -507,7 +507,6 @@ export function isAllowedReturnTo(role: UserRole, returnTo: string | null | unde
   if (!normalized) return false;
 
   if (normalized === "/admin" || normalized === "/admin/reports" || normalized === "/admin/submissions") return role === "admin";
-  if (normalized === "/client") return role === "client";
   if (normalized === "/workspace/admin" || normalized.startsWith("/workspace/admin/")) return role === "client";
   if (normalized === "/submit") return role === "installer";
   if (normalized === "/installer/history") return role === "installer";

@@ -28,8 +28,7 @@ function timingMs(start: number) {
   return Math.round((nowMs() - start) * 10) / 10;
 }
 
-function isAllowedSessionReturnTo(role: "admin" | "client" | "installer", clientId: string | null | undefined, returnTo: string | null) {
-  if (returnTo === "/client" && role === "client" && !clientId) return false;
+function isAllowedSessionReturnTo(role: "admin" | "client" | "installer", returnTo: string | null) {
   return isAllowedReturnTo(role, returnTo);
 }
 
@@ -49,7 +48,6 @@ function returnToMatchesAuthoritativeDestination(authoritativeDestination: strin
   if (!authoritativePath || !requestedPath) return false;
   if (authoritativePath === "/workspace/admin") return requestedPath === "/workspace/admin" || requestedPath.startsWith("/workspace/admin/");
   if (authoritativePath === "/admin") return requestedPath === "/admin" || requestedPath.startsWith("/admin/");
-  if (authoritativePath === "/client") return requestedPath === "/client" || requestedPath.startsWith("/client/");
   if (authoritativePath === "/submit") return requestedPath === "/submit" || requestedPath.startsWith("/installer/");
   return requestedPath === authoritativePath;
 }
@@ -67,7 +65,7 @@ async function resolveAuthoritativeSessionDestination(input: {
     clientId: input.clientId,
     email: input.email,
   });
-  const returnToAllowed = isAllowedSessionReturnTo(input.role, input.clientId, input.requestedReturnTo);
+  const returnToAllowed = isAllowedSessionReturnTo(input.role, input.requestedReturnTo);
   const returnToCompatible = returnToAllowed && returnToMatchesAuthoritativeDestination(authoritativeDestination, input.requestedReturnTo);
   return {
     authoritativeDestination,

@@ -612,7 +612,7 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
     },
   });
   if (role !== "customer_admin") {
-    throw new CustomerWorkspaceRedirect("/client");
+    throw new CustomerWorkspaceRedirect("/");
   }
 
   const organisationName = text(organisation?.name) || text(authContext.client?.name);

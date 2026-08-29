@@ -141,7 +141,8 @@ test("workspace admin: browser-supplied client or workspace id cannot override s
 test("workspace admin: client viewer is not upgraded automatically", () => {
   const resolver = readFileSync(new URL("../lib/workspace/customerAdmin.ts", import.meta.url), "utf8");
   assert.match(resolver, /roleKey === "client_viewer"/);
-  assert.match(resolver, /CustomerWorkspaceRedirect\("\/client"\)/);
+  assert.match(resolver, /if \(role !== "customer_admin"\) \{[\s\S]*CustomerWorkspaceRedirect\("\/"\)/);
+  assert.doesNotMatch(resolver, /CustomerWorkspaceRedirect\("\/client"\)/);
   assert.doesNotMatch(resolver, /roleKey === "client_viewer".*return "customer_admin"/);
 });
 
@@ -923,8 +924,8 @@ test("workspace admin: route guards preserve Customer Admin context for workspac
   const auth = readFileSync(new URL("../lib/auth.ts", import.meta.url), "utf8");
   assert.match(layout, /requireCustomerWorkspace/);
   assert.match(settingsPage, /resolveCustomerWorkspaceContext/);
-  assert.match(destinations, /const isCustomerAdmin = await hasCustomerAdminMembership\(input\.userId, input\.clientId\)/);
-  assert.match(destinations, /return isCustomerAdmin \? "\/workspace\/admin" : "\/client"/);
+  assert.match(destinations, /if \(!input\.clientId\) return "\/onboarding";[\s\S]*return "\/workspace\/admin"/);
+  assert.doesNotMatch(destinations, /"\/client"/);
   assert.match(auth, /normalized === "\/workspace\/admin" \|\| normalized\.startsWith\("\/workspace\/admin\/"\)/);
 });
 
@@ -1139,7 +1140,7 @@ test("workspace admin: Campaign Management does not expose duplicate lifecycle a
 test("workspace admin: required access lookups still block when missing or failed", () => {
   const resolver = readFileSync(new URL("../lib/workspace/customerAdmin.ts", import.meta.url), "utf8");
   assert.match(resolver, /"Membership lookup"[\s\S]*missingResult: "NO ROWS"/);
-  assert.match(resolver, /if \(role !== "customer_admin"\) \{[\s\S]*CustomerWorkspaceRedirect\("\/client"\)/);
+  assert.match(resolver, /if \(role !== "customer_admin"\) \{[\s\S]*CustomerWorkspaceRedirect\("\/"\)/);
   assert.match(resolver, /"Workspace lookup"[\s\S]*required: true/);
   assert.match(resolver, /"Organisation lookup"[\s\S]*required: true/);
   assert.match(resolver, /"Product entitlement lookup"[\s\S]*required: true/);

@@ -256,14 +256,12 @@ describe("mandatory password change routing", () => {
     const destinations = readFileSync(new URL("../lib/authDestinations.ts", import.meta.url), "utf8");
     assert.match(sessionRoute, /defaultDestinationForResolvedUser/);
     assert.match(destinations, /getLatestEligibleIncompleteDraftForCustomer/);
-    assert.match(destinations, /function hasCustomerAdminMembership/);
     assert.match(destinations, /getLatestActivationDraftForCustomer/);
     assert.match(destinations, /if \(incompleteDraft\) return "\/onboarding"/);
     assert.match(destinations, /return `\/workspace\/activation\?token=\$\{encodeURIComponent\(activationDraft\.resume_token\)\}`/);
-    assert.match(destinations, /await hasCustomerAdminMembership\(input\.userId, input\.clientId\)/);
-    assert.match(destinations, /Customer workspace membership lookup is temporarily unavailable/);
     assert.match(destinations, /if \(!input\.clientId\) return "\/onboarding"/);
-    assert.match(sessionRoute, /returnTo === "\/client" && role === "client" && !clientId/);
+    assert.match(destinations, /return "\/workspace\/admin"/);
+    assert.doesNotMatch(sessionRoute, /"\/client"/);
   });
 
   test("post-auth destination keeps active customer-admin accounts on workspace admin", () => {
@@ -272,7 +270,7 @@ describe("mandatory password change routing", () => {
     const incompleteIndex = destinations.indexOf("getLatestEligibleIncompleteDraftForCustomer", parallelIndex);
     const activationIndex = destinations.indexOf("getLatestActivationDraftForCustomer", parallelIndex);
     const noClientIndex = destinations.indexOf('if (!input.clientId) return "/onboarding"');
-    const adminIndex = destinations.indexOf('await hasCustomerAdminMembership(input.userId, input.clientId)');
+    const adminIndex = destinations.lastIndexOf('return "/workspace/admin"');
     assert.ok(parallelIndex > -1);
     assert.ok(incompleteIndex > parallelIndex);
     assert.ok(activationIndex > parallelIndex);
@@ -281,7 +279,7 @@ describe("mandatory password change routing", () => {
     assert.ok(adminIndex > noClientIndex);
     assert.match(destinations, /getLatestEligibleIncompleteDraftForCustomer\(\{[\s\S]*userId: input\.userId/);
     assert.match(destinations, /getLatestActivationDraftForCustomer\(\{[\s\S]*userId: input\.userId/);
-    assert.match(destinations, /return isCustomerAdmin \? "\/workspace\/admin" : "\/client"/);
+    assert.doesNotMatch(destinations, /"\/client"/);
   });
 
   test("post-auth destination routes pending provisioning account to activation status before workspace admin", () => {
@@ -289,7 +287,7 @@ describe("mandatory password change routing", () => {
     const onboardingService = readFileSync(new URL("../lib/commercial/onboarding/service.ts", import.meta.url), "utf8");
     const incompleteReturn = destinations.indexOf('if (incompleteDraft) return "/onboarding"');
     const activationReturn = destinations.indexOf("return `/workspace/activation?token=${encodeURIComponent(activationDraft.resume_token)}`");
-    const adminReturn = destinations.indexOf('await hasCustomerAdminMembership(input.userId, input.clientId)');
+    const adminReturn = destinations.lastIndexOf('return "/workspace/admin"');
     assert.ok(incompleteReturn > -1);
     assert.ok(activationReturn > -1);
     assert.ok(adminReturn > -1);
@@ -532,14 +530,21 @@ describe("mandatory password change routing", () => {
     assert.doesNotMatch(login, /loads your dashboard/);
   });
 
-  test("post-auth membership lookup retries instead of routing transient failures to client", () => {
+  test("modern customer auth routing never selects the legacy client portal", () => {
     const destinations = readFileSync(new URL("../lib/authDestinations.ts", import.meta.url), "utf8");
-    assert.match(destinations, /const delays = \[120, 360\]/);
-    assert.match(destinations, /stage: "customer-admin-membership"/);
-    assert.match(destinations, /result: "transient_failure"/);
-    assert.match(destinations, /throw new Error\("Customer workspace membership lookup is temporarily unavailable\."\)/);
-    assert.match(destinations, /const isCustomerAdmin = await hasCustomerAdminMembership\(input\.userId, input\.clientId\)/);
-    assert.match(destinations, /return isCustomerAdmin \? "\/workspace\/admin" : "\/client"/);
-    assert.doesNotMatch(destinations, /if \(error\) return false/);
+    const auth = readFileSync(new URL("../lib/auth.ts", import.meta.url), "utf8");
+    const sessionRoute = readFileSync(new URL("../app/api/auth/session/route.ts", import.meta.url), "utf8");
+    const refreshRoute = readFileSync(new URL("../app/api/auth/session/refresh/route.ts", import.meta.url), "utf8");
+    const passwordRoute = readFileSync(new URL("../app/api/auth/password/route.ts", import.meta.url), "utf8");
+    const login = readFileSync(new URL("../app/login/page.tsx", import.meta.url), "utf8");
+    assert.match(destinations, /if \(role === "client"\) return clientId \? "\/workspace\/admin" : "\/onboarding"/);
+    assert.match(destinations, /if \(!input\.clientId\) return "\/onboarding";[\s\S]*return "\/workspace\/admin"/);
+    assert.match(destinations, /if \(role === "admin"\) return "\/admin"/);
+    assert.match(destinations, /if \(role === "installer"\) return "\/submit"/);
+    assert.match(auth, /if \(role === "client"\) return "\/workspace\/admin"/);
+    assert.match(auth, /if \(role === "admin"\) return "\/admin"/);
+    assert.match(auth, /return "\/submit"/);
+    assert.match(refreshRoute, /defaultDestinationForResolvedUser/);
+    assert.doesNotMatch(auth + destinations + sessionRoute + refreshRoute + passwordRoute + login, /["'`]\/client(?:\/|["'`])/);
   });
 });
