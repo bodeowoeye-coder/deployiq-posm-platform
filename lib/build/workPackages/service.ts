@@ -3,6 +3,7 @@ import { validateProjectSiteOwnership, validateWorkPackageOwnership } from "@/li
 import { resolveCanonicalBuildProject } from "@/lib/build/projects/service";
 import type { CanonicalBuildProject } from "@/lib/build/projects/types";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
+import { hasCustomerAdminMembership } from "@/lib/workspace/customerAdmin";
 import type {
   BuildWorkPackage,
   BuildWorkPackageStatus,
@@ -136,6 +137,7 @@ export async function assertWorkPackageAccess(params: {
   clientId?: string | null;
   workPackageId?: string | null;
   canWrite?: boolean;
+  allowCustomerAdminWrite?: boolean;
 }) {
   const projectId = textValue(params.projectId);
   const siteId = textValue(params.siteId);
@@ -145,7 +147,7 @@ export async function assertWorkPackageAccess(params: {
   const { authContext, registry, project } = await resolveCanonicalBuildProject({
     request: params.request,
     projectId,
-    requiredPermission: params.canWrite ? "projects:write" : "projects:read",
+    requiredPermission: params.canWrite && !params.allowCustomerAdminWrite ? "projects:write" : "projects:read",
     requestedClientId: params.clientId
   });
 
@@ -156,7 +158,13 @@ export async function assertWorkPackageAccess(params: {
   });
 
   if (!authContext.is_admin && params.canWrite) {
-    throw new AccessControlError("Only admins can modify Work Packages at this stage.", 403);
+    const customerAdmin = params.allowCustomerAdminWrite
+      && authContext.role === "client"
+      && authContext.client_id === project.client_id
+      && await hasCustomerAdminMembership(authContext.user_id, project.client_id);
+    if (!customerAdmin) {
+      throw new AccessControlError("Only an active customer administrator can modify Work Packages.", 403);
+    }
   }
 
   let workPackage: BuildWorkPackageRow | null = null;
@@ -178,6 +186,22 @@ export async function assertWorkPackageAccess(params: {
     site,
     workPackage
   };
+}
+
+async function eligibleTemplateId(clientId: string, value: unknown) {
+  const templateId = textValue(value);
+  if (!templateId) return null;
+  const { data, error } = await createAdminSupabase()
+    .from("build_work_package_templates")
+    .select("id")
+    .eq("id", templateId)
+    .eq("status", "active")
+    .is("archived_at", null)
+    .or(`client_id.eq.${clientId},is_global.eq.true`)
+    .maybeSingle();
+  if (error) throw new AccessControlError(`Could not validate Operational Template: ${error.message}`, 500);
+  if (!data) throw new AccessControlError("Operational Template is not active or visible to this tenant.", 400);
+  return textValue(data.id);
 }
 
 export async function getWorkPackages(params: {
@@ -248,7 +272,8 @@ export async function createWorkPackage(params: {
     projectId: input.projectId,
     siteId: input.siteId,
     clientId: input.clientId,
-    canWrite: true
+    canWrite: true,
+    allowCustomerAdminWrite: true
   });
 
   const name = textValue(input.name);
@@ -256,12 +281,14 @@ export async function createWorkPackage(params: {
 
   const requestedCode = codeToken(textValue(input.code || ""));
   const code = requestedCode || (await generateWorkPackageCode({ project: access.project, siteId: access.site.id }));
+  const templateId = await eligibleTemplateId(access.project.client_id, input.templateId);
 
   const supabase = createAdminSupabase();
   const payload = {
     client_id: access.project.client_id,
     project_id: access.project.id,
     site_id: access.site.id,
+    template_id: templateId,
     code,
     name,
     description: textValue(input.description || "") || null,
@@ -298,7 +325,8 @@ export async function updateWorkPackage(params: {
     siteId: input.siteId,
     clientId: input.clientId,
     workPackageId: input.id,
-    canWrite: true
+    canWrite: true,
+    allowCustomerAdminWrite: true
   });
 
   const updates: Record<string, unknown> = {
@@ -314,7 +342,7 @@ export async function updateWorkPackage(params: {
   if ("plannedFinish" in input) updates.planned_finish = textValue(input.plannedFinish || "") || null;
   if ("actualStart" in input) updates.actual_start = textValue(input.actualStart || "") || null;
   if ("actualFinish" in input) updates.actual_finish = textValue(input.actualFinish || "") || null;
-  if ("templateId" in input) updates.template_id = textValue((input as Record<string, unknown>).templateId) || null;
+  if ("templateId" in input) updates.template_id = await eligibleTemplateId(access.project.client_id, input.templateId);
   if (input.status) updates.status = input.status;
 
   const supabase = createAdminSupabase();
@@ -352,7 +380,8 @@ export async function archiveWorkPackage(params: {
     siteId: params.siteId,
     clientId: params.clientId,
     workPackageId: params.workPackageId,
-    canWrite: true
+    canWrite: true,
+    allowCustomerAdminWrite: true
   });
 
   const supabase = createAdminSupabase();

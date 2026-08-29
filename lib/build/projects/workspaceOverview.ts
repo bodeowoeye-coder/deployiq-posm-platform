@@ -9,6 +9,9 @@ export type BuildProjectWorkspaceSite = {
   siteCode: string;
   name: string;
   status: string;
+  address: string | null;
+  state: string | null;
+  lga: string | null;
 };
 
 export type BuildProjectWorkspaceWorkPackage = {
@@ -19,12 +22,23 @@ export type BuildProjectWorkspaceWorkPackage = {
   status: string;
   templateId: string | null;
   templateName: string | null;
+  description: string | null;
+  workPackageType: string | null;
+  contractor: string | null;
+};
+
+export type BuildProjectWorkspaceTemplate = {
+  id: string;
+  code: string;
+  name: string;
+  isGlobal: boolean;
 };
 
 export type BuildProjectWorkspaceOverview = {
   project: CanonicalBuildProject;
   sites: BuildProjectWorkspaceSite[];
   workPackages: BuildProjectWorkspaceWorkPackage[];
+  templates: BuildProjectWorkspaceTemplate[];
   counts: {
     sites: number;
     workPackages: number;
@@ -61,7 +75,7 @@ export async function getBuildProjectWorkspaceOverview(projectId: string): Promi
   const [{ data: siteData, error: siteError }, { data: resourceData, error: resourceError }] = await Promise.all([
     supabase
       .from("build_sites")
-      .select("id,site_code,name,status")
+      .select("id,site_code,name,status,address,state,lga")
       .eq("client_id", project.client_id)
       .eq("project_id", project.id)
       .is("archived_at", null)
@@ -80,12 +94,15 @@ export async function getBuildProjectWorkspaceOverview(projectId: string): Promi
     siteCode: text(site.site_code),
     name: text(site.name),
     status: text(site.status),
+    address: text(site.address) || null,
+    state: text(site.state) || null,
+    lga: text(site.lga) || null,
   }));
   const siteIds = sites.map((site) => site.id).filter(Boolean);
   const workPackageResult = siteIds.length > 0
     ? await supabase
       .from("build_work_packages")
-      .select("id,site_id,code,name,status,template_id")
+      .select("id,site_id,code,name,status,template_id,description,work_package_type,contractor")
       .eq("client_id", project.client_id)
       .eq("project_id", project.id)
       .in("site_id", siteIds)
@@ -98,7 +115,7 @@ export async function getBuildProjectWorkspaceOverview(projectId: string): Promi
   const templateIds = [...new Set(workPackageRows.map((row) => text(row.template_id)).filter(Boolean))];
   const [templateResult, categoryResult, activityResult, dependencyResult] = templateIds.length > 0
     ? await Promise.all([
-      supabase.from("build_work_package_templates").select("id,name").in("id", templateIds).or(`client_id.eq.${project.client_id},is_global.eq.true`).is("archived_at", null),
+      supabase.from("build_work_package_templates").select("id,code,name,is_global").in("id", templateIds).or(`client_id.eq.${project.client_id},is_global.eq.true`).is("archived_at", null),
       supabase.from("build_activity_categories").select("id").in("template_id", templateIds).neq("status", "archived"),
       supabase.from("build_activity_templates").select("id").in("template_id", templateIds).is("archived_at", null),
       supabase.from("build_activity_template_dependencies").select("id").in("template_id", templateIds).is("archived_at", null),
@@ -131,13 +148,32 @@ export async function getBuildProjectWorkspaceOverview(projectId: string): Promi
       status: text(workPackage.status),
       templateId,
       templateName: templateId ? templateNameById.get(templateId) ?? null : null,
+      description: text(workPackage.description) || null,
+      workPackageType: text(workPackage.work_package_type) || null,
+      contractor: text(workPackage.contractor) || null,
     };
   });
+
+  const { data: eligibleTemplateData, error: eligibleTemplateError } = await supabase
+    .from("build_work_package_templates")
+    .select("id,code,name,is_global")
+    .eq("status", "active")
+    .is("archived_at", null)
+    .or(`client_id.eq.${project.client_id},is_global.eq.true`)
+    .order("name", { ascending: true });
+  assertQuery(eligibleTemplateError, "eligible templates");
+  const templates = rows(eligibleTemplateData as Row[] | null).map((template) => ({
+    id: text(template.id),
+    code: text(template.code),
+    name: text(template.name),
+    isGlobal: template.is_global === true,
+  }));
 
   return {
     project,
     sites,
     workPackages,
+    templates,
     counts: {
       sites: sites.length,
       workPackages: workPackages.length,

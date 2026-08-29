@@ -141,7 +141,7 @@ function BuildProjectOverview({ overview }: { overview: BuildProjectWorkspaceOve
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Build foundation</p>
           <h3 className="mt-1 text-xl font-bold text-slate-950">Project Overview</h3>
-          <p className="mt-2 text-sm text-slate-600">Authoritative foundation records currently assigned to this project.</p>
+          <p className="mt-2 text-sm text-slate-600">Current foundation records assigned to this project.</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {metrics.map(([label, value]) => <Metric key={label} label={label} value={String(value)} />)}

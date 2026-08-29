@@ -72,5 +72,6 @@ export type UpdateBuildWorkPackageInput = {
   plannedFinish?: string | null;
   actualStart?: string | null;
   actualFinish?: string | null;
+  templateId?: string | null;
   status?: BuildWorkPackageStatus;
 };

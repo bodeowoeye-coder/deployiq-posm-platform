@@ -21,7 +21,7 @@ type Props = {
 
 const SECTION_DESCRIPTIONS: Record<string, string> = {
   "Home / Dashboard": "Monitor workspace operations and current deployment activity.",
-  Projects: "Open canonical tenant projects and their product-specific environments.",
+  Projects: "Select a project to manage its operations.",
   "Deployment Reports": "Review tenant reports and export operational summaries.",
   Submissions: "Review deployment submissions and field evidence.",
   "Deployment Map": "View tenant-scoped deployment coverage.",
@@ -116,6 +116,11 @@ export function CustomerWorkspaceShell({ workspace, projectScope, notificationEn
     : workspace.composition.kind === "retail"
       ? "DeployIQ Admin Workspace"
       : "DeployIQ Customer Workspace";
+  const projectPathMatch = normalizePath(pathname).match(/^\/workspace\/admin\/projects\/([^/]+)(?:\/([^/]+))?/);
+  const routeProject = projectPathMatch ? projectScope.projects.find((project) => project.id === projectPathMatch[1]) : undefined;
+  const routeProjectSection = projectPathMatch?.[2]
+    ? projectPathMatch[2].split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")
+    : "Overview";
 
   useEffect(() => {
     try {
@@ -269,10 +274,10 @@ export function CustomerWorkspaceShell({ workspace, projectScope, notificationEn
               <div className="min-w-0">
                 <nav aria-label="Breadcrumb" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
                   <Link href="/workspace/admin" prefetch className="text-orange-600 hover:text-orange-700">Home</Link>
-                  {activeAccountItem ? <span className="text-slate-400"> &gt; Account Settings &gt; {activeAccountItem.label}</span> : activeItem && activeItem.href !== "/workspace/admin" ? <span className="text-slate-400"> &gt; {activeItem.label}</span> : null}
+                  {routeProject ? <span className="text-slate-400"> &gt; Projects &gt; {routeProject.project_name} &gt; {routeProjectSection}</span> : activeAccountItem ? <span className="text-slate-400"> &gt; Account Settings &gt; {activeAccountItem.label}</span> : activeItem && activeItem.href !== "/workspace/admin" ? <span className="text-slate-400"> &gt; {activeItem.label}</span> : null}
                 </nav>
                 <p className="mt-3 text-xs font-semibold uppercase tracking-widest text-orange-600">{productWorkspaceLabel}</p>
-                <h1 className="mt-1 text-2xl font-bold">{activeItem?.href === "/workspace/admin" && !activeAccountItem ? workspace.workspaceName : sectionLabel}</h1>
+                <h1 className="mt-1 text-2xl font-bold">{routeProject ? `${routeProject.project_name} · ${routeProjectSection}` : activeItem?.href === "/workspace/admin" && !activeAccountItem ? workspace.workspaceName : sectionLabel}</h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{sectionDescription}</p>
                 <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-600">
                   <div><dt className="inline font-semibold">Product:</dt> <dd className="inline">{workspace.productName}</dd></div>

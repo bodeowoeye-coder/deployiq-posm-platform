@@ -110,13 +110,13 @@ test("S3A-3 Build authority remains membership and tenant constrained", () => {
   }), { ok: false, code: "project_not_allowed" });
 });
 
-test("S3A-3 Sites and Work Packages are read-only and unfinished modules are explicit", () => {
+test("S3A-3 route contract delegates Sites and Work Packages while unfinished modules remain explicit", () => {
   assert.match(projectSection, /getBuildProjectWorkspaceOverview\(params\.id\)/);
-  assert.match(projectSection, /title="Sites"/);
-  assert.match(projectSection, /title="Work Packages"/);
+  assert.match(projectSection, /BuildProjectManagement mode="sites"/);
+  assert.match(projectSection, /BuildProjectManagement mode="work-packages"/);
   assert.match(projectSection, /Controlled foundation state/);
   assert.match(projectSection, /later Build phase/);
-  assert.doesNotMatch(projectSection, /\/admin\/build\/template-authoring|\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
+  assert.doesNotMatch(projectSection, /\/admin\/build\/template-authoring/);
 });
 
 test("S3A-3 does not introduce legacy client portal entry", () => {

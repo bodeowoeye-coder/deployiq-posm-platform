@@ -67,7 +67,6 @@ export async function POST(request: Request) {
     const workPackage = await createWorkPackage({
       request,
       input: {
-        clientId: textValue(typeof body.clientId === "string" ? body.clientId : "") || null,
         projectId,
         siteId,
         code: textValue(typeof body.code === "string" ? body.code : "") || null,
@@ -79,6 +78,7 @@ export async function POST(request: Request) {
         plannedFinish: textValue(typeof body.plannedFinish === "string" ? body.plannedFinish : "") || null,
         actualStart: textValue(typeof body.actualStart === "string" ? body.actualStart : "") || null,
         actualFinish: textValue(typeof body.actualFinish === "string" ? body.actualFinish : "") || null,
+        templateId: textValue(typeof body.templateId === "string" ? body.templateId : "") || null,
         status: parseWorkPackageStatus(body.status)
       }
     });
@@ -107,7 +107,6 @@ export async function PATCH(request: Request) {
         projectId,
         siteId,
         workPackageId: id,
-        clientId: textValue(typeof body.clientId === "string" ? body.clientId : "") || null
       });
       return NextResponse.json({ workPackage });
     }
@@ -116,7 +115,6 @@ export async function PATCH(request: Request) {
       request,
       input: {
         id,
-        clientId: textValue(typeof body.clientId === "string" ? body.clientId : "") || null,
         projectId,
         siteId,
         code: typeof body.code === "string" || body.code === null ? body.code : undefined,
@@ -133,6 +131,7 @@ export async function PATCH(request: Request) {
         actualStart: typeof body.actualStart === "string" || body.actualStart === null ? body.actualStart : undefined,
         actualFinish:
           typeof body.actualFinish === "string" || body.actualFinish === null ? body.actualFinish : undefined,
+        templateId: typeof body.templateId === "string" || body.templateId === null ? body.templateId : undefined,
         status: parseWorkPackageStatus(body.status)
       }
     });

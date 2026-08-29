@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { BuildProjectShell, type BuildProjectSection } from "@/components/workspace/BuildProjectShell";
+import { BuildProjectManagement } from "@/components/workspace/BuildProjectManagement";
 import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
 
 export const dynamic = "force-dynamic";
@@ -39,35 +40,11 @@ function BuildProjectSectionContent({
   overview: BuildProjectWorkspaceOverview;
 }) {
   if (section === "sites") {
-    return (
-      <ReadOnlyFoundationList
-        eyebrow="Build foundation"
-        title="Sites"
-        description="Read-only sites assigned to this project. Site authoring is not included in this sprint."
-        empty="No active Build Sites are assigned to this project."
-        rows={overview.sites.map((site) => ({
-          id: site.id,
-          name: site.name,
-          detail: [site.siteCode, site.status].filter(Boolean).join(" · "),
-        }))}
-      />
-    );
+    return <BuildProjectManagement mode="sites" overview={overview} />;
   }
 
   if (section === "work-packages") {
-    return (
-      <ReadOnlyFoundationList
-        eyebrow="Build foundation"
-        title="Work Packages"
-        description="Read-only work packages assigned to this project. Work-package authoring is not included in this sprint."
-        empty="No active Work Packages are assigned to this project."
-        rows={overview.workPackages.map((workPackage) => ({
-          id: workPackage.id,
-          name: workPackage.name,
-          detail: [workPackage.code, workPackage.templateName, workPackage.status].filter(Boolean).join(" · "),
-        }))}
-      />
-    );
+    return <BuildProjectManagement mode="work-packages" overview={overview} />;
   }
 
   const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages">, { title: string; description: string }> = {
@@ -103,40 +80,6 @@ function BuildProjectSectionContent({
       <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Controlled foundation state</p>
       <h3 className="mt-2 text-xl font-bold text-slate-950">{copy.title}</h3>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">{copy.description}</p>
-    </section>
-  );
-}
-
-function ReadOnlyFoundationList({
-  eyebrow,
-  title,
-  description,
-  empty,
-  rows,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-  empty: string;
-  rows: Array<{ id: string; name: string; detail: string }>;
-}) {
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">{eyebrow}</p>
-      <h3 className="mt-2 text-xl font-bold text-slate-950">{title}</h3>
-      <p className="mt-2 text-sm text-slate-600">{description}</p>
-      {rows.length === 0 ? (
-        <p className="mt-6 rounded-lg border border-dashed border-slate-300 p-5 text-sm text-slate-600">{empty}</p>
-      ) : (
-        <ul className="mt-6 divide-y divide-slate-100 rounded-lg border border-slate-200">
-          {rows.map((row) => (
-            <li key={row.id} className="p-4">
-              <p className="font-bold text-slate-950">{row.name}</p>
-              <p className="mt-1 text-xs text-slate-500">{row.detail || "No additional details"}</p>
-            </li>
-          ))}
-        </ul>
-      )}
     </section>
   );
 }

@@ -3,6 +3,7 @@ import { validateProjectSiteOwnership } from "@/lib/core/enterpriseHierarchy";
 import { resolveCanonicalBuildProject } from "@/lib/build/projects/service";
 import type { CanonicalBuildProject } from "@/lib/build/projects/types";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
+import { hasCustomerAdminMembership } from "@/lib/workspace/customerAdmin";
 import type { BuildSite, BuildSiteStatus, CreateBuildSiteInput, UpdateBuildSiteInput } from "@/lib/build/sites/types";
 
 type BuildSiteRow = BuildSite;
@@ -92,9 +93,18 @@ export async function assertBuildSiteAccess(params: {
   const { authContext, registry, project } = await resolveCanonicalBuildProject({
     request: params.request,
     projectId,
-    requiredPermission: params.canWrite ? "projects:write" : "projects:read",
+    requiredPermission: "projects:read",
     requestedClientId: params.clientId
   });
+
+  if (params.canWrite && !authContext.is_admin) {
+    const customerAdmin = authContext.role === "client"
+      && authContext.client_id === project.client_id
+      && await hasCustomerAdminMembership(authContext.user_id, project.client_id);
+    if (!customerAdmin) {
+      throw new AccessControlError("Only an active customer administrator can modify Build Sites.", 403);
+    }
+  }
 
   let site: BuildSiteRow | null = null;
   const siteId = textValue(params.siteId);
@@ -180,10 +190,6 @@ export async function createBuildSite(params: {
     canWrite: true
   });
 
-  if (!access.authContext.is_admin) {
-    throw new AccessControlError("Only admins can create Build Sites at this stage.", 403);
-  }
-
   const name = textValue(input.name);
   if (!name) throw new AccessControlError("Site name is required.", 400);
 
@@ -234,10 +240,6 @@ export async function updateBuildSite(params: {
     siteId: input.id,
     canWrite: true
   });
-
-  if (!access.authContext.is_admin) {
-    throw new AccessControlError("Only admins can update Build Sites at this stage.", 403);
-  }
 
   const updates: Record<string, unknown> = {
     updated_at: new Date().toISOString()
@@ -292,11 +294,20 @@ export async function archiveBuildSite(params: {
     canWrite: true
   });
 
-  if (!access.authContext.is_admin) {
-    throw new AccessControlError("Only admins can archive Build Sites at this stage.", 403);
-  }
-
   const supabase = createAdminSupabase();
+  const { count: activeWorkPackageCount, error: workPackageError } = await supabase
+    .from("build_work_packages")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", access.project.client_id)
+    .eq("project_id", access.project.id)
+    .eq("site_id", params.siteId)
+    .is("archived_at", null);
+  if (workPackageError) {
+    throw new AccessControlError(`Could not verify Site lifecycle: ${workPackageError.message}`, 500);
+  }
+  if ((activeWorkPackageCount ?? 0) > 0) {
+    throw new AccessControlError("Archive the Site's active Work Packages before archiving the Site.", 409);
+  }
   const { data, error } = await supabase
     .from("build_sites")
     .update({ archived_at: new Date().toISOString(), status: "archived", updated_at: new Date().toISOString() })

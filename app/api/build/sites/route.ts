@@ -73,7 +73,6 @@ export async function POST(request: Request) {
       request,
       input: {
         projectId,
-        clientId: textValue(typeof body.clientId === "string" ? body.clientId : "") || null,
         siteCode: textValue(typeof body.siteCode === "string" ? body.siteCode : "") || null,
         name,
         description: textValue(typeof body.description === "string" ? body.description : "") || null,
@@ -112,7 +111,6 @@ export async function PATCH(request: Request) {
         request,
         projectId,
         siteId: id,
-        clientId: textValue(typeof body.clientId === "string" ? body.clientId : "") || null
       });
       return NextResponse.json({ site });
     }
@@ -122,7 +120,6 @@ export async function PATCH(request: Request) {
       input: {
         id,
         projectId,
-        clientId: textValue(typeof body.clientId === "string" ? body.clientId : "") || null,
         siteCode: typeof body.siteCode === "string" ? body.siteCode : undefined,
         name: typeof body.name === "string" ? body.name : undefined,
         description: typeof body.description === "string" || body.description === null ? body.description : undefined,

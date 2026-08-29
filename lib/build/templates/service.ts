@@ -754,7 +754,8 @@ export async function assignTemplateToWorkPackage(params: {
     projectId: params.projectId,
     siteId: params.siteId,
     workPackageId: params.workPackageId,
-    canWrite: true
+    canWrite: true,
+    allowCustomerAdminWrite: true
   });
 
   const normalizedTemplateId = textValue(params.templateId);

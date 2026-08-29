@@ -163,7 +163,7 @@ function SharedWorkspaceProjects({ projects }: { projects: Project[] }) {
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Customer Workspace</p>
         <h2 className="mt-2 text-2xl font-bold text-slate-950">Projects</h2>
-        <p className="mt-2 text-sm text-slate-600">Select a canonical project to enter its product-specific environment.</p>
+        <p className="mt-2 text-sm text-slate-600">Select a project to manage its operations.</p>
       </section>
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         {projects.length === 0 ? (
