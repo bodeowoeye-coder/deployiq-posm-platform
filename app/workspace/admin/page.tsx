@@ -11,6 +11,7 @@ import {
 import { getWorkspaceAnalytics } from "@/lib/workspace/analytics";
 import { getWorkspaceAlertsDashboard } from "@/lib/workspace/alerts";
 import { hasValidGps } from "@/lib/reporting";
+import { getCustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
 
 export const dynamic = "force-dynamic";
 
@@ -41,23 +42,29 @@ function displayMilestoneStatus(status: string) {
 export default async function WorkspaceAdminPage({ searchParams }: { searchParams?: { projectId?: string } }) {
   const totalStartedAt = nowMs();
   let workspace;
-  let dashboard;
-  let alerts;
   try {
     workspace = await resolveCustomerWorkspaceContext();
-    const initialModuleStartedAt = nowMs();
-    [dashboard, alerts] = await Promise.all([getWorkspaceAnalytics({ projectId: searchParams?.projectId }), getWorkspaceAlertsDashboard(searchParams?.projectId)]);
-    if (process.env.NODE_ENV === "development") {
-      console.info("[workspace-performance]", {
-        route: "/workspace/admin",
-        step: "Initial module data",
-        elapsedMs: elapsedMs(initialModuleStartedAt),
-        totalElapsedMs: elapsedMs(totalStartedAt),
-      });
-    }
   } catch (error) {
     if (error instanceof CustomerWorkspaceRedirect) redirect(error.redirectTo);
     throw error;
+  }
+
+  if (workspace.composition.kind !== "retail") {
+    const projectScope = await getCustomerWorkspaceProjectScope(workspace, searchParams?.projectId);
+    return <SharedWorkspaceHome workspace={workspace} projects={projectScope.projects} />;
+  }
+
+  let dashboard;
+  let alerts;
+  const initialModuleStartedAt = nowMs();
+  [dashboard, alerts] = await Promise.all([getWorkspaceAnalytics({ projectId: searchParams?.projectId }), getWorkspaceAlertsDashboard(searchParams?.projectId)]);
+  if (process.env.NODE_ENV === "development") {
+    console.info("[workspace-performance]", {
+      route: "/workspace/admin",
+      step: "Initial module data",
+      elapsedMs: elapsedMs(initialModuleStartedAt),
+      totalElapsedMs: elapsedMs(totalStartedAt),
+    });
   }
 
   const primaryAdminName = workspace.email ?? "Administrator";
@@ -106,6 +113,58 @@ export default async function WorkspaceAdminPage({ searchParams }: { searchParam
           </div>
         </aside>
       </div>
+    </div>
+  );
+}
+
+function SharedWorkspaceHome({
+  workspace,
+  projects,
+}: {
+  workspace: Awaited<ReturnType<typeof resolveCustomerWorkspaceContext>>;
+  projects: Awaited<ReturnType<typeof getCustomerWorkspaceProjectScope>>["projects"];
+}) {
+  const compositionLabel = workspace.composition.kind === "build"
+    ? "Build workspace"
+    : workspace.composition.kind === "mixed"
+      ? "Mixed workspace"
+      : "Shared workspace";
+  return (
+    <div className="space-y-6">
+      <section className="rounded-lg border border-slate-200 bg-white p-6">
+        <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">{compositionLabel}</p>
+        <h2 className="mt-2 text-2xl font-bold text-slate-950">DeployIQ Workspace</h2>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+          {workspace.organisationName} has secure access to its tenant-scoped projects.
+        </p>
+        {workspace.composition.issue !== "none" ? (
+          <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+            Vertical-specific modules are unavailable until workspace composition is reconciled.
+          </p>
+        ) : null}
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-6" aria-labelledby="workspace-projects-title">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Projects</p>
+            <h2 id="workspace-projects-title" className="mt-1 text-xl font-bold text-slate-950">{projects.length} active {projects.length === 1 ? "project" : "projects"}</h2>
+          </div>
+        </div>
+        {projects.length === 0 ? (
+          <p className="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-sm text-slate-600">No active projects are available in this workspace.</p>
+        ) : (
+          <ul className="mt-5 divide-y divide-slate-100 rounded-lg border border-slate-200">
+            {projects.map((project) => (
+              <li key={project.id} className="grid gap-2 p-4 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                <span className="font-bold text-slate-950">{project.project_name}</span>
+                <span className="text-sm text-slate-600">{project.project_type ?? "Unclassified"}</span>
+                <span className="w-fit rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{project.status}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

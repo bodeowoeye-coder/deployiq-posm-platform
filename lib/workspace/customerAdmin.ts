@@ -10,13 +10,18 @@ import {
 } from "./customerAdminModel.ts";
 import {
   CUSTOMER_ADMIN_NAV_ITEMS,
+  CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS,
+  SHARED_WORKSPACE_ACCOUNT_SETTINGS_NAV_ITEMS,
+  SHARED_WORKSPACE_NAV_ITEMS,
   derivePrimaryWorkspaceAction,
   deriveWorkspaceSetupSteps,
   workspaceHealth,
   workspaceSetupProgress,
   type WorkspaceSetupMetrics,
   type WorkspaceSetupStep,
+  type CustomerWorkspaceNavigationItem,
 } from "./customerAdminFoundation.ts";
+import { resolveWorkspaceComposition, type WorkspaceComposition } from "./compositionServer.ts";
 
 export {
   CUSTOMER_ADMIN_DENIED_PERMISSIONS,
@@ -66,7 +71,9 @@ export type CustomerWorkspaceContext = {
   membershipRoleKey: string;
   isPrimaryAdministrator: boolean;
   permissions: string[];
-  navigation: typeof CUSTOMER_ADMIN_NAV_ITEMS;
+  navigation: readonly CustomerWorkspaceNavigationItem[];
+  accountNavigation: readonly CustomerWorkspaceNavigationItem[];
+  composition: WorkspaceComposition;
   setupMetrics: WorkspaceSetupMetrics;
   setupSteps: WorkspaceSetupStep[];
   setupProgress: { completed: number; total: number; percent: number };
@@ -565,8 +572,9 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
     { data: membership },
     { data: settings },
     { data: organisation },
-    { data: entitlement },
+    { data: entitlements },
     { data: statuses },
+    { data: projects },
   ] = await Promise.all([
     workspaceLookup<Record<string, unknown>>(diagnosticContext, "Membership lookup", () =>
       supabase
@@ -578,25 +586,29 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
         .maybeSingle(),
       { missingResult: "NO ROWS" },
     ),
-    workspaceLookup<Record<string, unknown>>(diagnosticContext, "Workspace lookup", () =>
+    workspaceLookup<Record<string, unknown>>(diagnosticContext, "Workspace composition lookup", () =>
       supabase
         .from("workspace_settings")
         .select("workspace_display_name,workspace_slug,product_key,product_name,commercial_model,status")
         .eq("client_id", clientId)
         .maybeSingle(),
-      { missingResult: "Missing workspace_settings record", required: true },
+      { missingResult: "NO OPTIONAL WORKSPACE SETTINGS" },
     ),
     workspaceLookup<Record<string, unknown>>(diagnosticContext, "Organisation lookup", () =>
-      supabase.from("clients").select("id,name").eq("id", clientId).maybeSingle(),
+      supabase.from("clients").select("id,name,status").eq("id", clientId).maybeSingle(),
       { missingResult: "Missing clients organisation record", required: true },
     ),
-    workspaceLookup<Record<string, unknown>>(diagnosticContext, "Product entitlement lookup", () =>
-      supabase.from("product_entitlements").select("product_key,commercial_model").eq("client_id", clientId).eq("status", "active").maybeSingle(),
-      { missingResult: "Missing active product_entitlements record", required: true },
+    workspaceLookup<Array<Record<string, unknown>>>(diagnosticContext, "Product composition lookup", () =>
+      supabase.from("product_entitlements").select("product_key,commercial_model").eq("client_id", clientId).eq("status", "active"),
+      { missingResult: "NO OPTIONAL ACTIVE ENTITLEMENTS" },
     ),
     workspaceLookup<Array<Record<string, unknown>>>(diagnosticContext, "Workspace status lookup", () =>
       supabase.from("workspace_statuses").select("status_key").eq("client_id", clientId).limit(1),
       { missingResult: "NO ROWS" },
+    ),
+    workspaceLookup<Array<Record<string, unknown>>>(diagnosticContext, "Project composition lookup", () =>
+      supabase.from("projects").select("project_type,archived_at").eq("client_id", clientId),
+      { missingResult: "NO PROJECTS" },
     ),
   ]);
 
@@ -615,15 +627,23 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
     throw new CustomerWorkspaceRedirect("/");
   }
 
+  if (text(organisation?.status).toLowerCase() !== "active") {
+    workspaceDiagnosticLog("warn", diagnosticContext, {
+      step: "Client status evaluation",
+      result: "CLIENT NOT ACTIVE",
+    });
+    throw new CustomerWorkspaceRedirect("/");
+  }
+
   const organisationName = text(organisation?.name) || text(authContext.client?.name);
   // In support mode the tenant record comes from the canonical clients row, not the admin's session.
-  const clientRecord: Client = authContext.client ?? {
+  const clientRecord: Client = {
+    ...(authContext.client ?? {}),
     id: clientId,
     name: organisationName,
-    can_review: false,
-    status: text(organisation?.status) === "Inactive" ? "Inactive" : "Active",
-    created_at: text(organisation?.created_at) || new Date().toISOString(),
-  } as Client;
+    can_review: authContext.client?.can_review ?? false,
+    status: "Active",
+  };
   const workspaceSlug = text(settings?.workspace_slug) || slugFromName(organisationName);
   const workspaceName = text(settings?.workspace_display_name) || organisationName;
   const workspaceStatus = text(settings?.status).toLowerCase();
@@ -634,11 +654,27 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
     });
     throw new CustomerWorkspaceRedirect("/");
   }
-  const productKey = text(settings?.product_key) || text(entitlement?.product_key) || "retail";
-  const productName = text(settings?.product_name) || "DeployIQ Retail";
-  const planName = text(settings?.commercial_model) || text(entitlement?.commercial_model) || "Retail activation plan";
-  const activationStatus = statuses && statuses.length > 0 ? "Active" : "Setup in progress";
-  if (activationStatus !== "Active") {
+  const composition = resolveWorkspaceComposition({
+    settingsProductKey: settings?.product_key,
+    entitlementProductKeys: (entitlements ?? []).map((row) => row.product_key),
+    projects: projects ?? [],
+  });
+  workspaceDiagnosticLog(composition.issue === "none" ? "info" : "warn", diagnosticContext, {
+    step: "Workspace composition evaluation",
+    result: composition.issue === "none" ? composition.kind.toUpperCase() : composition.issue.toUpperCase(),
+    details: {
+      Composition: composition.kind,
+      RetailProjectCount: composition.retailProjectCount,
+      BuildProjectCount: composition.buildProjectCount,
+      UnknownProjectTypeCount: composition.unknownProjectTypes.length,
+    },
+  });
+  const entitlement = (entitlements ?? [])[0];
+  const productKey = composition.productKey ?? composition.kind;
+  const productName = text(settings?.product_name) || (composition.kind === "retail" ? "DeployIQ Retail" : composition.kind === "build" ? "DeployIQ Build" : "DeployIQ Workspace");
+  const planName = text(settings?.commercial_model) || text(entitlement?.commercial_model) || (composition.kind === "retail" ? "Retail activation plan" : "Workspace access");
+  const activationStatus = composition.kind === "retail" ? (statuses && statuses.length > 0 ? "Active" : "Setup in progress") : "Active";
+  if (composition.kind === "retail" && activationStatus !== "Active") {
     workspaceDiagnosticLog("warn", diagnosticContext, {
       step: "Workspace status evaluation",
       result: "NO ACTIVE STATUS RECORDS",
@@ -676,7 +712,7 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
       workspaceInitials: slugFromName(organisationName).slice(0, 2).toUpperCase(),
       logoUrl: null,
       accentColour: "#ea580c",
-      theme: "deployiq_retail",
+      theme: composition.kind === "retail" ? "deployiq_retail" : "deployiq_workspace",
     },
     productName,
     productKey,
@@ -685,7 +721,9 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
     membershipRoleKey,
     isPrimaryAdministrator: role === "customer_admin",
     permissions: [...CUSTOMER_ADMIN_PERMISSIONS],
-    navigation: CUSTOMER_ADMIN_NAV_ITEMS,
+    navigation: composition.kind === "retail" ? CUSTOMER_ADMIN_NAV_ITEMS : SHARED_WORKSPACE_NAV_ITEMS,
+    accountNavigation: composition.kind === "retail" ? CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS : SHARED_WORKSPACE_ACCOUNT_SETTINGS_NAV_ITEMS,
+    composition,
     setupMetrics,
     setupSteps,
     setupProgress,

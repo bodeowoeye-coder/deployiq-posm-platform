@@ -172,6 +172,22 @@ export const CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS = [
   { label: "Audit Logs", href: "/workspace/admin/workspace-settings/audit-logs", status: "planned" },
 ] as const;
 
+export const SHARED_WORKSPACE_NAV_ITEMS = [
+  { label: "Home / Dashboard", href: "/workspace/admin", status: "active" },
+] as const;
+
+export const SHARED_WORKSPACE_ACCOUNT_SETTINGS_NAV_ITEMS = [
+  { label: "Profile", href: "/workspace/admin/profile", status: "available" },
+  { label: "User Management", href: "/workspace/admin/team", status: "available" },
+  { label: "Workspace Settings", href: "/workspace/admin/workspace-settings", status: "available" },
+] as const;
+
+export type CustomerWorkspaceNavigationItem = {
+  label: string;
+  href: string;
+  status: "active" | "available" | "planned";
+};
+
 export type WorkspaceSetupMetrics = {
   directoryUploaded: boolean;
   projectCount: number;

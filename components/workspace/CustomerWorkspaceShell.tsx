@@ -9,7 +9,6 @@ import { BrandMark } from "@/components/BrandMark";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import { SignOutButton } from "@/components/SignOutButton";
 import { applyCustomerWorkspaceAppearance, readCustomerWorkspaceAppearance, writeCustomerWorkspaceAppearance } from "@/components/workspace/WorkspaceSettingsClient";
-import { CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS } from "@/lib/workspace/customerAdminFoundation";
 import type { CustomerWorkspaceContext } from "@/lib/workspace/customerAdmin";
 import type { CustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
 
@@ -64,14 +63,14 @@ function currentNavItem(pathname: string, navigation: CustomerWorkspaceContext["
     .find((item) => normalized === item.href || normalized.startsWith(`${item.href}/`));
 }
 
-function currentAccountItem(pathname: string) {
+function currentAccountItem(pathname: string, navigation: CustomerWorkspaceContext["accountNavigation"]) {
   const normalized = normalizePath(pathname);
-  const configuredItem = [...CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS]
+  const configuredItem = [...navigation]
     .sort((a, b) => b.href.length - a.href.length)
     .find((item) => normalized === item.href || normalized.startsWith(`${item.href}/`));
   if (configuredItem) return configuredItem;
   if (/^\/workspace\/admin\/projects\/[^/]+\/edit$/.test(normalized)) {
-    return CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS.find((item) => item.label === "Campaign Management");
+    return navigation.find((item) => item.label === "Campaign Management");
   }
   if (normalized === "/workspace/admin/projects" || normalized.startsWith("/workspace/admin/projects/")) {
     return { label: "Create Project", href: "/workspace/admin/projects", status: "available" } as const;
@@ -96,7 +95,7 @@ export function CustomerWorkspaceShell({ workspace, projectScope, notificationEn
   const [searchOpen, setSearchOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const activeItem = useMemo(() => currentNavItem(pathname, workspace.navigation), [pathname, workspace.navigation]);
-  const activeAccountItem = useMemo(() => currentAccountItem(pathname), [pathname]);
+  const activeAccountItem = useMemo(() => currentAccountItem(pathname, workspace.accountNavigation), [pathname, workspace.accountNavigation]);
   const projectDependent = !activeAccountItem && ["/workspace/admin", "/workspace/admin/analytics", "/workspace/admin/map", "/workspace/admin/submissions", "/workspace/admin/alerts", "/workspace/admin/installers", "/workspace/admin/notifications", "/workspace/admin/reports"].includes(normalizePath(pathname));
   const selectedProjectId = searchParams.get("projectId") ?? "";
   const operationalNavigation = new Set(["/workspace/admin", "/workspace/admin/reports", "/workspace/admin/submissions", "/workspace/admin/map", "/workspace/admin/analytics", "/workspace/admin/alerts", "/workspace/admin/installers", "/workspace/admin/notifications"]);
@@ -231,7 +230,7 @@ export function CustomerWorkspaceShell({ workspace, projectScope, notificationEn
               {accountMenuOpen ? (
                 <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-sm shadow-xl" role="menu" aria-label="Account Settings">
                   <p className="px-3 py-2 text-[11px] font-black uppercase tracking-[0.24em] text-orange-600">Configuration</p>
-                  {CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS.map((item) => {
+                  {workspace.accountNavigation.map((item) => {
                     const active = activeAccountItem?.href === item.href;
                     const planned = item.status !== "available";
                     return (

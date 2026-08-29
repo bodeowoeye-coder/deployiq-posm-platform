@@ -107,7 +107,7 @@ test("workspace admin: settings and sign out actions remain globally available",
   const settingsClient = readFileSync(new URL("../components/workspace/WorkspaceSettingsClient.tsx", import.meta.url), "utf8");
   const signOut = readFileSync(new URL("../components/SignOutButton.tsx", import.meta.url), "utf8");
   assert.match(shell, /Account Settings/);
-  assert.match(shell, /CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS\.map/);
+  assert.match(shell, /workspace\.accountNavigation\.map/);
   assert.match(settingsClient, /Account & Security/);
   assert.match(settingsClient, /workspace-settings\/security/);
   assert.match(shell, /href=\{item\.href\}/);
@@ -488,10 +488,10 @@ test("workspace admin: shell keeps workspace identity compact in the header", ()
   assert.match(header, /workspace-identity-static/);
   const headerControls = header.match(/<div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">[\s\S]*?<\/div>\n            <\/div>/)?.[0] ?? "";
   assert.doesNotMatch(headerControls, /Account Settings/);
-  assert.doesNotMatch(headerControls, /CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS\.map/);
+  assert.doesNotMatch(headerControls, /workspace\.accountNavigation\.map/);
   assert.match(sidebar, /Secondary administration/);
   assert.match(sidebar, /Account Settings/);
-  assert.match(sidebar, /CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS\.map/);
+  assert.match(sidebar, /workspace\.accountNavigation\.map/);
   assert.match(shell, /operationalNavigation\.has\(item\.href\)/);
   assert.match(shell, /selectedProjectId/);
   assert.doesNotMatch(header, /<details|<summary|workspace-menu/);
@@ -504,7 +504,7 @@ test("workspace admin: Settings opens Customer Workspace Settings, never Client 
   const settingsPage = readFileSync(new URL("../app/workspace/admin/workspace-settings/page.tsx", import.meta.url), "utf8");
   const settingsClient = readFileSync(new URL("../components/workspace/WorkspaceSettingsClient.tsx", import.meta.url), "utf8");
   assert.match(shell, /Account Settings/);
-  assert.match(shell, /CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS\.map/);
+  assert.match(shell, /workspace\.accountNavigation\.map/);
   assert.equal(CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS.find((item) => item.href === "/workspace/admin/workspace-settings")?.label, "Workspace Settings");
   assert.doesNotMatch(shell, /href="\/client"[^>]*Settings|href="\/workspace\/admin\/settings"/);
   assert.match(settingsPage, /WorkspaceSettingsClient/);
@@ -764,7 +764,7 @@ test("workspace admin: route performance diagnostics log each workspace load seg
     "Authenticated session",
     "Membership lookup",
     "Organisation lookup",
-    "Product entitlement lookup",
+    "Product composition lookup",
     "Workspace status lookup",
     "Optional metrics",
     "Required workspace context total",
@@ -905,7 +905,7 @@ test("workspace admin: navigation persistence uses pathname and shared navigatio
   assert.match(shell, /usePathname/);
   assert.match(shell, /currentNavItem\(pathname, workspace\.navigation\)/);
   assert.match(shell, /normalized === item\.href \|\| normalized\.startsWith/);
-  assert.match(resolver, /navigation: CUSTOMER_ADMIN_NAV_ITEMS/);
+  assert.match(resolver, /navigation: composition\.kind === "retail" \? CUSTOMER_ADMIN_NAV_ITEMS : SHARED_WORKSPACE_NAV_ITEMS/);
 });
 
 test("workspace admin: shared guard checks membership active workspace and archived state", () => {
@@ -944,9 +944,10 @@ test("workspace admin: context diagnostics identify the exact failing lookup", (
   for (const step of [
     "Authenticated session",
     "Membership lookup",
-    "Workspace lookup",
+    "Workspace composition lookup",
     "Organisation lookup",
-    "Product entitlement lookup",
+    "Product composition lookup",
+    "Project composition lookup",
     "Branding lookup",
     "Workspace status lookup",
     "Project count lookup",
@@ -1141,9 +1142,10 @@ test("workspace admin: required access lookups still block when missing or faile
   const resolver = readFileSync(new URL("../lib/workspace/customerAdmin.ts", import.meta.url), "utf8");
   assert.match(resolver, /"Membership lookup"[\s\S]*missingResult: "NO ROWS"/);
   assert.match(resolver, /if \(role !== "customer_admin"\) \{[\s\S]*CustomerWorkspaceRedirect\("\/"\)/);
-  assert.match(resolver, /"Workspace lookup"[\s\S]*required: true/);
   assert.match(resolver, /"Organisation lookup"[\s\S]*required: true/);
-  assert.match(resolver, /"Product entitlement lookup"[\s\S]*required: true/);
+  assert.match(resolver, /"Workspace composition lookup"[\s\S]*NO OPTIONAL WORKSPACE SETTINGS/);
+  assert.match(resolver, /"Product composition lookup"[\s\S]*NO OPTIONAL ACTIVE ENTITLEMENTS/);
+  assert.match(resolver, /"Project composition lookup"[\s\S]*\.eq\("client_id", clientId\)/);
   assert.match(resolver, /Workspace status evaluation/);
   assert.match(resolver, /CustomerWorkspaceRedirect\("\/workspace\/activation"\)/);
 });
