@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CustomerWorkspaceRedirect } from "@/lib/workspace/customerAdmin";
+import { CustomerWorkspaceRedirect, resolveCustomerWorkspaceContext } from "@/lib/workspace/customerAdmin";
 import { CUSTOMER_PROJECT_STATUSES, getCustomerProjectDashboard } from "@/lib/workspace/projects";
+import { getCustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
+import { isBuildProjectType } from "@/lib/build/projects/types";
+import type { Project } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +21,19 @@ export default async function WorkspaceProjectsPage({
 }: {
   searchParams?: { search?: string; status?: string; product?: string; state?: string; deploymentType?: string; sort?: string; page?: string };
 }) {
+  let workspace;
+  try {
+    workspace = await resolveCustomerWorkspaceContext();
+  } catch (error) {
+    if (error instanceof CustomerWorkspaceRedirect) redirect(error.redirectTo);
+    throw error;
+  }
+
+  if (workspace.composition.kind !== "retail") {
+    const scope = await getCustomerWorkspaceProjectScope(workspace);
+    return <SharedWorkspaceProjects projects={scope.projects} />;
+  }
+
   let dashboard;
   try {
     dashboard = await getCustomerProjectDashboard({
@@ -135,6 +151,37 @@ export default async function WorkspaceProjectsPage({
               </tbody>
             </table>
           </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function SharedWorkspaceProjects({ projects }: { projects: Project[] }) {
+  return (
+    <div className="space-y-6">
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Customer Workspace</p>
+        <h2 className="mt-2 text-2xl font-bold text-slate-950">Projects</h2>
+        <p className="mt-2 text-sm text-slate-600">Select a canonical project to enter its product-specific environment.</p>
+      </section>
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        {projects.length === 0 ? (
+          <p className="p-8 text-center text-sm text-slate-600">No active projects are available in this workspace.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {projects.map((project) => {
+              const supported = isBuildProjectType(project.project_type) || project.project_type === "Retail Deployment";
+              return (
+                <li key={project.id} className="grid gap-3 p-5 md:grid-cols-[1fr_220px_140px_auto] md:items-center">
+                  <div><p className="font-bold text-slate-950">{project.project_name}</p>{project.project_code ? <p className="mt-1 font-mono text-xs text-slate-500">{project.project_code}</p> : null}</div>
+                  <span className="text-sm text-slate-600">{project.project_type ?? "Unclassified"}</span>
+                  <span className="w-fit rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{project.status}</span>
+                  {supported ? <Link href={`/workspace/admin/projects/${project.id}`} className="font-bold text-orange-600 hover:text-orange-700">Open project</Link> : <span className="text-sm font-semibold text-slate-400">Unavailable</span>}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
     </div>

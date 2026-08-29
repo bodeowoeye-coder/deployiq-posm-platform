@@ -28,7 +28,7 @@ test("operational navigation preserves project scope while administration stays 
   assert.match(source, /All Projects/);
   assert.match(source, /operationalNavigation\.has\(item\.href\)/);
   assert.match(source, /projectId=/);
-  assert.match(source, /CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS/);
+  assert.match(source, /workspace\.accountNavigation\.map/);
 });
 
 test("project-dependent routes consume the same projectId query scope", () => {

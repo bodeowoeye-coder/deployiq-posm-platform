@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   CUSTOMER_ADMIN_QUICK_ACTIONS,
@@ -12,6 +13,7 @@ import { getWorkspaceAnalytics } from "@/lib/workspace/analytics";
 import { getWorkspaceAlertsDashboard } from "@/lib/workspace/alerts";
 import { hasValidGps } from "@/lib/reporting";
 import { getCustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
+import { isBuildProjectType } from "@/lib/build/projects/types";
 
 export const dynamic = "force-dynamic";
 
@@ -157,7 +159,9 @@ function SharedWorkspaceHome({
           <ul className="mt-5 divide-y divide-slate-100 rounded-lg border border-slate-200">
             {projects.map((project) => (
               <li key={project.id} className="grid gap-2 p-4 sm:grid-cols-[1fr_auto_auto] sm:items-center">
-                <span className="font-bold text-slate-950">{project.project_name}</span>
+                {isBuildProjectType(project.project_type) || project.project_type === "Retail Deployment" ? (
+                  <Link href={`/workspace/admin/projects/${project.id}`} className="font-bold text-orange-700 hover:text-orange-800">{project.project_name}</Link>
+                ) : <span className="font-bold text-slate-950">{project.project_name}</span>}
                 <span className="text-sm text-slate-600">{project.project_type ?? "Unclassified"}</span>
                 <span className="w-fit rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{project.status}</span>
               </li>

@@ -21,6 +21,7 @@ type Props = {
 
 const SECTION_DESCRIPTIONS: Record<string, string> = {
   "Home / Dashboard": "Monitor workspace operations and current deployment activity.",
+  Projects: "Open canonical tenant projects and their product-specific environments.",
   "Deployment Reports": "Review tenant reports and export operational summaries.",
   Submissions: "Review deployment submissions and field evidence.",
   "Deployment Map": "View tenant-scoped deployment coverage.",
@@ -73,7 +74,10 @@ function currentAccountItem(pathname: string, navigation: CustomerWorkspaceConte
     return navigation.find((item) => item.label === "Campaign Management");
   }
   if (normalized === "/workspace/admin/projects" || normalized.startsWith("/workspace/admin/projects/")) {
-    return { label: "Create Project", href: "/workspace/admin/projects", status: "available" } as const;
+    const retailProjectAdministration = navigation.find((item) => item.label === "Create Project");
+    return retailProjectAdministration
+      ? { ...retailProjectAdministration, href: "/workspace/admin/projects" }
+      : undefined;
   }
   return undefined;
 }
@@ -107,6 +111,11 @@ export function CustomerWorkspaceShell({ workspace, projectScope, notificationEn
     groups[result.group] = [...(groups[result.group] ?? []), result];
     return groups;
   }, {}), [searchResults]);
+  const productWorkspaceLabel = workspace.composition.kind === "build"
+    ? "DeployIQ Build Workspace"
+    : workspace.composition.kind === "retail"
+      ? "DeployIQ Admin Workspace"
+      : "DeployIQ Customer Workspace";
 
   useEffect(() => {
     try {
@@ -262,7 +271,7 @@ export function CustomerWorkspaceShell({ workspace, projectScope, notificationEn
                   <Link href="/workspace/admin" prefetch className="text-orange-600 hover:text-orange-700">Home</Link>
                   {activeAccountItem ? <span className="text-slate-400"> &gt; Account Settings &gt; {activeAccountItem.label}</span> : activeItem && activeItem.href !== "/workspace/admin" ? <span className="text-slate-400"> &gt; {activeItem.label}</span> : null}
                 </nav>
-                <p className="mt-3 text-xs font-semibold uppercase tracking-widest text-orange-600">DeployIQ Admin Workspace</p>
+                <p className="mt-3 text-xs font-semibold uppercase tracking-widest text-orange-600">{productWorkspaceLabel}</p>
                 <h1 className="mt-1 text-2xl font-bold">{activeItem?.href === "/workspace/admin" && !activeAccountItem ? workspace.workspaceName : sectionLabel}</h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{sectionDescription}</p>
                 <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-600">

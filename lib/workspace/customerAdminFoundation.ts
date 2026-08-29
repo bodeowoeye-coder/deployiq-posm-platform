@@ -174,6 +174,7 @@ export const CUSTOMER_ADMIN_ACCOUNT_SETTINGS_NAV_ITEMS = [
 
 export const SHARED_WORKSPACE_NAV_ITEMS = [
   { label: "Home / Dashboard", href: "/workspace/admin", status: "active" },
+  { label: "Projects", href: "/workspace/admin/projects", status: "available" },
 ] as const;
 
 export const SHARED_WORKSPACE_ACCOUNT_SETTINGS_NAV_ITEMS = [

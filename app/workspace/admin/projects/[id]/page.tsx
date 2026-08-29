@@ -1,8 +1,12 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ProjectActionsPanel } from "@/components/workspace/ProjectActionsPanel";
-import { CustomerWorkspaceRedirect } from "@/lib/workspace/customerAdmin";
+import { BuildProjectShell } from "@/components/workspace/BuildProjectShell";
+import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
+import { isBuildProjectType } from "@/lib/build/projects/types";
+import { CustomerWorkspaceRedirect, resolveCustomerWorkspaceContext } from "@/lib/workspace/customerAdmin";
 import { getCustomerProject } from "@/lib/workspace/projects";
+import { getCustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +15,22 @@ export default async function WorkspaceProjectDetailPage({
 }: {
   params: { id: string };
 }) {
+  let workspace;
+  try {
+    workspace = await resolveCustomerWorkspaceContext();
+  } catch (error) {
+    if (error instanceof CustomerWorkspaceRedirect) redirect(error.redirectTo);
+    throw error;
+  }
+  const projectScope = await getCustomerWorkspaceProjectScope(workspace, params.id);
+  const canonicalProject = projectScope.selectedProject;
+  if (!canonicalProject) notFound();
+  if (isBuildProjectType(canonicalProject.project_type)) {
+    const overview = await getBuildProjectWorkspaceOverview(canonicalProject.id);
+    return <BuildProjectOverview overview={overview} />;
+  }
+  if (canonicalProject.project_type !== "Retail Deployment") notFound();
+
   let result;
   try {
     result = await getCustomerProject(params.id);
@@ -102,6 +122,49 @@ export default async function WorkspaceProjectDetailPage({
       </div>
     </div>
   );
+}
+
+function BuildProjectOverview({ overview }: { overview: BuildProjectWorkspaceOverview }) {
+  const metrics = [
+    ["Sites", overview.counts.sites],
+    ["Work Packages", overview.counts.workPackages],
+    ["Templates", overview.counts.templates],
+    ["Categories", overview.counts.categories],
+    ["Activities", overview.counts.activities],
+    ["Checklists", overview.counts.checklists],
+    ["Resources", overview.counts.resources],
+    ["Dependencies", overview.counts.dependencies],
+  ] as const;
+  return (
+    <BuildProjectShell project={overview.project} activeSection="overview">
+      <section className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Build foundation</p>
+          <h3 className="mt-1 text-xl font-bold text-slate-950">Project Overview</h3>
+          <p className="mt-2 text-sm text-slate-600">Authoritative foundation records currently assigned to this project.</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {metrics.map(([label, value]) => <Metric key={label} label={label} value={String(value)} />)}
+        </div>
+        <div className="grid gap-5 xl:grid-cols-2">
+          <FoundationList
+            title="Sites"
+            empty="No active Build Sites are assigned."
+            rows={overview.sites.map((site) => ({ id: site.id, name: site.name, detail: [site.siteCode, site.status].filter(Boolean).join(" · ") }))}
+          />
+          <FoundationList
+            title="Work Packages"
+            empty="No active Work Packages are assigned."
+            rows={overview.workPackages.map((workPackage) => ({ id: workPackage.id, name: workPackage.name, detail: [workPackage.code, workPackage.templateName, workPackage.status].filter(Boolean).join(" · ") }))}
+          />
+        </div>
+      </section>
+    </BuildProjectShell>
+  );
+}
+
+function FoundationList({ title, empty, rows }: { title: string; empty: string; rows: Array<{ id: string; name: string; detail: string }> }) {
+  return <section className="rounded-lg border border-slate-200 p-5"><h4 className="font-bold text-slate-950">{title}</h4>{rows.length === 0 ? <p className="mt-3 text-sm text-slate-600">{empty}</p> : <ul className="mt-3 divide-y divide-slate-100">{rows.map((row) => <li key={row.id} className="py-3"><p className="font-semibold text-slate-900">{row.name}</p><p className="mt-1 text-xs text-slate-500">{row.detail || "No additional details"}</p></li>)}</ul>}</section>;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
