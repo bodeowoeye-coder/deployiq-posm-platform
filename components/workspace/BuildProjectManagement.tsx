@@ -81,7 +81,11 @@ function WorkPackageList({ overview, base }: { overview: BuildProjectWorkspaceOv
                 <div><h4 className="font-bold text-slate-950">{workPackage.name}</h4><p className="mt-1 font-mono text-xs text-slate-500">{workPackage.code}</p></div>
                 <Hierarchy label="Parent Site" value={site ? `${site.name} · ${site.siteCode}` : "Unavailable"} />
                 <Hierarchy label="Operational Template" value={workPackage.templateName ?? "Not assigned"} />
-                <div className="flex items-center gap-4"><Status value={workPackage.status} /><Link href={`${base}?edit=${encodeURIComponent(workPackage.id)}`} className="text-sm font-bold text-orange-700 hover:text-orange-800">Edit</Link></div>
+                <div className="flex flex-wrap items-center gap-4">
+                  <Status value={workPackage.status} />
+                  {workPackage.templateId ? <Link href={`/workspace/admin/projects/${overview.project.id}/work-packages/${workPackage.id}/template`} className="text-sm font-bold text-orange-700 hover:text-orange-800">Manage Template</Link> : null}
+                  <Link href={`${base}?edit=${encodeURIComponent(workPackage.id)}`} className="text-sm font-bold text-orange-700 hover:text-orange-800">Edit</Link>
+                </div>
               </article>
             );
           })}

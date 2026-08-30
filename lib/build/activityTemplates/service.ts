@@ -427,7 +427,8 @@ export async function assertActivityTemplateAccess(params: {
     projectId: params.projectId,
     siteId: params.siteId,
     workPackageId: params.workPackageId,
-    canWrite: params.canWrite
+    canWrite: params.canWrite,
+    allowCustomerAdminWrite: Boolean(params.canWrite)
   });
 
   const templateId = textValue(params.templateId);

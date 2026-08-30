@@ -100,7 +100,8 @@ export async function assertCategoryAccess(params: {
     projectId: params.projectId,
     siteId: params.siteId,
     workPackageId: params.workPackageId,
-    canWrite: params.canWrite
+    canWrite: params.canWrite,
+    allowCustomerAdminWrite: Boolean(params.canWrite)
   });
 
   const templateId = textValue(params.templateId);
@@ -111,6 +112,12 @@ export async function assertCategoryAccess(params: {
     clientId: access.project.client_id,
     includeArchived: true
   });
+  if (params.canWrite && !access.authContext.is_admin) {
+    if (template.is_global || template.client_id !== access.project.client_id) {
+      throw new AccessControlError("Global or externally owned templates are read-only in this workspace.", 403);
+    }
+    if (template.archived_at) throw new AccessControlError("Archived templates cannot be modified.", 400);
+  }
 
   let category: BuildActivityCategory | null = null;
   const categoryId = textValue(params.categoryId);

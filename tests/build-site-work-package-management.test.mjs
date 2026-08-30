@@ -43,11 +43,12 @@ test("S3A-4 Work Package reads and writes preserve full Site ancestry", () => {
   assert.doesNotMatch(workPackageRoute, /body\.clientId/);
 });
 
-test("S3A-4 customer management does not unlock Core Admin template authoring", () => {
+test("S3A-4 customer management keeps global and Core Admin template authority protected", () => {
   const authoringCalls = [...templateService.matchAll(/assertWorkPackageAccess\(\{[\s\S]*?canWrite: true[\s\S]*?\}\);/g)].map((match) => match[0]);
   assert.ok(authoringCalls.length >= 4);
-  assert.equal(authoringCalls.filter((call) => /allowCustomerAdminWrite: true/.test(call)).length, 1);
+  assert.ok(authoringCalls.filter((call) => /allowCustomerAdminWrite: true/.test(call)).length >= 1);
   assert.match(templateService, /export async function assignTemplateToWorkPackage[\s\S]*allowCustomerAdminWrite: true/);
+  assert.match(templateService, /Global or externally owned templates are read-only in this workspace/);
 });
 
 test("S3A-4 template assignment admits only active tenant or global templates", () => {

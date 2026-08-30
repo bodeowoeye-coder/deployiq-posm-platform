@@ -444,7 +444,8 @@ export async function assertTemplateResourceRequirementAccess(params: {
     projectId: params.projectId,
     siteId: params.siteId,
     workPackageId: params.workPackageId,
-    canWrite: params.canWrite
+    canWrite: params.canWrite,
+    allowCustomerAdminWrite: Boolean(params.canWrite)
   });
 
   const template = await getVisibleTemplateOrThrow({
@@ -452,6 +453,12 @@ export async function assertTemplateResourceRequirementAccess(params: {
     clientId: access.project.client_id,
     includeArchived: true
   });
+  if (params.canWrite && !access.authContext.is_admin) {
+    if (template.is_global || template.client_id !== access.project.client_id) {
+      throw new AccessControlError("Global or externally owned templates are read-only in this workspace.", 403);
+    }
+    if (template.archived_at) throw new AccessControlError("Archived templates cannot be modified.", 400);
+  }
 
   let requirement: BuildResourceRequirement | null = null;
   const requirementId = textValue(params.requirementId);

@@ -357,7 +357,8 @@ export async function createTemplate(params: {
     projectId: params.input.projectId,
     siteId: params.input.siteId,
     workPackageId: params.input.workPackageId,
-    canWrite: true
+    canWrite: true,
+    allowCustomerAdminWrite: true
   });
 
   const code = normalizeCode(params.input.code);
@@ -365,7 +366,7 @@ export async function createTemplate(params: {
   if (!code) throw new AccessControlError("Template code is required.", 400);
   if (!name) throw new AccessControlError("Template name is required.", 400);
 
-  const isGlobal = Boolean(params.input.isGlobal);
+  const isGlobal = access.authContext.is_admin && Boolean(params.input.isGlobal);
   const payload = {
     client_id: isGlobal ? null : access.project.client_id,
     code,
@@ -398,7 +399,8 @@ export async function updateTemplate(params: {
     projectId: params.input.projectId,
     siteId: params.input.siteId,
     workPackageId: params.input.workPackageId,
-    canWrite: true
+    canWrite: true,
+    allowCustomerAdminWrite: true
   });
 
   const existing = await getVisibleTemplateOrThrow({
@@ -407,6 +409,12 @@ export async function updateTemplate(params: {
     includeGlobal: true,
     includeArchived: true
   });
+  if (!access.authContext.is_admin && (existing.is_global || existing.client_id !== access.project.client_id)) {
+    throw new AccessControlError("Global or externally owned templates are read-only in this workspace.", 403);
+  }
+  if (existing.archived_at || existing.status === "archived") {
+    throw new AccessControlError("Archived templates cannot be modified.", 400);
+  }
 
   const updates: Record<string, unknown> = {
     updated_at: new Date().toISOString()
@@ -448,7 +456,8 @@ export async function archiveTemplate(params: {
     projectId: params.projectId,
     siteId: params.siteId,
     workPackageId: params.workPackageId,
-    canWrite: true
+    canWrite: true,
+    allowCustomerAdminWrite: true
   });
 
   const existing = await getVisibleTemplateOrThrow({
@@ -457,6 +466,9 @@ export async function archiveTemplate(params: {
     includeGlobal: true,
     includeArchived: true
   });
+  if (!access.authContext.is_admin && (existing.is_global || existing.client_id !== access.project.client_id)) {
+    throw new AccessControlError("Global or externally owned templates are read-only in this workspace.", 403);
+  }
 
   const supabase = createAdminSupabase();
   const { data, error } = await supabase
