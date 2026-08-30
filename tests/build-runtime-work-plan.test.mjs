@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const migration = read("supabase/migrations/20260830010000_add_build_runtime_work_plan_foundation.sql");
+const service = read("lib/build/runtime/service.ts");
+const route = read("app/api/build/work-plans/route.ts");
+const page = read("app/workspace/admin/projects/[id]/[section]/page.tsx");
+const ui = read("components/workspace/BuildRuntimeWorkPlan.tsx");
+
+test("S3A-6 uses the exact Build project allowlist", () => assert.match(migration, /project_type in \('Construction', 'Real Estate', 'Facility Management'\)/));
+test("S3A-6 derives tenant ancestry from the canonical project", () => assert.match(migration, /p\.client_id[\s\S]*wp\.client_id = p\.client_id/));
+test("S3A-6 validates Site ancestry", () => assert.match(migration, /s\.project_id = p\.id and s\.client_id = p\.client_id/));
+test("S3A-6 validates Work Package ancestry", () => assert.match(migration, /wp\.site_id = s\.id and wp\.project_id = p\.id/));
+test("S3A-6 requires an active assigned template", () => assert.match(migration, /t\.archived_at is null and t\.status = 'active'/));
+test("S3A-6 permits immutable global template sources", () => assert.match(migration, /t\.is_global and t\.client_id is null/));
+test("S3A-6 permits same-tenant template sources", () => assert.match(migration, /not t\.is_global and t\.client_id = p\.client_id/));
+test("S3A-6 validates source configuration before the RPC", () => assert.match(service, /preview\.templateValidation\.errors\.length > 0/));
+test("S3A-6 creation is one atomic database function", () => assert.match(migration, /function public\.create_build_work_plan[\s\S]*returns uuid[\s\S]*language plpgsql/));
+test("S3A-6 has one active Work Plan per Work Package", () => assert.match(migration, /unique index build_work_plans_active_work_package_uidx/));
+test("S3A-6 locks and reuses an existing plan", () => { assert.match(migration, /for update/); assert.match(migration, /if v_plan_id is not null then return v_plan_id/); });
+test("S3A-6 snapshots runtime Activity fields", () => assert.match(migration, /category_code, category_name[\s\S]*planned_duration/));
+test("S3A-6 snapshots runtime Checklist fields", () => assert.match(migration, /requires_photo, requires_comment, acceptance_type/));
+test("S3A-6 maps dependency definitions to runtime Activity IDs", () => assert.match(migration, /predecessor\.source_activity_template_id = dependency\.predecessor_activity_template_id/));
+test("S3A-6 snapshots Resource Requirements", () => assert.match(migration, /resource_code, resource_name, resource_type/));
+test("S3A-6 runtime copies are independent from later template edits", () => { assert.match(migration, /source_fingerprint/); assert.doesNotMatch(service, /update\("build_runtime_/); });
+test("S3A-6 excludes Retail", () => assert.doesNotMatch(migration, /Retail Deployment/));
+test("S3A-6 malformed project types fail closed", () => assert.match(migration, /project_type in/));
+test("S3A-6 rejects archived Work Packages", () => assert.match(migration, /wp\.archived_at is null and wp\.status <> 'archived'/));
+test("S3A-6 rejects archived templates", () => assert.match(migration, /t\.archived_at is null/));
+test("S3A-6 rejects cross-tenant sources", () => assert.match(migration, /WORK_PLAN_SOURCE_NOT_ELIGIBLE/));
+test("S3A-6 workspace route uses canonical authority", () => { assert.match(page, /getBuildProjectWorkspaceOverview/); assert.match(service, /assertWorkPackageAccess/); });
+test("S3A-6 introduces no legacy client dependency", () => assert.doesNotMatch([route, page, ui, service].join("\n"), /["'`]\/client(?:\/|["'`])/));
+test("S3A-6 exposes no execution mutation controls", () => assert.doesNotMatch(ui, /Start Activity|Complete Activity|progress percentage|evidence upload|site diary/i));
+test("S3A-6 runtime tables deny browser CRUD", () => { assert.match(migration, /revoke all on table public\.build_work_plans from public, anon, authenticated/); assert.match(migration, /grant execute on function public\.create_build_work_plan[\s\S]*to service_role/); });
+test("S3A-6 accepted Work Plan copy and counts use customer-natural language", () => {
+  assert.match(ui, /Planned activities generated from the approved Operational Template\./);
+  assert.match(ui, /countLabel\(activity\.checklist_count, "Checklist"\)/);
+  assert.match(ui, /countLabel\(activity\.resource_requirement_count, "Resource Requirement"\)/);
+  assert.match(ui, /countLabel\(activity\.predecessor_count, "Predecessor"\)/);
+  assert.match(ui, /value === 1 \? "" : "s"/);
+});

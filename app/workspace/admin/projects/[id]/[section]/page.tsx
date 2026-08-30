@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { BuildProjectShell, type BuildProjectSection } from "@/components/workspace/BuildProjectShell";
 import { BuildProjectManagement } from "@/components/workspace/BuildProjectManagement";
+import { BuildRuntimeWorkPlan } from "@/components/workspace/BuildRuntimeWorkPlan";
+import { getWorkPlan } from "@/lib/build/runtime/service";
 import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
 
 export const dynamic = "force-dynamic";
@@ -18,8 +20,10 @@ const BUILD_PROJECT_SECTIONS = new Set<BuildProjectSection>([
 
 export default async function BuildProjectSectionPage({
   params,
+  searchParams,
 }: {
   params: { id: string; section: string };
+  searchParams: { workPackage?: string };
 }) {
   if (!BUILD_PROJECT_SECTIONS.has(params.section as BuildProjectSection)) notFound();
 
@@ -27,17 +31,19 @@ export default async function BuildProjectSectionPage({
   const overview = await getBuildProjectWorkspaceOverview(params.id);
   return (
     <BuildProjectShell project={overview.project} activeSection={section}>
-      <BuildProjectSectionContent section={section} overview={overview} />
+      <BuildProjectSectionContent section={section} overview={overview} selectedWorkPackageId={searchParams.workPackage} />
     </BuildProjectShell>
   );
 }
 
-function BuildProjectSectionContent({
+async function BuildProjectSectionContent({
   section,
   overview,
+  selectedWorkPackageId,
 }: {
   section: BuildProjectSection;
   overview: BuildProjectWorkspaceOverview;
+  selectedWorkPackageId?: string;
 }) {
   if (section === "sites") {
     return <BuildProjectManagement mode="sites" overview={overview} />;
@@ -47,11 +53,18 @@ function BuildProjectSectionContent({
     return <BuildProjectManagement mode="work-packages" overview={overview} />;
   }
 
-  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages">, { title: string; description: string }> = {
-    activities: {
-      title: "Activities",
-      description: `${overview.counts.activities} activity definition${overview.counts.activities === 1 ? " is" : "s are"} available in the assigned Build template foundation. Customer activity execution arrives in a later Build phase.`,
-    },
+  if (section === "activities") {
+    const selected = overview.workPackages.find((item) => item.id === selectedWorkPackageId)
+      ?? overview.workPackages[0]
+      ?? null;
+    const site = selected ? overview.sites.find((item) => item.id === selected.siteId) ?? null : null;
+    const plan = selected && site
+      ? await getWorkPlan({ projectId: overview.project.id, siteId: site.id, workPackageId: selected.id })
+      : null;
+    return <BuildRuntimeWorkPlan overview={overview} selectedWorkPackageId={selected?.id ?? null} plan={plan} />;
+  }
+
+  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities">, { title: string; description: string }> = {
     resources: {
       title: "Resources",
       description: `${overview.counts.resources} eligible resource definition${overview.counts.resources === 1 ? " is" : "s are"} available to this tenant. Project resource planning arrives in a later Build phase.`,
