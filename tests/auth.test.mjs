@@ -398,9 +398,18 @@ describe("mandatory password change routing", () => {
     assert.match(login, /url\.origin === window\.location\.origin/);
     assert.match(login, /if \(!isSafeInternalDestination\(responseRedirectTo\)\) \{/);
     assert.match(login, /Sign in succeeded, but DeployIQ could not determine where to send you\. Please try again\./);
-    assert.match(login, /navigationMethod: "router\.replace"/);
+    assert.match(login, /navigationMethod: "window\.location\.replace"/);
     assert.match(login, /openWorkspaceDestination\(redirectTo, "session-created"\)/);
     assert.doesNotMatch(login, /openWorkspaceDestination\(redirectTo, "session-created"\);\s*setHasCompletedInitialWorkspaceLoad\(true\)/);
+  });
+
+  test("authenticated identity replacement cannot reuse the previous tenant workspace tree", () => {
+    const login = readFileSync(new URL("../app/login/page.tsx", import.meta.url), "utf8");
+    const transition = login.match(/function openWorkspaceDestination[\s\S]*?\n  }/)?.[0] ?? "";
+    assert.match(transition, /window\.location\.replace\(destination\)/);
+    assert.doesNotMatch(transition, /router\.(?:push|replace)\(destination\)/);
+    assert.ok(login.indexOf('fetch("/api/auth/session"') < login.indexOf('openWorkspaceDestination(redirectTo, "session-created")'));
+    assert.match(login, /navigationMethod: "window\.location\.replace"/);
   });
 
   test("login navigation diagnostics distinguish response redirect from resolved destination", () => {

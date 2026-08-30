@@ -120,7 +120,10 @@ async function linkDirectoryContents(sourceDirectory, targetDirectory) {
     if (entry.isDirectory()) {
       await linkDirectoryContents(source, target);
     } else {
-      await symlink(source, target, "file");
+      try { await symlink(source, target, "file"); }
+      catch (error) {
+        if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST")) throw error;
+      }
     }
   }
 }
@@ -141,11 +144,18 @@ export async function createIsolatedProjectView(projectRoot, temporaryRoot = tmp
   return isolatedRoot;
 }
 
+export function startIsolatedAppSynchronizer(projectRoot, isolatedRoot, intervalMs = 250) {
+  const synchronize = () => linkDirectoryContents(path.join(projectRoot, "app"), path.join(isolatedRoot, "app"));
+  const timer = setInterval(() => { synchronize().catch(() => {}); }, intervalMs);
+  return { synchronize, close: () => clearInterval(timer) };
+}
+
 async function run() {
   const projectRoot = process.cwd();
   const stagingEnvironment = loadAndValidateStagingEnvironment({ projectRoot });
   const childEnvironment = buildIsolatedChildEnvironment(stagingEnvironment);
   const isolatedRoot = await createIsolatedProjectView(projectRoot);
+  const appSynchronizer = startIsolatedAppSynchronizer(projectRoot, isolatedRoot);
   const nextCli = path.join(projectRoot, "node_modules", "next", "dist", "bin", "next");
 
   console.log(`Starting isolated staging development server for ${STAGING_PROJECT_REF}.`);
@@ -170,6 +180,7 @@ async function run() {
       child.once("exit", (code, signal) => resolve(signal ? 1 : code ?? 1));
     });
   } finally {
+    appSynchronizer.close();
     await rm(isolatedRoot, { recursive: true, force: true });
   }
 }

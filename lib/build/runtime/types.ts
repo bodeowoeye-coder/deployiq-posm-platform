@@ -13,9 +13,35 @@ export type BuildRuntimeActivity = {
   planned_duration: number | null;
   duration_unit: "hours" | "days" | "weeks";
   status: "not_started" | "in_progress" | "completed" | "blocked";
+  activity_owner_user_id: string | null;
+  supervisor_user_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  blocked_at: string | null;
+  blocker_reason: string | null;
   checklist_count: number;
   resource_requirement_count: number;
   predecessor_count: number;
+};
+
+export type BuildRuntimePerson = { userId: string; name: string; roleLabel: string };
+export type BuildRuntimeActivityEvent = {
+  id: string; event_type: string; previous_status: string | null; resulting_status: string | null;
+  actor_user_id: string; activity_owner_user_id: string | null; supervisor_user_id: string | null;
+  note: string | null; occurred_at: string; event_sequence: number | null;
+};
+export type BuildRuntimeActivityExecution = {
+  activity: BuildRuntimeActivity;
+  owner: BuildRuntimePerson | null;
+  supervisor: BuildRuntimePerson | null;
+  eligibleOwners: BuildRuntimePerson[];
+  eligibleSupervisors: BuildRuntimePerson[];
+  events: Array<BuildRuntimeActivityEvent & { actorName: string }>;
+  dependencyTypes: string[];
+  predecessors: Array<{ id: string; name: string; status: BuildRuntimeActivity["status"]; dependencyType: string }>;
+  checklistItems: Array<{ id: string; item: string; mandatory: boolean; status: string }>;
+  resourceRequirements: Array<{ id: string; name: string; type: string; quantity: number; unit: string | null; mandatory: boolean }>;
+  hasLegacyAmbiguousOrder: boolean;
 };
 
 export type BuildWorkPlan = {
@@ -38,6 +64,10 @@ export type BuildWorkPlan = {
     checklists: number;
     dependencies: number;
     resourceRequirements: number;
+    notStarted: number;
+    inProgress: number;
+    completed: number;
+    blocked: number;
   };
   activities: BuildRuntimeActivity[];
 };

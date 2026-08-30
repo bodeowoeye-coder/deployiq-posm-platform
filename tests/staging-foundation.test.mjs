@@ -8,6 +8,7 @@ import { assertSafeSupabaseTarget } from "../scripts/lib/assert-safe-supabase-ta
 import {
   buildIsolatedChildEnvironment,
   createIsolatedProjectView,
+  startIsolatedAppSynchronizer,
   loadAndValidateStagingEnvironment,
   STAGING_APP_URL,
 } from "../scripts/run-staging-dev.mjs";
@@ -125,9 +126,17 @@ test("dev:staging exposes App Router directories without a top-level app symlink
     assert.equal(lstatSync(path.join(isolatedRoot, "app")).isDirectory(), true);
     assert.equal(lstatSync(path.join(isolatedRoot, "app")).isSymbolicLink(), false);
     assert.equal(lstatSync(path.join(isolatedRoot, "app/onboarding")).isDirectory(), true);
+    assert.equal(lstatSync(path.join(isolatedRoot, "app/onboarding")).isSymbolicLink(), false);
     assert.equal(lstatSync(path.join(isolatedRoot, "app/onboarding/page.tsx")).isSymbolicLink(), true);
     for (const route of ["app/onboarding/page.tsx", "app/portal/page.tsx", "app/login/page.tsx", "app/workspace/admin/page.tsx", "app/api/onboarding/latest/route.ts"])
       assert.doesNotThrow(() => readFileSync(path.join(isolatedRoot, route)));
+    const lateRoute = path.join(sourceRoot, "app/workspace/admin/projects/[id]/activities/[activityId]");
+    mkdirSync(lateRoute, { recursive: true });
+    writeFileSync(path.join(lateRoute, "page.tsx"), "export default function Activity() { return null; }");
+    const synchronizer = startIsolatedAppSynchronizer(sourceRoot, isolatedRoot, 60_000);
+    await synchronizer.synchronize();
+    synchronizer.close();
+    assert.doesNotThrow(() => readFileSync(path.join(isolatedRoot, "app/workspace/admin/projects/[id]/activities/[activityId]/page.tsx")));
     assert.throws(() => lstatSync(path.join(isolatedRoot, ".env.local")));
     assert.throws(() => lstatSync(path.join(isolatedRoot, ".env.staging.local")));
   } finally {

@@ -139,7 +139,11 @@ export default function LoginPage() {
       attempt: workspaceOpenAttemptRef.current,
       maxAttempts: MAX_WORKSPACE_OPEN_ATTEMPTS,
     });
-    router.replace(destination);
+    // Authentication is a tenant-boundary transition. A full document
+    // replacement guarantees the next workspace render is requested with the
+    // newly replaced session cookies and cannot reuse the previous identity's
+    // App Router cache or mounted workspace state.
+    window.location.replace(destination);
   }
 
   async function signOutAfterOpeningTrouble() {
@@ -480,7 +484,7 @@ export default function LoginPage() {
         sessionPostOk: true,
         responseRedirectTo,
         resolvedDestination: redirectTo,
-        navigationMethod: "router.replace",
+        navigationMethod: "window.location.replace",
         navigationStarted: true,
       });
       console.info("[login-timing]", {
