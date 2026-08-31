@@ -71,6 +71,9 @@ async function hydrateWorkPlan(row: Record<string, unknown>): Promise<BuildWorkP
       inProgress: activities.filter((item) => item.status === "in_progress").length,
       completed: activities.filter((item) => item.status === "completed").length,
       blocked: activities.filter((item) => item.status === "blocked").length,
+      submittedForReview: activities.filter((item) => item.status === "submitted_for_review").length,
+      changesRequired: activities.filter((item) => item.status === "changes_required").length,
+      approved: activities.filter((item) => item.status === "approved").length,
     },
     activities,
   };
@@ -120,6 +123,9 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
   const { data: evidenceRows, error: evidenceError } = await supabase.from("build_runtime_evidence").select("*")
     .eq("runtime_activity_id", activity.id).is("archived_at", null).order("created_at");
   if (evidenceError) throw new AccessControlError("Activity evidence could not be loaded.", 500);
+  const { data: inspectionRows, error: inspectionError } = await supabase.from("build_runtime_inspections").select("*")
+    .eq("runtime_activity_id", activity.id).order("reviewed_at");
+  if (inspectionError) throw new AccessControlError("Activity inspections could not be loaded.", 500);
   const evidence = await Promise.all((evidenceRows ?? []).map(async (item): Promise<BuildRuntimeEvidence> => {
     const storagePath = text(item.storage_path);
     const signed = storagePath ? await supabase.storage.from(BUILD_EVIDENCE_BUCKET).createSignedUrl(storagePath, 300) : null;
@@ -155,6 +161,12 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
       acceptanceType: text(item.acceptance_type) || null, status: text(item.status) as BuildRuntimeActivityExecution["checklistItems"][number]["status"],
       resultNote: text(item.result_note) || null, resolvedBy: text(item.resolved_by) || null, resolvedAt: text(item.resolved_at) || null })),
     evidence,
+    inspections: (inspectionRows ?? []).map((item) => ({
+      id: text(item.id), reviewerUserId: text(item.reviewer_user_id),
+      reviewerName: allPeople.get(text(item.reviewer_user_id))?.name ?? "Workspace reviewer",
+      outcome: text(item.outcome) as BuildRuntimeActivityExecution["inspections"][number]["outcome"],
+      comments: text(item.comments) || null, reviewedAt: text(item.reviewed_at),
+    })),
     resourceRequirements: (resourceRequirements ?? []).map((item) => ({ id: text(item.id), name: text(item.resource_name), type: text(item.resource_type), quantity: Number(item.quantity), unit: text(item.unit_of_measure) || null, mandatory: Boolean(item.mandatory) })),
     hasLegacyAmbiguousOrder: [...legacyTimestampCounts.values()].some((count) => count > 1),
   };
@@ -329,7 +341,7 @@ export async function applyRuntimeActivityAction(params: { request?: Request; pr
       .eq("client_id", access.project.client_id)
       .maybeSingle();
     if (activityError || !activity) throw new AccessControlError("Activity is unavailable.", 404);
-    if (activity.status === "completed") throw new AccessControlError("Completed Activity responsibility is read-only.", 400);
+    if (["completed", "submitted_for_review", "approved"].includes(text(activity.status))) throw new AccessControlError("Activity responsibility is read-only in its current review state.", 400);
   }
   const { data, error } = await createAdminSupabase().rpc("apply_build_runtime_activity_action", {
     p_runtime_activity_id: params.activityId, p_action: params.action, p_actor_user_id: access.authContext.user_id,
@@ -341,11 +353,77 @@ export async function applyRuntimeActivityAction(params: { request?: Request; pr
       BUILD_ACTIVITY_CHECKLIST_INCOMPLETE: "Complete the required checklist before this Activity can be completed.",
       BUILD_ACTIVITY_BLOCKER_REASON_REQUIRED: "Add a blocker reason before reporting this Activity as blocked.",
       BUILD_ACTIVITY_INVALID_TRANSITION: "That Activity action is not valid for its current status.",
+      BUILD_ACTIVITY_REVIEW_REQUIRED: "Submit this Activity for review instead of completing it directly.",
     };
     const key = Object.keys(messages).find((candidate) => error.message.includes(candidate));
     throw new AccessControlError(key ? messages[key] : "The Activity action could not be completed.", key ? 400 : 500);
   }
   if (text(data) !== params.activityId) throw new AccessControlError("The Activity update could not be verified.", 500);
+  return getRuntimeActivityExecution(params);
+}
+
+async function resolveRuntimeReviewAccess(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string }) {
+  const access = await assertWorkPackageAccess({ ...params, canWrite: false });
+  const plan = await loadWorkPlanByScope({ clientId: access.project.client_id, projectId: access.project.id, siteId: access.site.id, workPackageId: access.workPackage!.id });
+  if (!plan) throw new AccessControlError("Work Plan is unavailable.", 404);
+  const { data: activity, error } = await createAdminSupabase().from("build_runtime_activities").select("id,status,requires_approval,activity_owner_user_id,supervisor_user_id")
+    .eq("id", params.activityId).eq("work_plan_id", text(plan.id)).eq("client_id", access.project.client_id).maybeSingle();
+  if (error || !activity) throw new AccessControlError("Activity is unavailable.", 404);
+  return { access, activity };
+}
+
+export async function submitRuntimeActivityForReview(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string }) {
+  const { access } = await resolveRuntimeReviewAccess(params);
+  const { data, error } = await createAdminSupabase().rpc("submit_build_runtime_activity_for_review", {
+    p_runtime_activity_id: params.activityId, p_actor_user_id: access.authContext.user_id,
+  });
+  const messages: Record<string, string> = {
+    BUILD_ACTIVITY_REVIEW_NOT_REQUIRED: "This Activity uses direct completion and does not require formal review.",
+    BUILD_ACTIVITY_REVIEW_STATE_INVALID: "This Activity is not ready to be submitted for review.",
+    BUILD_ACTIVITY_CHECKLIST_INCOMPLETE: "Complete the mandatory checklist and resolve failed items before review.",
+    BUILD_CHECKLIST_COMMENT_REQUIRED: "Add all required Checklist comments before review.",
+    BUILD_CHECKLIST_PHOTO_REQUIRED: "Attach each required Checklist Photo before review.",
+    BUILD_ACTIVITY_PHOTO_REQUIRED: "Attach the required Activity Photo before review.",
+    BUILD_ACTIVITY_ACTION_FORBIDDEN: "Only assigned responsibility or workspace management may submit this Activity.",
+  };
+  if (error) {
+    const key = Object.keys(messages).find((candidate) => error.message.includes(candidate));
+    throw new AccessControlError(key ? messages[key] : "The Activity could not be submitted for review.", key ? 400 : 500);
+  }
+  if (text(data) !== params.activityId) throw new AccessControlError("Review submission could not be verified.", 500);
+  return getRuntimeActivityExecution(params);
+}
+
+export async function recordRuntimeInspection(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; outcome: string; comments?: string | null }) {
+  const { access } = await resolveRuntimeReviewAccess(params);
+  const { data, error } = await createAdminSupabase().rpc("record_build_runtime_inspection", {
+    p_runtime_activity_id: params.activityId, p_outcome: params.outcome,
+    p_actor_user_id: access.authContext.user_id, p_comments: text(params.comments) || null,
+  });
+  const messages: Record<string, string> = {
+    BUILD_INSPECTION_REVIEW_FORBIDDEN: "Only the assigned Supervisor or workspace management may inspect this Activity.",
+    BUILD_INSPECTION_STALE_ACTIVITY_STATE: "This Activity is no longer awaiting review.",
+    BUILD_INSPECTION_OUTCOME_INVALID: "Select a valid inspection outcome.",
+    BUILD_INSPECTION_COMMENT_REQUIRED: "Add a meaningful observation when changes are required.",
+  };
+  if (error) {
+    const key = Object.keys(messages).find((candidate) => error.message.includes(candidate));
+    throw new AccessControlError(key ? messages[key] : "The Inspection decision could not be recorded.", key ? 400 : 500);
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text(data))) {
+    throw new AccessControlError("The Inspection decision could not be verified.", 500);
+  }
+  return getRuntimeActivityExecution(params);
+}
+
+export async function resumeRuntimeActivityCorrections(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string }) {
+  const { access } = await resolveRuntimeReviewAccess(params);
+  const { data, error } = await createAdminSupabase().rpc("resume_build_runtime_activity_corrections", {
+    p_runtime_activity_id: params.activityId, p_actor_user_id: access.authContext.user_id,
+  });
+  if (error) throw new AccessControlError(error.message.includes("BUILD_ACTIVITY_REVIEW_STATE_INVALID")
+    ? "This Activity is not awaiting corrective work." : "Corrective work could not be resumed.", error.message.includes("BUILD_ACTIVITY_REVIEW_STATE_INVALID") ? 400 : 500);
+  if (text(data) !== params.activityId) throw new AccessControlError("Corrective work could not be verified.", 500);
   return getRuntimeActivityExecution(params);
 }
 

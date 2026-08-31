@@ -14,6 +14,7 @@ playwright-report/
 
 .env.loca
 .DS_Store
+.vscode/
 tsconfig.tsbuildinfo
 qa-report.json
 qa-screenshots/

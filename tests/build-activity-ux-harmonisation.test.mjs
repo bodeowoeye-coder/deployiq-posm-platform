@@ -29,14 +29,14 @@ test("dedicated Activity view preserves ancestry and return path", () => {
   for (const value of ["projectName", "siteName", "workPackageName", "Back to Activities"]) assert.match(activity, new RegExp(value));
 });
 test("Activity navigation has the accepted long-term sections", () => {
-  for (const label of ["Overview", "Responsibility", "Execution", "Checklist", "Evidence", "Resources", "Activity History"]) assert.match(activity, new RegExp(`label: "${label}"`));
+  for (const label of ["Overview", "Responsibility", "Execution", "Checklist", "Evidence", "Inspection", "Resources", "Activity History"]) assert.match(activity, new RegExp(`label: "${label}"`));
 });
 test("Overview is a read-only operational summary", () => {
   for (const label of ["Activity Name", "Activity Code", "Category", "Current Status", "Planned Duration", "Actual Start", "Actual Completion", "Dependencies", "Checklist Requirements", "Resource Requirements", "Activity Owner", "Supervisor"]) assert.match(activity, new RegExp(`label="${label}"`));
 });
-test("completed Activity responsibility is locked", () => {
-  assert.match(activity, /activity\.status === "completed"[\s\S]*Completed Activity responsibility is read-only/);
-  assert.match(service, /params\.action === "assign_responsibility"[\s\S]*activity\.status === "completed"[\s\S]*Completed Activity responsibility is read-only/);
+test("completed and review-locked Activity responsibility is read-only", () => {
+  assert.match(activity, /\["completed", "submitted_for_review", "approved"\]\.includes\(activity\.status\)[\s\S]*Activity responsibility is read-only in its current review state/);
+  assert.match(service, /params\.action === "assign_responsibility"[\s\S]*\["completed", "submitted_for_review", "approved"\]\.includes[\s\S]*Activity responsibility is read-only in its current review state/);
 });
 test("Execution exposes state-valid actions and dependency-aware Start UX", () => {
   for (const action of ["Start Activity", "Complete Activity", "Report Blocker", "Resume Activity"]) assert.match(activity, new RegExp(action));
@@ -62,7 +62,7 @@ test("customer time presentation omits seconds", () => {
   assert.match(activity, /minute: "2-digit"/);
   assert.doesNotMatch(activity, /second:/);
 });
-test("Activity UX has no client portal or post-S3A-8 mutation surface", () => {
+test("Activity UX has no client portal or post-S3A-9A exception surface", () => {
   assert.doesNotMatch([list, activity, route, service].join("\n"), /["'`]\/client(?:\/|["'`])/);
-  assert.doesNotMatch(activity, /complete_checklist|capture_evidence|inspection|approval|escalation/i);
+  assert.doesNotMatch(activity, /complete_checklist|capture_evidence|exception management|escalation/i);
 });

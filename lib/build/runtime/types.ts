@@ -12,7 +12,8 @@ export type BuildRuntimeActivity = {
   description: string | null;
   planned_duration: number | null;
   duration_unit: "hours" | "days" | "weeks";
-  status: "not_started" | "in_progress" | "completed" | "blocked";
+  status: "not_started" | "in_progress" | "completed" | "blocked" | "submitted_for_review" | "changes_required" | "approved";
+  requires_approval: boolean;
   activity_owner_user_id: string | null;
   supervisor_user_id: string | null;
   started_at: string | null;
@@ -46,8 +47,18 @@ export type BuildRuntimeActivityExecution = {
     resultNote: string | null; resolvedBy: string | null; resolvedAt: string | null;
   }>;
   evidence: BuildRuntimeEvidence[];
+  inspections: BuildRuntimeInspection[];
   resourceRequirements: Array<{ id: string; name: string; type: string; quantity: number; unit: string | null; mandatory: boolean }>;
   hasLegacyAmbiguousOrder: boolean;
+};
+
+export type BuildRuntimeInspection = {
+  id: string;
+  reviewerUserId: string;
+  reviewerName: string;
+  outcome: "accepted" | "changes_required";
+  comments: string | null;
+  reviewedAt: string;
 };
 
 export type BuildRuntimeEvidenceType = "photo" | "video" | "document" | "note";
@@ -99,6 +110,9 @@ export type BuildWorkPlan = {
     inProgress: number;
     completed: number;
     blocked: number;
+    submittedForReview: number;
+    changesRequired: number;
+    approved: number;
   };
   activities: BuildRuntimeActivity[];
 };
