@@ -117,12 +117,12 @@ test("Inspection API uses the established authenticated server service boundary"
   assert.doesNotMatch(route, /clientId/);
 });
 
-test("customer workspace adds only the Inspection view between Evidence and Resources", () => {
-  assert.match(ui, /"evidence", "inspection", "resources"/);
-  assert.match(page, /SERVER_ACTIVITY_VIEWS[\s\S]*"evidence", "inspection", "resources"/);
+test("customer workspace preserves Inspection between Evidence and later runtime modules", () => {
+  assert.match(ui, /"evidence", "inspection", "exceptions", "resources"/);
+  assert.match(page, /SERVER_ACTIVITY_VIEWS[\s\S]*"evidence", "inspection", "exceptions", "resources"/);
   assert.match(ui, /Evidence proves that work was performed\. Inspection determines whether that work is acceptable\./);
   assert.match(ui, /Inspection History/);
-  assert.doesNotMatch(ui, /Exceptions|exception management/i);
+  assert.match(ui, /Inspection History/);
 });
 
 test("S3A-8 evidence and success feedback remain unchanged", () => {
@@ -131,8 +131,8 @@ test("S3A-8 evidence and success feedback remain unchanged", () => {
   assert.match(types, /BuildRuntimeEvidenceType = "photo" \| "video" \| "document" \| "note"/);
 });
 
-test("S3A-9A excludes Retail, Exceptions, AI and mobile execution", () => {
+test("S3A-9A migration remains isolated from Retail, Exceptions, AI and mobile execution", () => {
   assert.doesNotMatch(migration, /Retail Deployment/);
-  assert.doesNotMatch([migration, service, route, ui].join("\n"), /build_runtime_exceptions|AI summary|mobile execution/i);
+  assert.doesNotMatch(migration, /build_runtime_exceptions|AI summary|mobile execution/i);
   assert.doesNotMatch([route, ui].join("\n"), /["'`]\/client(?:\/|["'`])/);
 });

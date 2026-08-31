@@ -5,7 +5,7 @@ import { getRuntimeActivityExecution, getRuntimeActivityProjectScope } from "@/l
 import { getBuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
 
 export const dynamic = "force-dynamic";
-const SERVER_ACTIVITY_VIEWS = new Set<BuildActivityView>(["overview", "responsibility", "execution", "checklist", "evidence", "inspection", "resources", "history"]);
+const SERVER_ACTIVITY_VIEWS = new Set<BuildActivityView>(["overview", "responsibility", "execution", "checklist", "evidence", "inspection", "exceptions", "resources", "history"]);
 
 export default async function BuildRuntimeActivityPage({ params, searchParams }: {
   params: { id: string; activityId: string };

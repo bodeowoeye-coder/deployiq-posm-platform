@@ -126,6 +126,9 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
   const { data: inspectionRows, error: inspectionError } = await supabase.from("build_runtime_inspections").select("*")
     .eq("runtime_activity_id", activity.id).order("reviewed_at");
   if (inspectionError) throw new AccessControlError("Activity inspections could not be loaded.", 500);
+  const { data: exceptionRows, error: exceptionError } = await supabase.from("build_runtime_exceptions").select("*")
+    .eq("runtime_activity_id", activity.id).order("raised_at");
+  if (exceptionError) throw new AccessControlError("Activity exceptions could not be loaded.", 500);
   const evidence = await Promise.all((evidenceRows ?? []).map(async (item): Promise<BuildRuntimeEvidence> => {
     const storagePath = text(item.storage_path);
     const signed = storagePath ? await supabase.storage.from(BUILD_EVIDENCE_BUCKET).createSignedUrl(storagePath, 300) : null;
@@ -133,6 +136,7 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
     return {
       id: text(item.id), evidenceType: text(item.evidence_type) as BuildRuntimeEvidenceType,
       runtimeChecklistItemId: text(item.runtime_checklist_item_id) || null,
+      runtimeExceptionId: text(item.runtime_exception_id) || null,
       originalFilename: text(item.original_filename) || null, mimeType: text(item.mime_type) || null,
       fileSizeBytes: item.file_size_bytes == null ? null : Number(item.file_size_bytes), note: text(item.note) || null,
       description: text(item.description) || null, latitude: item.latitude == null ? null : Number(item.latitude),
@@ -167,6 +171,17 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
       outcome: text(item.outcome) as BuildRuntimeActivityExecution["inspections"][number]["outcome"],
       comments: text(item.comments) || null, reviewedAt: text(item.reviewed_at),
     })),
+    exceptions: (exceptionRows ?? []).map((item) => ({
+      id: text(item.id), runtimeInspectionId: text(item.runtime_inspection_id), title: text(item.title),
+      description: text(item.description), severity: text(item.severity) as BuildRuntimeActivityExecution["exceptions"][number]["severity"],
+      status: text(item.status) as BuildRuntimeActivityExecution["exceptions"][number]["status"],
+      ownerUserId: text(item.exception_owner_user_id), ownerName: allPeople.get(text(item.exception_owner_user_id))?.name ?? "Workspace member",
+      dueAt: text(item.due_at) || null, raisedByUserId: text(item.raised_by_user_id),
+      raisedByName: allPeople.get(text(item.raised_by_user_id))?.name ?? "Workspace reviewer", raisedAt: text(item.raised_at),
+      remediationStartedAt: text(item.remediation_started_at) || null, resolutionNote: text(item.resolution_note) || null,
+      resolvedAt: text(item.resolved_at) || null, verifiedAt: text(item.verified_at) || null,
+      verificationNote: text(item.verification_note) || null,
+    })),
     resourceRequirements: (resourceRequirements ?? []).map((item) => ({ id: text(item.id), name: text(item.resource_name), type: text(item.resource_type), quantity: Number(item.quantity), unit: text(item.unit_of_measure) || null, mandatory: Boolean(item.mandatory) })),
     hasLegacyAmbiguousOrder: [...legacyTimestampCounts.values()].some((count) => count > 1),
   };
@@ -196,6 +211,17 @@ async function assertRuntimeChecklistScope(params: { activityId: string; workPla
     .is("archived_at", null).maybeSingle();
   if (error || !data) throw new AccessControlError("Checklist item is outside this Activity.", 403);
   return checklistItemId;
+}
+
+async function assertRuntimeExceptionScope(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; exceptionId?: string | null }) {
+  const exceptionId = text(params.exceptionId) || null;
+  if (!exceptionId) return null;
+  const access = await assertWorkPackageAccess({ ...params, canWrite: false });
+  const { data, error } = await createAdminSupabase().from("build_runtime_exceptions").select("id,status,exception_owner_user_id")
+    .eq("id", exceptionId).eq("client_id", access.project.client_id).eq("project_id", access.project.id)
+    .eq("site_id", access.site.id).eq("work_package_id", access.workPackage!.id).eq("runtime_activity_id", params.activityId).maybeSingle();
+  if (error || !data) throw new AccessControlError("Exception is outside this Activity.", 403);
+  return { id: exceptionId, status: text(data.status), ownerUserId: text(data.exception_owner_user_id), access };
 }
 
 function validateFileEvidence(type: BuildRuntimeEvidenceType, mimeType: string, fileSizeBytes: number) {
@@ -236,9 +262,13 @@ async function verifyStoredEvidence(path: string, mimeType: string, expectedSize
   }
 }
 
-export async function authorizeRuntimeEvidenceUpload(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; evidenceType: BuildRuntimeEvidenceType; originalFilename: string; mimeType: string; fileSizeBytes: number }): Promise<BuildEvidenceUploadAuthorization> {
-  const resolved = await assertRuntimeExecutor(params);
+export async function authorizeRuntimeEvidenceUpload(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; exceptionId?: string | null; evidenceType: BuildRuntimeEvidenceType; originalFilename: string; mimeType: string; fileSizeBytes: number }): Promise<BuildEvidenceUploadAuthorization> {
+  const exception = await assertRuntimeExceptionScope(params);
+  const resolved = exception ? { access: exception.access, plan: await loadWorkPlanByScope({ clientId: exception.access.project.client_id, projectId: exception.access.project.id, siteId: exception.access.site.id, workPackageId: exception.access.workPackage!.id }) } : await assertRuntimeExecutor(params);
+  if (!resolved.plan) throw new AccessControlError("Work Plan is unavailable.", 404);
+  if (exception && exception.status !== "in_remediation") throw new AccessControlError("Corrective evidence requires an Exception in remediation.", 400);
   validateFileEvidence(params.evidenceType, params.mimeType, params.fileSizeBytes);
+  if (exception && text(params.checklistItemId)) throw new AccessControlError("Corrective evidence cannot be linked to a Checklist item.", 400);
   const checklistItemId = await assertRuntimeChecklistScope({ activityId: params.activityId, workPlanId: text(resolved.plan.id), checklistItemId: params.checklistItemId });
   const id = crypto.randomUUID();
   const path = `${resolved.access.project.client_id}/${resolved.access.project.id}/${params.activityId}/${id}`;
@@ -254,6 +284,7 @@ export async function authorizeRuntimeEvidenceUpload(params: { request?: Request
   const { error } = await supabase.from("build_runtime_evidence_uploads").insert({ id, client_id: resolved.access.project.client_id,
     project_id: resolved.access.project.id, site_id: resolved.access.site.id, work_package_id: resolved.access.workPackage!.id,
     work_plan_id: text(resolved.plan.id), runtime_activity_id: params.activityId, runtime_checklist_item_id: checklistItemId,
+    runtime_exception_id: exception?.id ?? null,
     evidence_type: params.evidenceType, storage_bucket: BUILD_EVIDENCE_BUCKET, storage_path: path,
     original_filename: safeFilename(params.originalFilename), expected_mime_type: params.mimeType,
     expected_file_size_bytes: params.fileSizeBytes, authorized_by: resolved.access.authContext.user_id, expires_at: expiresAt });
@@ -266,8 +297,12 @@ export async function authorizeRuntimeEvidenceUpload(params: { request?: Request
   return { authorizationId: id, bucket: BUILD_EVIDENCE_BUCKET, path: signed.data.path, token: signed.data.token };
 }
 
-export async function finalizeRuntimeEvidence(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; authorizationId?: string | null; evidenceType: BuildRuntimeEvidenceType; description?: string | null; note?: string | null; latitude?: number | null; longitude?: number | null }) {
-  const resolved = await assertRuntimeExecutor(params);
+export async function finalizeRuntimeEvidence(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; exceptionId?: string | null; authorizationId?: string | null; evidenceType: BuildRuntimeEvidenceType; description?: string | null; note?: string | null; latitude?: number | null; longitude?: number | null }) {
+  const exception = await assertRuntimeExceptionScope(params);
+  const resolved = exception ? { access: exception.access, plan: await loadWorkPlanByScope({ clientId: exception.access.project.client_id, projectId: exception.access.project.id, siteId: exception.access.site.id, workPackageId: exception.access.workPackage!.id }) } : await assertRuntimeExecutor(params);
+  if (!resolved.plan) throw new AccessControlError("Work Plan is unavailable.", 404);
+  if (exception && exception.status !== "in_remediation") throw new AccessControlError("Corrective evidence requires an Exception in remediation.", 400);
+  if (exception && text(params.checklistItemId)) throw new AccessControlError("Corrective evidence cannot be linked to a Checklist item.", 400);
   const checklistItemId = await assertRuntimeChecklistScope({ activityId: params.activityId, workPlanId: text(resolved.plan.id), checklistItemId: params.checklistItemId });
   const description = text(params.description).slice(0, 2000) || null;
   const note = text(params.note);
@@ -277,6 +312,7 @@ export async function finalizeRuntimeEvidence(params: { request?: Request; proje
     const { data: authorization } = await createAdminSupabase().from("build_runtime_evidence_uploads").select("*")
       .eq("id", text(params.authorizationId)).eq("authorized_by", resolved.access.authContext.user_id).maybeSingle();
     if (!authorization || text(authorization.evidence_type) !== params.evidenceType || text(authorization.runtime_activity_id) !== params.activityId
+      || text(authorization.runtime_exception_id) !== (exception?.id ?? "")
       || text(authorization.runtime_checklist_item_id) !== (checklistItemId ?? "")) throw new AccessControlError("Evidence upload authorization is invalid.", 403);
     try { await verifyStoredEvidence(text(authorization.storage_path), text(authorization.expected_mime_type), Number(authorization.expected_file_size_bytes)); }
     catch (error) {
@@ -285,12 +321,18 @@ export async function finalizeRuntimeEvidence(params: { request?: Request; proje
       throw error;
     }
   }
-  const { data, error } = await createAdminSupabase().rpc("record_build_runtime_evidence", {
+  const rpc = exception ? "record_build_runtime_exception_evidence" : "record_build_runtime_evidence";
+  const rpcParams = exception ? {
+    p_runtime_exception_id: exception.id, p_upload_authorization_id: params.evidenceType === "note" ? null : text(params.authorizationId),
+    p_evidence_type: params.evidenceType, p_actor_user_id: resolved.access.authContext.user_id, p_description: description,
+    p_note: params.evidenceType === "note" ? note : null, p_latitude: params.latitude ?? null, p_longitude: params.longitude ?? null,
+  } : {
     p_runtime_activity_id: params.activityId, p_runtime_checklist_item_id: checklistItemId,
     p_upload_authorization_id: params.evidenceType === "note" ? null : text(params.authorizationId), p_evidence_type: params.evidenceType,
     p_actor_user_id: resolved.access.authContext.user_id, p_description: description, p_note: params.evidenceType === "note" ? note : null,
     p_latitude: params.latitude ?? null, p_longitude: params.longitude ?? null,
-  });
+  };
+  const { data, error } = await createAdminSupabase().rpc(rpc, rpcParams);
   if (error) throw new AccessControlError("Evidence could not be finalized.", 400);
   const evidenceId = text(data);
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(evidenceId)) {
@@ -424,6 +466,43 @@ export async function resumeRuntimeActivityCorrections(params: { request?: Reque
   if (error) throw new AccessControlError(error.message.includes("BUILD_ACTIVITY_REVIEW_STATE_INVALID")
     ? "This Activity is not awaiting corrective work." : "Corrective work could not be resumed.", error.message.includes("BUILD_ACTIVITY_REVIEW_STATE_INVALID") ? 400 : 500);
   if (text(data) !== params.activityId) throw new AccessControlError("Corrective work could not be verified.", 500);
+  return getRuntimeActivityExecution(params);
+}
+
+export async function createRuntimeException(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; inspectionId: string; title: string; description: string; severity: string; ownerUserId: string; dueAt?: string | null }) {
+  const { access } = await resolveRuntimeReviewAccess(params);
+  const { data, error } = await createAdminSupabase().rpc("create_build_runtime_exception", {
+    p_runtime_activity_id: params.activityId, p_runtime_inspection_id: params.inspectionId, p_title: text(params.title),
+    p_description: text(params.description), p_severity: text(params.severity), p_exception_owner_user_id: text(params.ownerUserId),
+    p_due_at: text(params.dueAt) || null, p_actor_user_id: access.authContext.user_id,
+  });
+  const messages: Record<string, string> = {
+    BUILD_EXCEPTION_INSPECTION_ANCESTRY_INVALID: "Select an Inspection from this Activity.",
+    BUILD_EXCEPTION_MEMBER_INELIGIBLE: "Select an eligible active workspace member.",
+    BUILD_EXCEPTION_TITLE_INVALID: "Add a concise Exception title.", BUILD_EXCEPTION_DESCRIPTION_INVALID: "Add a meaningful Exception description.",
+    BUILD_EXCEPTION_SEVERITY_INVALID: "Select a valid Exception severity.", BUILD_EXCEPTION_DUE_AT_INVALID: "Select a future due date.",
+  };
+  if (error) { const key = Object.keys(messages).find((candidate) => error.message.includes(candidate)); throw new AccessControlError(key ? messages[key] : "The Exception could not be created.", key ? 400 : 500); }
+  if (!/^[0-9a-f-]{36}$/i.test(text(data))) throw new AccessControlError("The Exception could not be verified.", 500);
+  return getRuntimeActivityExecution(params);
+}
+
+export async function applyRuntimeExceptionAction(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; exceptionId: string; action: string; note?: string | null }) {
+  await assertRuntimeExceptionScope(params);
+  const access = await assertWorkPackageAccess({ ...params, canWrite: false });
+  const { data, error } = await createAdminSupabase().rpc("apply_build_runtime_exception_action", {
+    p_runtime_exception_id: params.exceptionId, p_action: params.action, p_actor_user_id: access.authContext.user_id, p_note: text(params.note) || null,
+  });
+  const messages: Record<string, string> = {
+    BUILD_EXCEPTION_STALE_STATE: "This Exception has already moved to another lifecycle state.",
+    BUILD_EXCEPTION_REMEDIATION_FORBIDDEN: "Only the Exception Owner or workspace management may start remediation.",
+    BUILD_EXCEPTION_RESOLUTION_FORBIDDEN: "Only the Exception Owner or workspace management may resolve this Exception.",
+    BUILD_EXCEPTION_RESOLUTION_NOTE_REQUIRED: "Add a meaningful corrective-action note before resolving.",
+    BUILD_EXCEPTION_INDEPENDENT_VERIFIER_REQUIRED: "The Exception Owner cannot independently verify their own corrective work.",
+    BUILD_EXCEPTION_VERIFICATION_FORBIDDEN: "Only an eligible independent reviewer may verify this resolution.",
+  };
+  if (error) { const key = Object.keys(messages).find((candidate) => error.message.includes(candidate)); throw new AccessControlError(key ? messages[key] : "The Exception action could not be completed.", key ? 400 : 500); }
+  if (text(data) !== params.exceptionId) throw new AccessControlError("The Exception action could not be verified.", 500);
   return getRuntimeActivityExecution(params);
 }
 

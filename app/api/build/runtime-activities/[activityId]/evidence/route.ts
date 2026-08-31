@@ -13,7 +13,7 @@ export async function POST(request: NextRequest, { params }: { params: { activit
   try {
     const body = await request.json();
     const common = { request, activityId: params.activityId, projectId: value(body.projectId), siteId: value(body.siteId),
-      workPackageId: value(body.workPackageId), checklistItemId: value(body.checklistItemId) || null };
+      workPackageId: value(body.workPackageId), checklistItemId: value(body.checklistItemId) || null, exceptionId: value(body.exceptionId) || null };
     if (body.action === "authorize") {
       const authorization = await authorizeRuntimeEvidenceUpload({ ...common, evidenceType: evidenceType(body.evidenceType),
         originalFilename: value(body.originalFilename), mimeType: value(body.mimeType), fileSizeBytes: Number(body.fileSizeBytes) });

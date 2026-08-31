@@ -48,6 +48,7 @@ export type BuildRuntimeActivityExecution = {
   }>;
   evidence: BuildRuntimeEvidence[];
   inspections: BuildRuntimeInspection[];
+  exceptions: BuildRuntimeException[];
   resourceRequirements: Array<{ id: string; name: string; type: string; quantity: number; unit: string | null; mandatory: boolean }>;
   hasLegacyAmbiguousOrder: boolean;
 };
@@ -61,11 +62,22 @@ export type BuildRuntimeInspection = {
   reviewedAt: string;
 };
 
+export type BuildRuntimeExceptionStatus = "open" | "in_remediation" | "resolved" | "verified";
+export type BuildRuntimeException = {
+  id: string; runtimeInspectionId: string; title: string; description: string;
+  severity: "low" | "medium" | "high" | "critical"; status: BuildRuntimeExceptionStatus;
+  ownerUserId: string; ownerName: string; dueAt: string | null;
+  raisedByUserId: string; raisedByName: string; raisedAt: string;
+  remediationStartedAt: string | null; resolutionNote: string | null; resolvedAt: string | null;
+  verifiedAt: string | null; verificationNote: string | null;
+};
+
 export type BuildRuntimeEvidenceType = "photo" | "video" | "document" | "note";
 export type BuildRuntimeEvidence = {
   id: string;
   evidenceType: BuildRuntimeEvidenceType;
   runtimeChecklistItemId: string | null;
+  runtimeExceptionId: string | null;
   originalFilename: string | null;
   mimeType: string | null;
   fileSizeBytes: number | null;
