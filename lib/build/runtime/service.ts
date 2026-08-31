@@ -2,7 +2,17 @@ import { AccessControlError } from "@/lib/accessControl";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { assertWorkPackageAccess } from "@/lib/build/workPackages/service";
 import { instantiateTemplate } from "@/lib/build/templates/service";
-import type { BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimePerson, BuildWorkPlan } from "@/lib/build/runtime/types";
+import { fetchBuildEvidenceSignature } from "@/lib/build/runtime/evidenceVerification";
+import type { BuildEvidenceUploadAuthorization, BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimeEvidence, BuildRuntimeEvidenceType, BuildRuntimePerson, BuildWorkPlan } from "@/lib/build/runtime/types";
+
+export const BUILD_EVIDENCE_BUCKET = "build-runtime-evidence" as const;
+export const BUILD_EVIDENCE_MIME_TYPES = {
+  photo: new Set(["image/jpeg", "image/png", "image/webp"]),
+  video: new Set(["video/mp4", "video/quicktime", "video/webm"]),
+  document: new Set(["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]),
+} as const;
+export const BUILD_EVIDENCE_SIZE_LIMITS = { photo: 10 * 1024 * 1024, video: 50 * 1024 * 1024, document: 20 * 1024 * 1024 } as const;
+const BUILD_EVIDENCE_NOTE_LIMIT = 4000;
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -95,7 +105,7 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
     supabase.from("build_runtime_activity_events").select("*").eq("runtime_activity_id", activity.id)
       .order("occurred_at").order("event_sequence", { nullsFirst: true }),
     supabase.from("build_runtime_dependencies").select("dependency_type,predecessor_runtime_activity_id").eq("successor_runtime_activity_id", activity.id),
-    supabase.from("build_runtime_checklist_items").select("id,item,mandatory,status").eq("runtime_activity_id", activity.id).is("archived_at", null).order("sequence"),
+    supabase.from("build_runtime_checklist_items").select("id,item,description,mandatory,requires_photo,requires_comment,acceptance_type,status,result_note,resolved_by,resolved_at").eq("runtime_activity_id", activity.id).is("archived_at", null).order("sequence"),
     supabase.from("build_runtime_resource_requirements").select("id,resource_name,resource_type,quantity,unit_of_measure,mandatory").eq("runtime_activity_id", activity.id).order("sequence"),
     eligiblePeople(plan.client_id),
   ]);
@@ -107,6 +117,24 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
   if (predecessorError) throw new AccessControlError("Activity dependency details could not be loaded.", 500);
   const predecessorById = new Map((predecessorRows ?? []).map((item) => [text(item.id), item]));
   const allPeople = new Map([...people.owners, ...people.supervisors].map((person) => [person.userId, person]));
+  const { data: evidenceRows, error: evidenceError } = await supabase.from("build_runtime_evidence").select("*")
+    .eq("runtime_activity_id", activity.id).is("archived_at", null).order("created_at");
+  if (evidenceError) throw new AccessControlError("Activity evidence could not be loaded.", 500);
+  const evidence = await Promise.all((evidenceRows ?? []).map(async (item): Promise<BuildRuntimeEvidence> => {
+    const storagePath = text(item.storage_path);
+    const signed = storagePath ? await supabase.storage.from(BUILD_EVIDENCE_BUCKET).createSignedUrl(storagePath, 300) : null;
+    if (signed?.error) throw new AccessControlError("Activity evidence access could not be authorized.", 500);
+    return {
+      id: text(item.id), evidenceType: text(item.evidence_type) as BuildRuntimeEvidenceType,
+      runtimeChecklistItemId: text(item.runtime_checklist_item_id) || null,
+      originalFilename: text(item.original_filename) || null, mimeType: text(item.mime_type) || null,
+      fileSizeBytes: item.file_size_bytes == null ? null : Number(item.file_size_bytes), note: text(item.note) || null,
+      description: text(item.description) || null, latitude: item.latitude == null ? null : Number(item.latitude),
+      longitude: item.longitude == null ? null : Number(item.longitude), uploadedBy: text(item.uploaded_by),
+      uploaderName: allPeople.get(text(item.uploaded_by))?.name ?? "Workspace member", createdAt: text(item.created_at),
+      signedUrl: signed?.data?.signedUrl ?? null,
+    };
+  }));
   const safe = (person: typeof people.owners[number]): BuildRuntimePerson => ({ userId: person.userId, name: person.name, roleLabel: person.roleLabel });
   const timeline = (events ?? []).map((event) => ({ ...event, actorName: allPeople.get(text(event.actor_user_id))?.name ?? "Workspace member" })) as BuildRuntimeActivityExecution["events"];
   const legacyTimestampCounts = new Map<string, number>();
@@ -122,10 +150,156 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
       const predecessor = predecessorById.get(text(item.predecessor_runtime_activity_id));
       return { id: text(item.predecessor_runtime_activity_id), name: text(predecessor?.name) || "Predecessor Activity", status: (text(predecessor?.status) || "not_started") as BuildRuntimeActivity["status"], dependencyType: text(item.dependency_type) };
     }),
-    checklistItems: (checklistItems ?? []).map((item) => ({ id: text(item.id), item: text(item.item), mandatory: Boolean(item.mandatory), status: text(item.status) })),
+    checklistItems: (checklistItems ?? []).map((item) => ({ id: text(item.id), item: text(item.item), description: text(item.description) || null,
+      mandatory: Boolean(item.mandatory), requiresPhoto: Boolean(item.requires_photo), requiresComment: Boolean(item.requires_comment),
+      acceptanceType: text(item.acceptance_type) || null, status: text(item.status) as BuildRuntimeActivityExecution["checklistItems"][number]["status"],
+      resultNote: text(item.result_note) || null, resolvedBy: text(item.resolved_by) || null, resolvedAt: text(item.resolved_at) || null })),
+    evidence,
     resourceRequirements: (resourceRequirements ?? []).map((item) => ({ id: text(item.id), name: text(item.resource_name), type: text(item.resource_type), quantity: Number(item.quantity), unit: text(item.unit_of_measure) || null, mandatory: Boolean(item.mandatory) })),
     hasLegacyAmbiguousOrder: [...legacyTimestampCounts.values()].some((count) => count > 1),
   };
+}
+
+async function assertRuntimeExecutor(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string }) {
+  const access = await assertWorkPackageAccess({ ...params, canWrite: false });
+  const plan = await loadWorkPlanByScope({ clientId: access.project.client_id, projectId: access.project.id, siteId: access.site.id, workPackageId: access.workPackage!.id });
+  if (!plan) throw new AccessControlError("Work Plan is unavailable.", 404);
+  const { data: activity } = await createAdminSupabase().from("build_runtime_activities")
+    .select("id,activity_owner_user_id,supervisor_user_id,status").eq("id", params.activityId).eq("work_plan_id", text(plan.id)).maybeSingle();
+  if (!activity || !["in_progress", "blocked"].includes(text(activity.status))) throw new AccessControlError("Activity is not available for execution.", 400);
+  const { data: membership } = await createAdminSupabase().from("workspace_memberships").select("role_key,status")
+    .eq("client_id", access.project.client_id).eq("user_id", access.authContext.user_id).eq("status", "active").maybeSingle();
+  const permitted = access.authContext.user_id === text(activity.activity_owner_user_id)
+    || access.authContext.user_id === text(activity.supervisor_user_id)
+    || ["customer_admin", "workspace_manager", "project_manager"].includes(text(membership?.role_key));
+  if (!permitted) throw new AccessControlError("Activity execution is restricted to assigned responsibility and workspace management.", 403);
+  return { access, plan, activity };
+}
+
+async function assertRuntimeChecklistScope(params: { activityId: string; workPlanId: string; checklistItemId?: string | null }) {
+  const checklistItemId = text(params.checklistItemId) || null;
+  if (!checklistItemId) return null;
+  const { data, error } = await createAdminSupabase().from("build_runtime_checklist_items").select("id")
+    .eq("id", checklistItemId).eq("runtime_activity_id", params.activityId).eq("work_plan_id", params.workPlanId)
+    .is("archived_at", null).maybeSingle();
+  if (error || !data) throw new AccessControlError("Checklist item is outside this Activity.", 403);
+  return checklistItemId;
+}
+
+function validateFileEvidence(type: BuildRuntimeEvidenceType, mimeType: string, fileSizeBytes: number) {
+  if (type === "note") throw new AccessControlError("Note evidence does not use file upload.", 400);
+  if (!BUILD_EVIDENCE_MIME_TYPES[type].has(mimeType as never)) throw new AccessControlError("This evidence file type is not supported.", 400);
+  if (!Number.isInteger(fileSizeBytes) || fileSizeBytes <= 0 || fileSizeBytes > BUILD_EVIDENCE_SIZE_LIMITS[type])
+    throw new AccessControlError("This evidence file exceeds the permitted size.", 400);
+}
+
+function safeFilename(value: string) {
+  const name = text(value).replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 240);
+  if (!name) throw new AccessControlError("An original filename is required.", 400);
+  return name;
+}
+
+async function verifyStoredEvidence(path: string, mimeType: string, expectedSize: number) {
+  const slash = path.lastIndexOf("/");
+  const folder = slash < 0 ? "" : path.slice(0, slash);
+  const name = slash < 0 ? path : path.slice(slash + 1);
+  const supabase = createAdminSupabase();
+  const listed = await supabase.storage.from(BUILD_EVIDENCE_BUCKET).list(folder, { search: name, limit: 2 });
+  const object = listed.data?.find((item) => item.name === name);
+  const storedSize = Number(object?.metadata?.size ?? -1);
+  const storedMime = text(object?.metadata?.mimetype);
+  if (listed.error || !object || storedSize !== expectedSize || (storedMime && storedMime !== mimeType))
+    throw new AccessControlError("The uploaded evidence could not be verified.", 400);
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!url || !key) throw new AccessControlError("Evidence verification is unavailable.", 500);
+  try {
+    await fetchBuildEvidenceSignature({
+      url: `${url}/storage/v1/object/authenticated/${BUILD_EVIDENCE_BUCKET}/${path.split("/").map(encodeURIComponent).join("/")}`,
+      headers: { apikey: key, authorization: `Bearer ${key}` },
+      mimeType,
+    });
+  } catch {
+    throw new AccessControlError("The uploaded evidence could not be verified.", 400);
+  }
+}
+
+export async function authorizeRuntimeEvidenceUpload(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; evidenceType: BuildRuntimeEvidenceType; originalFilename: string; mimeType: string; fileSizeBytes: number }): Promise<BuildEvidenceUploadAuthorization> {
+  const resolved = await assertRuntimeExecutor(params);
+  validateFileEvidence(params.evidenceType, params.mimeType, params.fileSizeBytes);
+  const checklistItemId = await assertRuntimeChecklistScope({ activityId: params.activityId, workPlanId: text(resolved.plan.id), checklistItemId: params.checklistItemId });
+  const id = crypto.randomUUID();
+  const path = `${resolved.access.project.client_id}/${resolved.access.project.id}/${params.activityId}/${id}`;
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const supabase = createAdminSupabase();
+  const { data: expired } = await supabase.from("build_runtime_evidence_uploads").select("id,storage_path")
+    .eq("authorized_by", resolved.access.authContext.user_id).eq("runtime_activity_id", params.activityId)
+    .is("finalized_at", null).is("rejected_at", null).lt("expires_at", new Date().toISOString()).limit(20);
+  const expiredPaths = (expired ?? []).map((item) => text(item.storage_path)).filter(Boolean);
+  if (expiredPaths.length) await supabase.storage.from(BUILD_EVIDENCE_BUCKET).remove(expiredPaths);
+  if (expired?.length) await supabase.from("build_runtime_evidence_uploads").update({ rejected_at: new Date().toISOString() })
+    .in("id", expired.map((item) => item.id));
+  const { error } = await supabase.from("build_runtime_evidence_uploads").insert({ id, client_id: resolved.access.project.client_id,
+    project_id: resolved.access.project.id, site_id: resolved.access.site.id, work_package_id: resolved.access.workPackage!.id,
+    work_plan_id: text(resolved.plan.id), runtime_activity_id: params.activityId, runtime_checklist_item_id: checklistItemId,
+    evidence_type: params.evidenceType, storage_bucket: BUILD_EVIDENCE_BUCKET, storage_path: path,
+    original_filename: safeFilename(params.originalFilename), expected_mime_type: params.mimeType,
+    expected_file_size_bytes: params.fileSizeBytes, authorized_by: resolved.access.authContext.user_id, expires_at: expiresAt });
+  if (error) throw new AccessControlError("Evidence upload could not be authorized.", 500);
+  const signed = await supabase.storage.from(BUILD_EVIDENCE_BUCKET).createSignedUploadUrl(path, { upsert: false });
+  if (signed.error) {
+    await supabase.from("build_runtime_evidence_uploads").update({ rejected_at: new Date().toISOString() }).eq("id", id);
+    throw new AccessControlError("Evidence upload could not be authorized.", 500);
+  }
+  return { authorizationId: id, bucket: BUILD_EVIDENCE_BUCKET, path: signed.data.path, token: signed.data.token };
+}
+
+export async function finalizeRuntimeEvidence(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; authorizationId?: string | null; evidenceType: BuildRuntimeEvidenceType; description?: string | null; note?: string | null; latitude?: number | null; longitude?: number | null }) {
+  const resolved = await assertRuntimeExecutor(params);
+  const checklistItemId = await assertRuntimeChecklistScope({ activityId: params.activityId, workPlanId: text(resolved.plan.id), checklistItemId: params.checklistItemId });
+  const description = text(params.description).slice(0, 2000) || null;
+  const note = text(params.note);
+  if (params.evidenceType === "note") {
+    if (!note || note.length > BUILD_EVIDENCE_NOTE_LIMIT) throw new AccessControlError("Evidence notes must contain between 1 and 4000 characters.", 400);
+  } else {
+    const { data: authorization } = await createAdminSupabase().from("build_runtime_evidence_uploads").select("*")
+      .eq("id", text(params.authorizationId)).eq("authorized_by", resolved.access.authContext.user_id).maybeSingle();
+    if (!authorization || text(authorization.evidence_type) !== params.evidenceType || text(authorization.runtime_activity_id) !== params.activityId
+      || text(authorization.runtime_checklist_item_id) !== (checklistItemId ?? "")) throw new AccessControlError("Evidence upload authorization is invalid.", 403);
+    try { await verifyStoredEvidence(text(authorization.storage_path), text(authorization.expected_mime_type), Number(authorization.expected_file_size_bytes)); }
+    catch (error) {
+      await createAdminSupabase().storage.from(BUILD_EVIDENCE_BUCKET).remove([text(authorization.storage_path)]);
+      await createAdminSupabase().from("build_runtime_evidence_uploads").update({ rejected_at: new Date().toISOString() }).eq("id", authorization.id);
+      throw error;
+    }
+  }
+  const { data, error } = await createAdminSupabase().rpc("record_build_runtime_evidence", {
+    p_runtime_activity_id: params.activityId, p_runtime_checklist_item_id: checklistItemId,
+    p_upload_authorization_id: params.evidenceType === "note" ? null : text(params.authorizationId), p_evidence_type: params.evidenceType,
+    p_actor_user_id: resolved.access.authContext.user_id, p_description: description, p_note: params.evidenceType === "note" ? note : null,
+    p_latitude: params.latitude ?? null, p_longitude: params.longitude ?? null,
+  });
+  if (error) throw new AccessControlError("Evidence could not be finalized.", 400);
+  const evidenceId = text(data);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(evidenceId)) {
+    throw new AccessControlError("Evidence finalization could not be verified.", 500);
+  }
+  return evidenceId;
+}
+
+export async function applyRuntimeChecklistResult(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId: string; result: string; note?: string | null }) {
+  const resolved = await assertRuntimeExecutor(params);
+  await assertRuntimeChecklistScope({ activityId: params.activityId, workPlanId: text(resolved.plan.id), checklistItemId: params.checklistItemId });
+  const { data, error } = await createAdminSupabase().rpc("apply_build_runtime_checklist_result", {
+    p_runtime_checklist_item_id: params.checklistItemId, p_result: params.result,
+    p_actor_user_id: resolved.access.authContext.user_id, p_note: text(params.note) || null,
+  });
+  const messages: Record<string, string> = { BUILD_CHECKLIST_REASON_REQUIRED: "Add a reason for this Checklist result.", BUILD_CHECKLIST_COMMENT_REQUIRED: "Add the required Checklist comment.", BUILD_CHECKLIST_PHOTO_REQUIRED: "Attach a Photo to this Checklist item before passing it." };
+  if (error) {
+    const key = Object.keys(messages).find((candidate) => error.message.includes(candidate));
+    throw new AccessControlError(key ? messages[key] : "The Checklist result could not be recorded.", key ? 400 : 500);
+  }
+  return text(data);
 }
 
 export async function getRuntimeActivityProjectScope(params: { clientId: string; projectId: string; activityId: string }) {

@@ -39,9 +39,40 @@ export type BuildRuntimeActivityExecution = {
   events: Array<BuildRuntimeActivityEvent & { actorName: string }>;
   dependencyTypes: string[];
   predecessors: Array<{ id: string; name: string; status: BuildRuntimeActivity["status"]; dependencyType: string }>;
-  checklistItems: Array<{ id: string; item: string; mandatory: boolean; status: string }>;
+  checklistItems: Array<{
+    id: string; item: string; description: string | null; mandatory: boolean;
+    requiresPhoto: boolean; requiresComment: boolean; acceptanceType: string | null;
+    status: "pending" | "passed" | "failed" | "not_applicable";
+    resultNote: string | null; resolvedBy: string | null; resolvedAt: string | null;
+  }>;
+  evidence: BuildRuntimeEvidence[];
   resourceRequirements: Array<{ id: string; name: string; type: string; quantity: number; unit: string | null; mandatory: boolean }>;
   hasLegacyAmbiguousOrder: boolean;
+};
+
+export type BuildRuntimeEvidenceType = "photo" | "video" | "document" | "note";
+export type BuildRuntimeEvidence = {
+  id: string;
+  evidenceType: BuildRuntimeEvidenceType;
+  runtimeChecklistItemId: string | null;
+  originalFilename: string | null;
+  mimeType: string | null;
+  fileSizeBytes: number | null;
+  note: string | null;
+  description: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  uploadedBy: string;
+  uploaderName: string;
+  createdAt: string;
+  signedUrl: string | null;
+};
+
+export type BuildEvidenceUploadAuthorization = {
+  authorizationId: string;
+  bucket: "build-runtime-evidence";
+  path: string;
+  token: string;
 };
 
 export type BuildWorkPlan = {

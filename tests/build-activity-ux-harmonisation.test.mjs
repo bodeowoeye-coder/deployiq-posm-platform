@@ -45,11 +45,12 @@ test("Execution exposes state-valid actions and dependency-aware Start UX", () =
   assert.match(activity, /Finish-to-Start \(FS\)/);
   assert.match(service, /predecessor_runtime_activity_id/);
 });
-test("Checklist and Resources are read-only and Evidence is unavailable", () => {
-  assert.match(activity, /Checklist execution will become available in the next execution stage/);
-  assert.match(activity, /Evidence capture is not available at this execution stage/);
+test("Checklist and Evidence sections activate controlled S3A-8 execution", () => {
+  for (const label of ["Pass", "Fail", "Mark N/A", "Photo", "Video", "Document", "Note"]) assert.match(activity, new RegExp(label));
+  assert.match(activity, /uploadToSignedUrl/);
+  assert.match(activity, /Checklist result recorded/);
   assert.match(activity, /Allocation, issuance, consumption and inventory are not available/);
-  assert.doesNotMatch(activity, /checkbox|upload|camera|signature|getUserMedia/i);
+  assert.doesNotMatch(activity, /checkbox|camera|signature|getUserMedia/i);
 });
 test("Activity History is contained, deterministic and customer-safe", () => {
   assert.match(activity, /activeView === "history"/);
@@ -61,7 +62,7 @@ test("customer time presentation omits seconds", () => {
   assert.match(activity, /minute: "2-digit"/);
   assert.doesNotMatch(activity, /second:/);
 });
-test("Activity UX has no client portal or S3A-8 mutation surface", () => {
+test("Activity UX has no client portal or post-S3A-8 mutation surface", () => {
   assert.doesNotMatch([list, activity, route, service].join("\n"), /["'`]\/client(?:\/|["'`])/);
-  assert.doesNotMatch(activity, /complete_checklist|upload_evidence|capture_evidence|inspection|approval|escalation/i);
+  assert.doesNotMatch(activity, /complete_checklist|capture_evidence|inspection|approval|escalation/i);
 });

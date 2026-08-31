@@ -68,8 +68,9 @@ test("9. Ended support sessions cannot resolve workspace context", () => {
 
 test("10. Active support session resolves the selected customer workspace", () => {
   const resolverSource = resolver();
+  assert.match(resolverSource, /const clientId = supportSession \? supportSession\.clientId : authContext\.role\.client_id!/);
   assert.match(resolverSource, /const role = supportSession \? "customer_admin" : roleFromMembership\(membershipRoleKey\)/);
-  assert.match(resolverSource, /const clientRecord: Client = authContext\.client \?\? \{/);
+  assert.match(resolverSource, /const clientRecord: Client = \{[\s\S]{0,200}id: clientId,[\s\S]{0,200}name: organisationName,/);
 });
 
 test("11-12. Normal customer sign-in is unchanged and admin identity is preserved", () => {
