@@ -1,0 +1,45 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { deriveBuildWorkPlanDisplayStatus } from "../lib/build/runtime/types.ts";
+
+const service=readFileSync(new URL("../lib/build/management/service.ts",import.meta.url),"utf8");
+const overview=readFileSync(new URL("../app/workspace/admin/projects/[id]/page.tsx",import.meta.url),"utf8");
+const section=readFileSync(new URL("../app/workspace/admin/projects/[id]/[section]/page.tsx",import.meta.url),"utf8");
+const register=readFileSync(new URL("../components/workspace/BuildExceptionRegister.tsx",import.meta.url),"utf8");
+const shell=readFileSync(new URL("../components/workspace/BuildProjectShell.tsx",import.meta.url),"utf8");
+const runtime=readFileSync(new URL("../lib/build/runtime/service.ts",import.meta.url),"utf8");
+const activity=readFileSync(new URL("../components/workspace/BuildRuntimeWorkPlan.tsx",import.meta.url),"utf8");
+
+test("S3A-9C uses one canonical server management layer",()=>{assert.match(service,/resolveCanonicalBuildProject[\s\S]*requiredPermission: "projects:read"/);assert.match(overview,/getBuildManagementSummary/);assert.match(section,/getBuildManagementSummary/);});
+test("activity state counts use exact factual states",()=>{for(const value of ["not_started","in_progress","completed","blocked","submitted_for_review","changes_required","approved"])assert.match(service,new RegExp(value));});
+test("Project Overview separates reconciled Activity Execution from Exception Health",()=>{for(const label of ["Activity Execution","Total Activities","Not Started","In Progress","Completed","Blocked","Awaiting Review","Changes Required","Approved","Exception Health","Open Exceptions","Overdue Exceptions"])assert.match(overview,new RegExp(label));});
+test("Completed participates in Overview and Work Package reconciliation",()=>{assert.match(service,/completed: count\("completed"\)/);assert.match(overview,/item\.activities\.completed/);assert.match(overview,/"In Progress","Completed","Blocked"/);});
+test("Work Plan display status derives solely from active runtime activities",()=>{
+  const statuses=(...values)=>values.map((status)=>({status}));
+  assert.equal(deriveBuildWorkPlanDisplayStatus(statuses("not_started","not_started")),"not_started");
+  assert.equal(deriveBuildWorkPlanDisplayStatus(statuses("not_started","in_progress")),"in_progress");
+  assert.equal(deriveBuildWorkPlanDisplayStatus(statuses("completed","in_progress")),"in_progress");
+  assert.equal(deriveBuildWorkPlanDisplayStatus(statuses("completed","blocked")),"in_progress");
+  assert.equal(deriveBuildWorkPlanDisplayStatus(statuses("submitted_for_review")),"in_progress");
+  assert.equal(deriveBuildWorkPlanDisplayStatus(statuses("changes_required")),"in_progress");
+  assert.equal(deriveBuildWorkPlanDisplayStatus(statuses("completed","approved")),"completed");
+});
+test("Work Plan display derivation never mutates persisted plan status",()=>{assert.match(activity,/deriveBuildWorkPlanDisplayStatus\(plan\.activities\)/);assert.doesNotMatch(activity,/plan\.status\s*=/);assert.doesNotMatch(activity,/body: JSON\.stringify\([^)]*status/);});
+test("overdue is server-time deterministic and Verified/null-safe",()=>{assert.match(service,/if \(!dueAt \|\| status === "verified"\) return false/);assert.match(service,/due\.getTime\(\) < now\.getTime\(\)/);});
+test("management attention is factual and deterministic",()=>{for(const label of ["Critical open Exceptions","High open Exceptions","overdue Exceptions","Blocked Activities","Activities with Changes Required","Activities awaiting review"])assert.match(overview,new RegExp(label));assert.doesNotMatch(overview,/performing badly|risk score|healthy|poor/i);});
+test("Work Package aggregation preserves Site and active ancestry",()=>{assert.match(service,/\.in\("site_id", siteIds\)\.is\("archived_at", null\)/);assert.match(service,/\.in\("work_package_id", workPackageIds\)\.is\("archived_at", null\)/);assert.match(overview,/Work Package Execution/);});
+test("archived Sites Work Packages Work Plans and Activities are excluded",()=>{assert.ok((service.match(/\.is\("archived_at", null\)/g)??[]).length>=5);});
+test("responsibility aggregates action ownership without scoring or ranking",()=>{assert.match(service,/outstanding: 0, overdue: 0, criticalHigh: 0/);assert.match(overview,/Outstanding Responsibility/);assert.doesNotMatch(service,/score|rank|blame/i);});
+test("Exception Register is a project roll-up over canonical records",()=>{assert.match(service,/from\("build_runtime_exceptions"\)/);assert.match(register,/Project management register/);assert.match(section,/section === "exceptions"/);});
+test("Exception Register exposes all required deterministic filters",()=>{for(const name of ["status","severity","owner","due","site","workPackage"])assert.match(register,new RegExp(`name="${name}"`));for(const predicate of ["filters.status","filters.severity","filters.owner","filters.due","filters.site","filters.workPackage"])assert.match(service,new RegExp(predicate.replace(".","\\.")));});
+test("Due and Overdue filters remain distinct",()=>{assert.match(service,/filters\.due === "overdue" && !row\.overdue/);assert.match(service,/filters\.due === "due" && \(!row\.dueAt \|\| row\.overdue \|\| row\.status === "verified"\)/);});
+test("Exception register includes authoritative ancestry and inspection reference",()=>{for(const label of ["Site / Work Package","Activity","Inspection","Corrective Evidence","Resolution / Verification"])assert.match(register,new RegExp(label));assert.match(service,/runtime_inspection_id/);});
+test("Exception and Activity drill-down return to authoritative runtime experience",()=>{assert.match(register,/activities\/\$\{row\.activityId\}\?view=exceptions/);assert.match(register,/activities\/\$\{row\.activityId\}/);});
+test("project navigation distinguishes project Exceptions",()=>{assert.match(shell,/key: "exceptions", label: "Exceptions", segment: "exceptions"/);});
+test("Activity management shows checklist Evidence and Exception facts",()=>{for(const field of ["checklist_resolved_count","evidence_count","active_exception_count","overdue_exception_count"])assert.match(runtime,new RegExp(field));assert.match(activity,/Checklist \{activity\.checklist_resolved_count\}/);});
+test("management reads remain fully tenant and Project constrained",()=>{for(const table of ["build_sites","build_work_packages","build_work_plans","build_runtime_activities","build_runtime_exceptions","build_runtime_inspections","build_runtime_evidence"])assert.match(service,new RegExp(`from\\("${table}"\\)[\\s\\S]*?\\.eq\\("client_id", project\\.client_id\\)\\.eq\\("project_id", project\\.id\\)`));});
+test("archived acceptance branches cannot inflate active management metrics",()=>{assert.match(service,/siteIds/);assert.match(service,/workPackageIds/);assert.match(service,/planIds/);assert.match(service,/activityIds/);});
+test("empty states are calm and explicit",()=>{for(const copy of ["No runtime Work Plans exist","No outstanding management attention","No Exceptions have been recorded","No Exceptions match"])assert.match(overview+register,new RegExp(copy));});
+test("management layer performs no writes and introduces no AI",()=>{assert.doesNotMatch(service,/\.insert\(|\.update\(|\.upsert\(|\.delete\(/);assert.doesNotMatch(service+overview+register,/openai|artificial intelligence|risk assessment|executive brief/i);});
+test("S3A-9C introduces no Retail or client portal coupling",()=>{assert.doesNotMatch(service+overview+register+section+shell,/["'`]\/client(?:\/|["'`])|installation-images|deployment_submissions/);});

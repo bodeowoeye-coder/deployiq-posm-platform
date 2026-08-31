@@ -2,7 +2,9 @@ import { notFound } from "next/navigation";
 import { BuildProjectShell, type BuildProjectSection } from "@/components/workspace/BuildProjectShell";
 import { BuildProjectManagement } from "@/components/workspace/BuildProjectManagement";
 import { BuildRuntimeWorkPlan } from "@/components/workspace/BuildRuntimeWorkPlan";
+import { BuildExceptionRegister } from "@/components/workspace/BuildExceptionRegister";
 import { getWorkPlan } from "@/lib/build/runtime/service";
+import { getBuildManagementSummary, type BuildExceptionFilters } from "@/lib/build/management/service";
 import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +13,7 @@ const BUILD_PROJECT_SECTIONS = new Set<BuildProjectSection>([
   "sites",
   "work-packages",
   "activities",
+  "exceptions",
   "resources",
   "documents",
   "reports",
@@ -23,7 +26,7 @@ export default async function BuildProjectSectionPage({
   searchParams,
 }: {
   params: { id: string; section: string };
-  searchParams: { workPackage?: string };
+  searchParams: { workPackage?: string; status?: string; severity?: string; owner?: string; due?: string; site?: string };
 }) {
   if (!BUILD_PROJECT_SECTIONS.has(params.section as BuildProjectSection)) notFound();
 
@@ -31,7 +34,7 @@ export default async function BuildProjectSectionPage({
   const overview = await getBuildProjectWorkspaceOverview(params.id);
   return (
     <BuildProjectShell project={overview.project} activeSection={section}>
-      <BuildProjectSectionContent section={section} overview={overview} selectedWorkPackageId={searchParams.workPackage} />
+      <BuildProjectSectionContent section={section} overview={overview} selectedWorkPackageId={searchParams.workPackage} filters={searchParams} />
     </BuildProjectShell>
   );
 }
@@ -40,10 +43,12 @@ async function BuildProjectSectionContent({
   section,
   overview,
   selectedWorkPackageId,
+  filters,
 }: {
   section: BuildProjectSection;
   overview: BuildProjectWorkspaceOverview;
   selectedWorkPackageId?: string;
+  filters: BuildExceptionFilters;
 }) {
   if (section === "sites") {
     return <BuildProjectManagement mode="sites" overview={overview} />;
@@ -64,7 +69,12 @@ async function BuildProjectSectionContent({
     return <BuildRuntimeWorkPlan overview={overview} selectedWorkPackageId={selected?.id ?? null} plan={plan} />;
   }
 
-  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities">, { title: string; description: string }> = {
+  if (section === "exceptions") {
+    const management = await getBuildManagementSummary(overview.project.id);
+    return <BuildExceptionRegister projectId={overview.project.id} management={management} filters={filters}/>;
+  }
+
+  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities" | "exceptions">, { title: string; description: string }> = {
     resources: {
       title: "Resources",
       description: `${overview.counts.resources} eligible resource definition${overview.counts.resources === 1 ? " is" : "s are"} available to this tenant. Project resource planning arrives in a later Build phase.`,

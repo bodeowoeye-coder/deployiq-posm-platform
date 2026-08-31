@@ -36,26 +36,39 @@ async function loadWorkPlanByScope(params: { clientId: string; projectId: string
 async function hydrateWorkPlan(row: Record<string, unknown>): Promise<BuildWorkPlan> {
   const planId = text(row.id);
   const supabase = createAdminSupabase();
-  const [activitiesResult, checklistsResult, dependenciesResult, requirementsResult] = await Promise.all([
+  const [activitiesResult, checklistsResult, dependenciesResult, requirementsResult, evidenceResult, exceptionResult] = await Promise.all([
     supabase.from("build_runtime_activities").select("*").eq("work_plan_id", planId).is("archived_at", null).order("sequence"),
-    supabase.from("build_runtime_checklist_items").select("id,runtime_activity_id").eq("work_plan_id", planId).is("archived_at", null),
+    supabase.from("build_runtime_checklist_items").select("id,runtime_activity_id,status").eq("work_plan_id", planId).is("archived_at", null),
     supabase.from("build_runtime_dependencies").select("id,successor_runtime_activity_id").eq("work_plan_id", planId),
     supabase.from("build_runtime_resource_requirements").select("id,runtime_activity_id").eq("work_plan_id", planId),
+    supabase.from("build_runtime_evidence").select("id,runtime_activity_id").eq("work_plan_id", planId).is("archived_at", null),
+    supabase.from("build_runtime_exceptions").select("id,runtime_activity_id,status,due_at").eq("work_plan_id", planId),
   ]);
-  for (const result of [activitiesResult, checklistsResult, dependenciesResult, requirementsResult]) {
+  for (const result of [activitiesResult, checklistsResult, dependenciesResult, requirementsResult, evidenceResult, exceptionResult]) {
     if (result.error) throw new AccessControlError(`Could not load Work Plan details: ${result.error.message}`, 500);
   }
 
   const checklistCounts = new Map<string, number>();
+  const checklistResolvedCounts = new Map<string, number>();
   const predecessorCounts = new Map<string, number>();
   const resourceCounts = new Map<string, number>();
-  for (const item of checklistsResult.data ?? []) checklistCounts.set(item.runtime_activity_id, (checklistCounts.get(item.runtime_activity_id) ?? 0) + 1);
+  const evidenceCounts = new Map<string, number>();
+  const activeExceptionCounts = new Map<string, number>();
+  const overdueExceptionCounts = new Map<string, number>();
+  for (const item of checklistsResult.data ?? []) { checklistCounts.set(item.runtime_activity_id, (checklistCounts.get(item.runtime_activity_id) ?? 0) + 1); if (item.status !== "pending") checklistResolvedCounts.set(item.runtime_activity_id, (checklistResolvedCounts.get(item.runtime_activity_id) ?? 0) + 1); }
   for (const item of dependenciesResult.data ?? []) predecessorCounts.set(item.successor_runtime_activity_id, (predecessorCounts.get(item.successor_runtime_activity_id) ?? 0) + 1);
   for (const item of requirementsResult.data ?? []) if (item.runtime_activity_id) resourceCounts.set(item.runtime_activity_id, (resourceCounts.get(item.runtime_activity_id) ?? 0) + 1);
+  for (const item of evidenceResult.data ?? []) evidenceCounts.set(item.runtime_activity_id, (evidenceCounts.get(item.runtime_activity_id) ?? 0) + 1);
+  const now = Date.now();
+  for (const item of exceptionResult.data ?? []) { if (item.status === "open" || item.status === "in_remediation") activeExceptionCounts.set(item.runtime_activity_id, (activeExceptionCounts.get(item.runtime_activity_id) ?? 0) + 1); if (item.status !== "verified" && item.due_at && new Date(item.due_at).getTime() < now) overdueExceptionCounts.set(item.runtime_activity_id, (overdueExceptionCounts.get(item.runtime_activity_id) ?? 0) + 1); }
 
   const activities = (activitiesResult.data ?? []).map((item) => ({
     ...item,
     checklist_count: checklistCounts.get(item.id) ?? 0,
+    checklist_resolved_count: checklistResolvedCounts.get(item.id) ?? 0,
+    evidence_count: evidenceCounts.get(item.id) ?? 0,
+    active_exception_count: activeExceptionCounts.get(item.id) ?? 0,
+    overdue_exception_count: overdueExceptionCounts.get(item.id) ?? 0,
     resource_requirement_count: resourceCounts.get(item.id) ?? 0,
     predecessor_count: predecessorCounts.get(item.id) ?? 0,
   })) as BuildRuntimeActivity[];

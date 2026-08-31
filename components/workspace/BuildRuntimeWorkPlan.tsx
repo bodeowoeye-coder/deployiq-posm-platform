@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
-import type { BuildWorkPlan } from "@/lib/build/runtime/types";
+import { deriveBuildWorkPlanDisplayStatus, type BuildWorkPlan } from "@/lib/build/runtime/types";
 
 export function BuildRuntimeWorkPlan({ overview, selectedWorkPackageId, plan }: {
   overview: BuildProjectWorkspaceOverview;
@@ -16,6 +16,7 @@ export function BuildRuntimeWorkPlan({ overview, selectedWorkPackageId, plan }: 
   const workPackage = overview.workPackages.find((item) => item.id === selectedWorkPackageId) ?? null;
   const site = workPackage ? overview.sites.find((item) => item.id === workPackage.siteId) ?? null : null;
   const base = `/workspace/admin/projects/${overview.project.id}/activities`;
+  const displayStatus = plan ? deriveBuildWorkPlanDisplayStatus(plan.activities) : null;
 
   async function generate() {
     if (!workPackage || !site) return;
@@ -53,14 +54,14 @@ export function BuildRuntimeWorkPlan({ overview, selectedWorkPackageId, plan }: 
 
       {!workPackage ? <Empty>Select a Work Package to view its Work Plan.</Empty> : !workPackage.templateId ? <Empty>Assign an Operational Template before generating a Work Plan.</Empty> : !plan ? <Empty>No Work Plan has been created for this Work Package yet.</Empty> : <>
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-orange-600">Work Plan</p><h3 className="mt-2 text-2xl font-bold text-slate-950">{workPackage.name}</h3><p className="mt-1 text-sm text-slate-600">From {plan.source_template_name} · Version {plan.source_template_version}</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-bold capitalize text-orange-800">{plan.status.replaceAll("_", " ")}</span></div>
+          <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-orange-600">Work Plan</p><h3 className="mt-2 text-2xl font-bold text-slate-950">{workPackage.name}</h3><p className="mt-1 text-sm text-slate-600">From {plan.source_template_name} · Version {plan.source_template_version}</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-bold capitalize text-orange-800">{(displayStatus ?? "not_started").replaceAll("_", " ")}</span></div>
           <p className="mt-4 text-xs text-slate-500">Generated {new Date(plan.instantiated_at).toLocaleString()}</p>
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Activities" value={plan.counts.activities} /><Metric label="Checklists" value={plan.counts.checklists} /><Metric label="Dependencies" value={plan.counts.dependencies} /><Metric label="Resource Requirements" value={plan.counts.resourceRequirements} /></div>
           <p className="mt-4 text-sm text-slate-600">{plan.counts.notStarted} Not Started · {plan.counts.inProgress} In Progress · {plan.counts.completed} Completed · {plan.counts.blocked} Blocked</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h3 className="text-xl font-bold text-slate-950">Planned Activities</h3><p className="mt-2 text-sm text-slate-600">Planned activities generated from the approved Operational Template.</p>
-          <div className="mt-5 space-y-3">{plan.activities.map((activity) => <article key={activity.id} className="grid gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-[1fr_auto] md:items-center"><div><p className="font-bold text-slate-950">{activity.sequence}. {activity.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">{activity.category_name} · {activity.code}</p><p className="mt-1 text-xs text-slate-500">Activity Owner: {activity.activity_owner_user_id ? "Assigned" : "Unassigned"} · Supervisor: {activity.supervisor_user_id ? "Assigned" : "Unassigned"}</p></div><div className="text-xs text-slate-600 md:text-right"><p className="font-bold capitalize">{activity.planned_duration ?? 0} {activity.duration_unit} · {activity.status.replaceAll("_", " ")}</p><p className="mt-1">{countLabel(activity.checklist_count, "Checklist")} · {countLabel(activity.resource_requirement_count, "Resource Requirement")} · {countLabel(activity.predecessor_count, "Predecessor")}</p><a className="mt-2 inline-block font-bold text-orange-700" href={`${base}/${encodeURIComponent(activity.id)}`}>Manage Activity</a></div></article>)}</div>
+          <div className="mt-5 space-y-3">{plan.activities.map((activity) => <article key={activity.id} className="grid gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-[1fr_auto] md:items-center"><div><p className="font-bold text-slate-950">{activity.sequence}. {activity.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">{activity.category_name} · {activity.code}</p><p className="mt-1 text-xs text-slate-500">Activity Owner: {activity.activity_owner_user_id ? "Assigned" : "Unassigned"} · Supervisor: {activity.supervisor_user_id ? "Assigned" : "Unassigned"}</p><p className="mt-1 text-xs text-slate-500">Checklist {activity.checklist_resolved_count}/{activity.checklist_count} resolved · {activity.evidence_count} Evidence · {activity.active_exception_count} active Exceptions{activity.overdue_exception_count?` · ${activity.overdue_exception_count} overdue`:""}</p></div><div className="text-xs text-slate-600 md:text-right"><p className="font-bold capitalize">{activity.planned_duration ?? 0} {activity.duration_unit} · {activity.status.replaceAll("_", " ")}</p><p className="mt-1">{countLabel(activity.checklist_count, "Checklist")} · {countLabel(activity.resource_requirement_count, "Resource Requirement")} · {countLabel(activity.predecessor_count, "Predecessor")}</p><a className="mt-2 inline-block font-bold text-orange-700" href={`${base}/${encodeURIComponent(activity.id)}`}>Manage Activity</a></div></article>)}</div>
         </div>
       </>}
     </section>

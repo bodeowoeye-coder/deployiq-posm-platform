@@ -21,6 +21,10 @@ export type BuildRuntimeActivity = {
   blocked_at: string | null;
   blocker_reason: string | null;
   checklist_count: number;
+  checklist_resolved_count: number;
+  evidence_count: number;
+  active_exception_count: number;
+  overdue_exception_count: number;
   resource_requirement_count: number;
   predecessor_count: number;
 };
@@ -128,3 +132,10 @@ export type BuildWorkPlan = {
   };
   activities: BuildRuntimeActivity[];
 };
+
+export type BuildWorkPlanDisplayStatus = "not_started" | "in_progress" | "completed";
+export function deriveBuildWorkPlanDisplayStatus(activities: ReadonlyArray<Pick<BuildRuntimeActivity, "status">>): BuildWorkPlanDisplayStatus {
+  if (activities.length === 0 || activities.every((activity) => activity.status === "not_started")) return "not_started";
+  if (activities.every((activity) => activity.status === "completed" || activity.status === "approved")) return "completed";
+  return "in_progress";
+}

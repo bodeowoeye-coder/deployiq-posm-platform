@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ProjectActionsPanel } from "@/components/workspace/ProjectActionsPanel";
 import { BuildProjectShell } from "@/components/workspace/BuildProjectShell";
 import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
+import { getBuildManagementSummary, type BuildManagementSummary } from "@/lib/build/management/service";
 import { isBuildProjectType } from "@/lib/build/projects/types";
 import { CustomerWorkspaceRedirect, resolveCustomerWorkspaceContext } from "@/lib/workspace/customerAdmin";
 import { getCustomerProject } from "@/lib/workspace/projects";
@@ -26,8 +27,11 @@ export default async function WorkspaceProjectDetailPage({
   const canonicalProject = projectScope.selectedProject;
   if (!canonicalProject) notFound();
   if (isBuildProjectType(canonicalProject.project_type)) {
-    const overview = await getBuildProjectWorkspaceOverview(canonicalProject.id);
-    return <BuildProjectOverview overview={overview} />;
+    const [overview, management] = await Promise.all([
+      getBuildProjectWorkspaceOverview(canonicalProject.id),
+      getBuildManagementSummary(canonicalProject.id),
+    ]);
+    return <BuildProjectOverview overview={overview} management={management} />;
   }
   if (canonicalProject.project_type !== "Retail Deployment") notFound();
 
@@ -124,7 +128,7 @@ export default async function WorkspaceProjectDetailPage({
   );
 }
 
-function BuildProjectOverview({ overview }: { overview: BuildProjectWorkspaceOverview }) {
+function BuildProjectOverview({ overview, management }: { overview: BuildProjectWorkspaceOverview; management: BuildManagementSummary }) {
   const metrics = [
     ["Sites", overview.counts.sites],
     ["Work Packages", overview.counts.workPackages],
@@ -137,6 +141,23 @@ function BuildProjectOverview({ overview }: { overview: BuildProjectWorkspaceOve
   ] as const;
   return (
     <BuildProjectShell project={overview.project} activeSection="overview">
+      <section className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Project execution</p>
+          <h3 className="mt-1 text-xl font-bold text-slate-950">Current operational state</h3>
+        </div>
+        {!management.hasWorkPlans ? <p className="rounded-lg border border-dashed border-slate-300 p-5 text-sm text-slate-600">No runtime Work Plans exist for this Project yet.</p> : <>
+          <section><h4 className="font-bold text-slate-950">Activity Execution</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[["Total Activities",management.activities.total],["Not Started",management.activities.not_started],["In Progress",management.activities.in_progress],["Completed",management.activities.completed],["Blocked",management.activities.blocked],["Awaiting Review",management.activities.submitted_for_review],["Changes Required",management.activities.changes_required],["Approved",management.activities.approved]].map(([label,value])=><Metric key={label} label={String(label)} value={String(value)}/>) }
+          </div></section>
+          <section><h4 className="font-bold text-slate-950">Exception Health</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:max-w-2xl">
+            {[["Open Exceptions",management.exceptions.active],["Overdue Exceptions",management.exceptions.overdue]].map(([label,value])=><Metric key={label} label={String(label)} value={String(value)}/>) }
+          </div></section>
+          <ManagementAttention management={management} projectId={overview.project.id}/>
+          <section><h4 className="font-bold text-slate-950">Work Package Execution</h4><div className="mt-3 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="text-xs uppercase tracking-wider text-slate-500"><tr>{["Work Package","Site","Activities","Not Started","In Progress","Completed","Blocked","Awaiting Review","Changes Required","Approved","Active Exceptions","Overdue"].map((label)=><th key={label} className="border-b px-3 py-2">{label}</th>)}</tr></thead><tbody>{management.workPackages.map((item)=><tr key={item.id} className="border-b border-slate-100"><td className="px-3 py-3"><Link className="font-bold text-orange-700" href={`/workspace/admin/projects/${overview.project.id}/activities?workPackage=${item.id}`}>{item.name}</Link></td><td className="px-3 py-3">{item.siteName}</td>{[item.activities.total,item.activities.not_started,item.activities.in_progress,item.activities.completed,item.activities.blocked,item.activities.submitted_for_review,item.activities.changes_required,item.activities.approved,item.activeExceptions,item.overdueExceptions].map((value,index)=><td key={index} className="px-3 py-3">{value}</td>)}</tr>)}</tbody></table></div></section>
+          <section><div className="flex items-center justify-between gap-4"><h4 className="font-bold text-slate-950">Outstanding Responsibility</h4><Link href={`/workspace/admin/projects/${overview.project.id}/exceptions`} className="text-sm font-bold text-orange-700">Open Exception Register</Link></div>{management.responsibility.length?<ul className="mt-3 grid gap-3 md:grid-cols-2">{management.responsibility.map((item)=><li key={item.ownerUserId} className="rounded-lg border p-4"><p className="font-bold">{item.ownerName}</p><p className="mt-1 text-sm text-slate-600">{item.outstanding} outstanding · {item.overdue} overdue · {item.criticalHigh} Critical/High</p></li>)}</ul>:<p className="mt-3 text-sm text-slate-600">No outstanding Exception responsibility.</p>}</section>
+        </>}
+      </section>
       <section className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Build foundation</p>
@@ -161,6 +182,18 @@ function BuildProjectOverview({ overview }: { overview: BuildProjectWorkspaceOve
       </section>
     </BuildProjectShell>
   );
+}
+
+function ManagementAttention({management,projectId}:{management:BuildManagementSummary;projectId:string}) {
+  const items = [
+    [management.exceptions.critical,"Critical open Exceptions",`${projectId}/exceptions?severity=critical`],
+    [management.exceptions.high,"High open Exceptions",`${projectId}/exceptions?severity=high`],
+    [management.exceptions.overdue,"overdue Exceptions",`${projectId}/exceptions?due=overdue`],
+    [management.activities.blocked,"Blocked Activities",`${projectId}/activities`],
+    [management.activities.changes_required,"Activities with Changes Required",`${projectId}/activities`],
+    [management.activities.submitted_for_review,"Activities awaiting review",`${projectId}/activities`],
+  ].filter(([value])=>Number(value)>0);
+  return <section className="rounded-lg border border-slate-200 p-5"><h4 className="font-bold text-slate-950">Management Attention</h4>{items.length?<ul className="mt-3 grid gap-2 sm:grid-cols-2">{items.map(([value,label,path])=><li key={String(label)}><Link href={`/workspace/admin/projects/${path}`} className="text-sm font-semibold text-orange-700">{value} {label}</Link></li>)}</ul>:<p className="mt-2 text-sm text-slate-600">No outstanding management attention.</p>}</section>;
 }
 
 function FoundationList({ title, empty, rows }: { title: string; empty: string; rows: Array<{ id: string; name: string; detail: string }> }) {

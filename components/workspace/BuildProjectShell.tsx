@@ -6,6 +6,7 @@ export const BUILD_PROJECT_NAVIGATION = [
   { key: "sites", label: "Sites", segment: "sites" },
   { key: "work-packages", label: "Work Packages", segment: "work-packages" },
   { key: "activities", label: "Activities", segment: "activities" },
+  { key: "exceptions", label: "Exceptions", segment: "exceptions" },
   { key: "resources", label: "Resources", segment: "resources" },
   { key: "documents", label: "Documents", segment: "documents" },
   { key: "reports", label: "Reports", segment: "reports" },

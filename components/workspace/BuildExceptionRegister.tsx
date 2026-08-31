@@ -1,0 +1,27 @@
+import Link from "next/link";
+import type { BuildExceptionFilters, BuildManagementSummary } from "@/lib/build/management/service";
+import { filterBuildExceptions } from "@/lib/build/management/service";
+
+export function BuildExceptionRegister({ projectId, management, filters }: { projectId: string; management: BuildManagementSummary; filters: BuildExceptionFilters }) {
+  const rows = filterBuildExceptions(management.exceptionsRegister, filters);
+  const owners = unique(management.exceptionsRegister.map((row)=>[row.ownerUserId,row.ownerName] as const));
+  const sites = unique(management.exceptionsRegister.map((row)=>[row.siteId,row.siteName] as const));
+  const workPackages = unique(management.exceptionsRegister.map((row)=>[row.workPackageId,row.workPackageName] as const));
+  return <section className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div><p className="text-xs font-black uppercase tracking-[0.2em] text-orange-600">Project management register</p><h3 className="mt-2 text-xl font-bold text-slate-950">Exceptions</h3><p className="mt-2 text-sm text-slate-600">Active and historical corrective issues derived from authoritative Runtime Activities.</p></div>
+    <form className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-3">
+      <Filter name="status" label="Status" value={filters.status} options={[["open","Open"],["in_remediation","In Remediation"],["resolved","Resolved"],["verified","Verified"]]}/>
+      <Filter name="severity" label="Severity" value={filters.severity} options={[["low","Low"],["medium","Medium"],["high","High"],["critical","Critical"]]}/>
+      <Filter name="owner" label="Exception Owner" value={filters.owner} options={owners}/>
+      <Filter name="due" label="Due state" value={filters.due} options={[["due","Due"],["overdue","Overdue"]]}/>
+      <Filter name="site" label="Site" value={filters.site} options={sites}/>
+      <Filter name="workPackage" label="Work Package" value={filters.workPackage} options={workPackages}/>
+      <div className="flex items-end gap-2"><button className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-bold text-white">Apply filters</button><Link href={`/workspace/admin/projects/${projectId}/exceptions`} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Clear</Link></div>
+    </form>
+    {!management.exceptionsRegister.length ? <p className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-600">No Exceptions have been recorded for active Project work.</p> : !rows.length ? <p className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-600">No Exceptions match these filters.</p> : <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="text-xs uppercase tracking-wider text-slate-500"><tr>{["Exception","Severity","Status","Site / Work Package","Activity","Owner","Due","Inspection","Corrective Evidence","Resolution / Verification"].map((label)=><th key={label} className="border-b px-3 py-2">{label}</th>)}</tr></thead><tbody>{rows.map((row)=><tr key={row.id} className="border-b border-slate-100 align-top"><td className="px-3 py-3"><Link href={`/workspace/admin/projects/${projectId}/activities/${row.activityId}?view=exceptions`} className="font-bold text-orange-700">{row.title}</Link></td><td className="px-3 py-3 capitalize">{row.severity}</td><td className="px-3 py-3">{label(row.status)}</td><td className="px-3 py-3">{row.siteName}<br/><span className="text-xs text-slate-500">{row.workPackageName}</span></td><td className="px-3 py-3"><Link href={`/workspace/admin/projects/${projectId}/activities/${row.activityId}`} className="font-semibold text-orange-700">{row.activityName}</Link></td><td className="px-3 py-3">{row.ownerName}</td><td className="px-3 py-3">{row.dueAt?new Date(row.dueAt).toLocaleDateString("en-GB"):"No due date"}{row.overdue?<span className="block text-xs font-bold text-rose-700">Overdue</span>:null}</td><td className="px-3 py-3">{row.inspectionOutcome==="changes_required"?"Changes Required":"Accepted"}<br/><span className="text-xs text-slate-500">{row.inspectionReviewedAt?new Date(row.inspectionReviewedAt).toLocaleString("en-GB"):"Date unavailable"}</span></td><td className="px-3 py-3">{row.correctiveEvidenceCount} records</td><td className="px-3 py-3">{row.status==="verified"?"Verified":row.status==="resolved"?"Awaiting verification":row.status==="in_remediation"?"Corrective action underway":"Remediation not started"}</td></tr>)}</tbody></table></div>}
+  </section>;
+}
+
+function Filter({name,label:labelText,value,options}:{name:string;label:string;value?:string;options:ReadonlyArray<readonly [string,string]>}) { return <label className="grid gap-1 text-xs font-bold uppercase tracking-wider text-slate-500">{labelText}<select name={name} defaultValue={value??""} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal normal-case tracking-normal text-slate-900"><option value="">All</option>{options.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label>; }
+function unique(values: ReadonlyArray<readonly [string,string]>) { return [...new Map(values.filter(([id])=>id).map((value)=>[value[0],value])).values()].sort((a,b)=>a[1].localeCompare(b[1])); }
+function label(value:string) { return value.split("_").map((part)=>part[0]?.toUpperCase()+part.slice(1)).join(" "); }
