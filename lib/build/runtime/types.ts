@@ -136,6 +136,20 @@ export type BuildWorkPlan = {
   activities: BuildRuntimeActivity[];
 };
 
+export type BuildWorkPlanScheduleActivity = {
+  activityId: string;
+  plannedStartAt: string;
+  plannedFinishAt: string;
+};
+
+export type BuildWorkPlanSchedulePreview = {
+  workPlanId: string;
+  baselineStart: string;
+  scheduleBaselinedAt: string | null;
+  persisted: boolean;
+  activities: BuildWorkPlanScheduleActivity[];
+};
+
 export type BuildWorkPlanDisplayStatus = "not_started" | "in_progress" | "completed";
 export function deriveBuildWorkPlanDisplayStatus(activities: ReadonlyArray<Pick<BuildRuntimeActivity, "status">>): BuildWorkPlanDisplayStatus {
   if (activities.length === 0 || activities.every((activity) => activity.status === "not_started")) return "not_started";

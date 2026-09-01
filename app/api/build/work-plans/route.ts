@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AccessControlError } from "@/lib/accessControl";
-import { createWorkPlan, getWorkPlan } from "@/lib/build/runtime/service";
+import { baselineBuildWorkPlanSchedule, createWorkPlan, getWorkPlan, previewBuildWorkPlanSchedule } from "@/lib/build/runtime/service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,5 +24,22 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const plan = await createWorkPlan({ request, projectId: value(body.projectId), siteId: value(body.siteId), workPackageId: value(body.workPackageId) });
     return NextResponse.json({ plan });
+  } catch (error) { return failure(error); }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const params = {
+      request, projectId: value(body.projectId), siteId: value(body.siteId),
+      workPackageId: value(body.workPackageId), baselineStart: value(body.baselineStart),
+    };
+    if (body.action === "preview-schedule") {
+      return NextResponse.json({ schedule: await previewBuildWorkPlanSchedule(params) });
+    }
+    if (body.action === "baseline-schedule") {
+      return NextResponse.json(await baselineBuildWorkPlanSchedule(params));
+    }
+    return NextResponse.json({ error: "Select a valid Work Plan schedule action." }, { status: 400 });
   } catch (error) { return failure(error); }
 }

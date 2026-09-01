@@ -3,7 +3,7 @@ import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { assertWorkPackageAccess } from "@/lib/build/workPackages/service";
 import { instantiateTemplate } from "@/lib/build/templates/service";
 import { fetchBuildEvidenceSignature } from "@/lib/build/runtime/evidenceVerification";
-import type { BuildEvidenceUploadAuthorization, BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimeEvidence, BuildRuntimeEvidenceType, BuildRuntimePerson, BuildWorkPlan } from "@/lib/build/runtime/types";
+import type { BuildEvidenceUploadAuthorization, BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimeEvidence, BuildRuntimeEvidenceType, BuildRuntimePerson, BuildWorkPlan, BuildWorkPlanSchedulePreview } from "@/lib/build/runtime/types";
 
 export const BUILD_EVIDENCE_BUCKET = "build-runtime-evidence" as const;
 export const BUILD_EVIDENCE_MIME_TYPES = {
@@ -550,4 +550,82 @@ export async function createWorkPlan(params: { request?: Request; projectId: str
   const row = await loadWorkPlanByScope({ clientId: access.project.client_id, projectId: access.project.id, siteId: access.site.id, workPackageId: access.workPackage.id });
   if (!row || text(row.id) !== text(data)) throw new AccessControlError("The generated Work Plan could not be resolved.", 500);
   return await hydrateWorkPlan(row);
+}
+
+function canonicalBaselineStart(value: string) {
+  const candidate = text(value);
+  const instant = new Date(candidate);
+  if (!candidate || !Number.isFinite(instant.getTime())) {
+    throw new AccessControlError("Select a valid Schedule Baseline start date and time.", 400);
+  }
+  return instant.toISOString();
+}
+
+function normalizeScheduleResult(value: unknown): BuildWorkPlanSchedulePreview {
+  const row = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const activities = Array.isArray(row.activities) ? row.activities : [];
+  const normalized = {
+    workPlanId: text(row.work_plan_id),
+    baselineStart: text(row.baseline_start),
+    scheduleBaselinedAt: text(row.schedule_baselined_at) || null,
+    persisted: row.persisted === true,
+    activities: activities.map((item) => {
+      const activity = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      return {
+        activityId: text(activity.activity_id),
+        plannedStartAt: text(activity.planned_start_at),
+        plannedFinishAt: text(activity.planned_finish_at),
+      };
+    }),
+  };
+  if (!normalized.workPlanId || !normalized.baselineStart || normalized.activities.some((item) => !item.activityId || !item.plannedStartAt || !item.plannedFinishAt)) {
+    throw new AccessControlError("The Work Plan schedule response could not be verified.", 500);
+  }
+  return normalized;
+}
+
+async function runWorkPlanScheduleEngine(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; baselineStart: string; persist: boolean }) {
+  const access = await assertWorkPackageAccess({ ...params, canWrite: true, allowCustomerAdminWrite: true });
+  if (!access.workPackage || access.workPackage.archived_at || access.workPackage.status === "archived") {
+    throw new AccessControlError("Work Package is unavailable.", 400);
+  }
+  const row = await loadWorkPlanByScope({ clientId: access.project.client_id, projectId: access.project.id, siteId: access.site.id, workPackageId: access.workPackage.id });
+  if (!row) throw new AccessControlError("Generate the Work Plan before setting its Schedule Baseline.", 400);
+  const baselineStart = canonicalBaselineStart(params.baselineStart);
+  const { data, error } = await createAdminSupabase().rpc("baseline_build_work_plan_schedule", {
+    p_work_plan_id: text(row.id), p_baseline_start: baselineStart, p_persist: params.persist,
+  });
+  const messages: Record<string, string> = {
+    BUILD_SCHEDULE_ALREADY_BASELINED: "This Work Plan already has a Schedule Baseline.",
+    BUILD_SCHEDULE_PARTIAL_BASELINE_STATE: "This Work Plan contains an incomplete Schedule Baseline and cannot be overwritten.",
+    BUILD_SCHEDULE_ACTIVITY_DURATION_INVALID: "Every active Activity needs a valid hours, days, or weeks duration before baselining.",
+    BUILD_SCHEDULE_DEPENDENCY_ANCESTRY_INVALID: "The Work Plan dependency graph contains an unavailable or archived Activity.",
+    BUILD_SCHEDULE_SELF_DEPENDENCY: "The Work Plan dependency graph contains a self dependency.",
+    BUILD_SCHEDULE_DUPLICATE_DEPENDENCY: "The Work Plan dependency graph contains a duplicate dependency.",
+    BUILD_SCHEDULE_DEPENDENCY_CYCLE: "The Work Plan dependency graph contains a cycle.",
+    BUILD_SCHEDULE_DEPENDENCY_VALUE_INVALID: "The Work Plan contains an unsupported dependency or lag value.",
+    BUILD_SCHEDULE_NO_ACTIVE_ACTIVITIES: "The Work Plan has no active Activities to baseline.",
+  };
+  if (error) {
+    const key = Object.keys(messages).find((candidate) => error.message.includes(candidate));
+    throw new AccessControlError(key ? messages[key] : "The Work Plan Schedule Baseline could not be completed.", key ? 400 : 500);
+  }
+  const result = normalizeScheduleResult(data);
+  if (result.workPlanId !== text(row.id) || result.persisted !== params.persist) {
+    throw new AccessControlError("The Work Plan schedule response could not be verified.", 500);
+  }
+  return result;
+}
+
+export async function previewBuildWorkPlanSchedule(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; baselineStart: string }) {
+  return runWorkPlanScheduleEngine({ ...params, persist: false });
+}
+
+export async function baselineBuildWorkPlanSchedule(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; baselineStart: string }) {
+  const schedule = await runWorkPlanScheduleEngine({ ...params, persist: true });
+  const plan = await getWorkPlan(params);
+  if (!plan || plan.id !== schedule.workPlanId || !plan.schedule_baselined_at) {
+    throw new AccessControlError("The persisted Work Plan Schedule Baseline could not be verified.", 500);
+  }
+  return { schedule, plan };
 }
