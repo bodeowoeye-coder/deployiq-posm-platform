@@ -12,6 +12,8 @@ export type BuildRuntimeActivity = {
   description: string | null;
   planned_duration: number | null;
   duration_unit: "hours" | "days" | "weeks";
+  planned_start_at: string | null;
+  planned_finish_at: string | null;
   status: "not_started" | "in_progress" | "completed" | "blocked" | "submitted_for_review" | "changes_required" | "approved";
   requires_approval: boolean;
   activity_owner_user_id: string | null;
@@ -116,6 +118,7 @@ export type BuildWorkPlan = {
   status: BuildWorkPlanStatus;
   instantiated_at: string;
   instantiated_by: string | null;
+  schedule_baselined_at: string | null;
   archived_at: string | null;
   counts: {
     activities: number;
