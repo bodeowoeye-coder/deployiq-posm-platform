@@ -150,11 +150,16 @@ function BuildProjectOverview({ overview, management }: { overview: BuildProject
           <section><h4 className="font-bold text-slate-950">Activity Execution</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[["Total Activities",management.activities.total],["Not Started",management.activities.not_started],["In Progress",management.activities.in_progress],["Completed",management.activities.completed],["Blocked",management.activities.blocked],["Awaiting Review",management.activities.submitted_for_review],["Changes Required",management.activities.changes_required],["Approved",management.activities.approved]].map(([label,value])=><Metric key={label} label={String(label)} value={String(value)}/>) }
           </div></section>
+          <section><h4 className="font-bold text-slate-950">Schedule Performance</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[["Scheduled Activities",management.schedule.scheduled,false],["Currently Overdue",management.schedule.currentlyOverdue,true],["Completed On Time",management.schedule.completedOnTime,false],["Completed Late",management.schedule.completedLate,false]].map(([label,value,attention])=><Metric key={String(label)} label={String(label)} value={String(value)} attention={Boolean(attention) && Number(value) > 0}/>) }
+          </div>{management.schedule.dataIncomplete > 0 ? <p className="mt-3 text-sm font-semibold text-amber-800">{management.schedule.dataIncomplete} {countLabel(management.schedule.dataIncomplete, "Activity has", "Activities have")} incomplete schedule history or dates.</p> : null}</section>
+          <section className="rounded-lg border border-slate-200 p-5"><h4 className="font-bold text-slate-950">Schedule Attention</h4><div className="mt-3 grid gap-3 sm:grid-cols-3"><Metric label="Work Packages with overdue work" value={String(management.schedule.workPackagesOverdue)} attention={management.schedule.workPackagesOverdue > 0}/><Metric label="Blocked and overdue" value={String(management.schedule.blockedOverdue)} attention={management.schedule.blockedOverdue > 0}/><Metric label="Changes Required and overdue" value={String(management.schedule.changesRequiredOverdue)} attention={management.schedule.changesRequiredOverdue > 0}/></div></section>
           <section><h4 className="font-bold text-slate-950">Exception Health</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:max-w-2xl">
             {[["Open Exceptions",management.exceptions.active],["Overdue Exceptions",management.exceptions.overdue]].map(([label,value])=><Metric key={label} label={String(label)} value={String(value)}/>) }
           </div></section>
           <ManagementAttention management={management} projectId={overview.project.id}/>
-          <section><h4 className="font-bold text-slate-950">Work Package Execution</h4><div className="mt-3 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="text-xs uppercase tracking-wider text-slate-500"><tr>{["Work Package","Site","Activities","Not Started","In Progress","Completed","Blocked","Awaiting Review","Changes Required","Approved","Active Exceptions","Overdue"].map((label)=><th key={label} className="border-b px-3 py-2">{label}</th>)}</tr></thead><tbody>{management.workPackages.map((item)=><tr key={item.id} className="border-b border-slate-100"><td className="px-3 py-3"><Link className="font-bold text-orange-700" href={`/workspace/admin/projects/${overview.project.id}/activities?workPackage=${item.id}`}>{item.name}</Link></td><td className="px-3 py-3">{item.siteName}</td>{[item.activities.total,item.activities.not_started,item.activities.in_progress,item.activities.completed,item.activities.blocked,item.activities.submitted_for_review,item.activities.changes_required,item.activities.approved,item.activeExceptions,item.overdueExceptions].map((value,index)=><td key={index} className="px-3 py-3">{value}</td>)}</tr>)}</tbody></table></div></section>
+          <section><h4 className="font-bold text-slate-950">Work Package Execution</h4><div className="mt-3 max-w-full overflow-x-auto overscroll-x-contain rounded-lg border border-slate-200 pb-2"><table className="min-w-[1500px] text-left text-sm"><thead className="text-xs uppercase tracking-wider text-slate-500"><tr>{["Work Package","Site","Activities","Not Started","In Progress","Completed","Blocked","Awaiting Review","Changes Required","Approved","Scheduled","Not Yet Due","On Schedule","Schedule Overdue","Completed On Time","Completed Late","Active Exceptions","Exception Overdue"].map((label)=><th key={label} className="whitespace-nowrap border-b px-3 py-3">{label}</th>)}</tr></thead><tbody>{management.workPackages.map((item)=><tr key={item.id} className="border-b border-slate-100 last:border-b-0"><td className="min-w-56 whitespace-nowrap px-3 py-3"><Link className="font-bold text-orange-700" href={`/workspace/admin/projects/${overview.project.id}/activities?workPackage=${item.id}`}>{item.name}</Link></td><td className="min-w-52 whitespace-nowrap px-3 py-3">{item.siteName}</td>{[item.activities.total,item.activities.not_started,item.activities.in_progress,item.activities.completed,item.activities.blocked,item.activities.submitted_for_review,item.activities.changes_required,item.activities.approved,item.schedule.scheduled,item.schedule.notYetDue,item.schedule.onSchedule,item.schedule.overdue,item.schedule.completedOnTime,item.schedule.completedLate,item.activeExceptions,item.overdueExceptions].map((value,index)=><td key={index} className="whitespace-nowrap px-3 py-3">{value}</td>)}</tr>)}</tbody></table></div></section>
+          <section className="border-t border-slate-200 pt-5"><h4 className="font-bold text-slate-950">Schedule Responsibility</h4>{management.scheduleResponsibility.length?<ul className="mt-2 divide-y divide-slate-100">{management.scheduleResponsibility.map((item)=><li key={item.ownerUserId} className="py-3"><p className="font-semibold text-slate-900">{item.ownerName}</p><p className="mt-1 text-sm text-slate-600">{item.assignedScheduled} scheduled · {item.overdueToStart} overdue to start · {item.overdueToComplete} overdue to complete · {item.completedLate} completed late · {item.blockedOverdue} blocked and overdue · {item.awaitingReview} awaiting review</p></li>)}</ul>:<p className="mt-3 text-sm text-slate-600">No scheduled Activity responsibility.</p>}</section>
           <section><div className="flex items-center justify-between gap-4"><h4 className="font-bold text-slate-950">Outstanding Responsibility</h4><Link href={`/workspace/admin/projects/${overview.project.id}/exceptions`} className="text-sm font-bold text-orange-700">Open Exception Register</Link></div>{management.responsibility.length?<ul className="mt-3 grid gap-3 md:grid-cols-2">{management.responsibility.map((item)=><li key={item.ownerUserId} className="rounded-lg border p-4"><p className="font-bold">{item.ownerName}</p><p className="mt-1 text-sm text-slate-600">{item.outstanding} outstanding · {item.overdue} overdue · {item.criticalHigh} Critical/High</p></li>)}</ul>:<p className="mt-3 text-sm text-slate-600">No outstanding Exception responsibility.</p>}</section>
         </>}
       </section>
@@ -186,12 +191,12 @@ function BuildProjectOverview({ overview, management }: { overview: BuildProject
 
 function ManagementAttention({management,projectId}:{management:BuildManagementSummary;projectId:string}) {
   const items = [
-    [management.exceptions.critical,"Critical open Exceptions",`${projectId}/exceptions?severity=critical`],
-    [management.exceptions.high,"High open Exceptions",`${projectId}/exceptions?severity=high`],
-    [management.exceptions.overdue,"overdue Exceptions",`${projectId}/exceptions?due=overdue`],
-    [management.activities.blocked,"Blocked Activities",`${projectId}/activities`],
-    [management.activities.changes_required,"Activities with Changes Required",`${projectId}/activities`],
-    [management.activities.submitted_for_review,"Activities awaiting review",`${projectId}/activities`],
+    [management.exceptions.critical,countLabel(management.exceptions.critical,"Critical open Exception","Critical open Exceptions"),`${projectId}/exceptions?severity=critical`],
+    [management.exceptions.high,countLabel(management.exceptions.high,"High open Exception","High open Exceptions"),`${projectId}/exceptions?severity=high`],
+    [management.exceptions.overdue,countLabel(management.exceptions.overdue,"overdue Exception","overdue Exceptions"),`${projectId}/exceptions?due=overdue`],
+    [management.activities.blocked,countLabel(management.activities.blocked,"Blocked Activity","Blocked Activities"),`${projectId}/activities`],
+    [management.activities.changes_required,countLabel(management.activities.changes_required,"Activity with Changes Required","Activities with Changes Required"),`${projectId}/activities`],
+    [management.activities.submitted_for_review,countLabel(management.activities.submitted_for_review,"Activity awaiting review","Activities awaiting review"),`${projectId}/activities`],
   ].filter(([value])=>Number(value)>0);
   return <section className="rounded-lg border border-slate-200 p-5"><h4 className="font-bold text-slate-950">Management Attention</h4>{items.length?<ul className="mt-3 grid gap-2 sm:grid-cols-2">{items.map(([value,label,path])=><li key={String(label)}><Link href={`/workspace/admin/projects/${path}`} className="text-sm font-semibold text-orange-700">{value} {label}</Link></li>)}</ul>:<p className="mt-2 text-sm text-slate-600">No outstanding management attention.</p>}</section>;
 }
@@ -200,13 +205,17 @@ function FoundationList({ title, empty, rows }: { title: string; empty: string; 
   return <section className="rounded-lg border border-slate-200 p-5"><h4 className="font-bold text-slate-950">{title}</h4>{rows.length === 0 ? <p className="mt-3 text-sm text-slate-600">{empty}</p> : <ul className="mt-3 divide-y divide-slate-100">{rows.map((row) => <li key={row.id} className="py-3"><p className="font-semibold text-slate-900">{row.name}</p><p className="mt-1 text-xs text-slate-500">{row.detail || "No additional details"}</p></li>)}</ul>}</section>;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, attention = false }: { label: string; value: string; attention?: boolean }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">{label}</p>
-      <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
+    <div className={attention ? "rounded-lg border border-orange-200 bg-orange-50/60 p-4" : "rounded-lg border border-slate-200 bg-white p-4"}>
+      <p className={attention ? "text-xs font-semibold uppercase tracking-widest text-orange-700" : "text-xs font-semibold uppercase tracking-widest text-slate-500"}>{label}</p>
+      <p className={attention ? "mt-2 text-lg font-bold text-orange-900" : "mt-2 text-lg font-bold text-slate-950"}>{value}</p>
     </div>
   );
+}
+
+function countLabel(count: number, singular: string, plural: string) {
+  return count === 1 ? singular : plural;
 }
 
 function formatDate(value: string | null | undefined) {

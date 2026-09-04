@@ -29,6 +29,7 @@ export type BuildRuntimeActivity = {
   overdue_exception_count: number;
   resource_requirement_count: number;
   predecessor_count: number;
+  schedule_performance: import("../management/schedulePerformance").SchedulePerformance;
 };
 
 export type BuildRuntimePerson = { userId: string; name: string; roleLabel: string };

@@ -34,6 +34,15 @@ test("Activity navigation has the accepted long-term sections", () => {
 test("Overview is a read-only operational summary", () => {
   for (const label of ["Activity Name", "Activity Code", "Category", "Current Status", "Planned Duration", "Actual Start", "Actual Completion", "Dependencies", "Checklist Requirements", "Resource Requirements", "Activity Owner", "Supervisor"]) assert.match(activity, new RegExp(`label="${label}"`));
 });
+test("Activity list presents concise factual Planned vs Actual schedule information", () => {
+  for (const label of ["Planned", "Actual start", "Actual work finish", "Submitted for review", "Schedule ·"]) assert.match(list, new RegExp(label));
+  assert.match(list, /schedule_performance/);
+  assert.doesNotMatch(list, /critical path|fault|forecast completion/i);
+});
+test("Activity detail keeps execution and schedule status separate", () => {
+  for (const label of ["Schedule Performance", "Planned vs Actual", "Execution Status", "Schedule Status", "Planned Start", "Planned Finish", "Actual Work Finish", "Start Variance", "Finish Variance", "Current Delay", "Inspection Accepted"]) assert.match(activity, new RegExp(label));
+  assert.match(activity, /submitted_for_review[\s\S]*Submitted for Review/);
+});
 test("completed and review-locked Activity responsibility is read-only", () => {
   assert.match(activity, /\["completed", "submitted_for_review", "approved"\]\.includes\(activity\.status\)[\s\S]*Activity responsibility is read-only in its current review state/);
   assert.match(service, /params\.action === "assign_responsibility"[\s\S]*\["completed", "submitted_for_review", "approved"\]\.includes[\s\S]*Activity responsibility is read-only in its current review state/);

@@ -3,6 +3,7 @@ import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { assertWorkPackageAccess } from "@/lib/build/workPackages/service";
 import { instantiateTemplate } from "@/lib/build/templates/service";
 import { fetchBuildEvidenceSignature } from "@/lib/build/runtime/evidenceVerification";
+import { deriveSchedulePerformance } from "@/lib/build/management/schedulePerformance";
 import type { BuildEvidenceUploadAuthorization, BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimeEvidence, BuildRuntimeEvidenceType, BuildRuntimePerson, BuildWorkPlan, BuildWorkPlanSchedulePreview } from "@/lib/build/runtime/types";
 
 export const BUILD_EVIDENCE_BUCKET = "build-runtime-evidence" as const;
@@ -36,15 +37,16 @@ async function loadWorkPlanByScope(params: { clientId: string; projectId: string
 async function hydrateWorkPlan(row: Record<string, unknown>): Promise<BuildWorkPlan> {
   const planId = text(row.id);
   const supabase = createAdminSupabase();
-  const [activitiesResult, checklistsResult, dependenciesResult, requirementsResult, evidenceResult, exceptionResult] = await Promise.all([
+  const [activitiesResult, checklistsResult, dependenciesResult, requirementsResult, evidenceResult, exceptionResult, scheduleEventResult] = await Promise.all([
     supabase.from("build_runtime_activities").select("*").eq("work_plan_id", planId).is("archived_at", null).order("sequence"),
     supabase.from("build_runtime_checklist_items").select("id,runtime_activity_id,status").eq("work_plan_id", planId).is("archived_at", null),
     supabase.from("build_runtime_dependencies").select("id,successor_runtime_activity_id").eq("work_plan_id", planId),
     supabase.from("build_runtime_resource_requirements").select("id,runtime_activity_id").eq("work_plan_id", planId),
     supabase.from("build_runtime_evidence").select("id,runtime_activity_id").eq("work_plan_id", planId).is("archived_at", null),
     supabase.from("build_runtime_exceptions").select("id,runtime_activity_id,status,due_at").eq("work_plan_id", planId),
+    supabase.from("build_runtime_activity_events").select("runtime_activity_id,event_type,occurred_at,event_sequence").eq("work_plan_id", planId).in("event_type", ["submitted_for_review", "inspection_accepted"]),
   ]);
-  for (const result of [activitiesResult, checklistsResult, dependenciesResult, requirementsResult, evidenceResult, exceptionResult]) {
+  for (const result of [activitiesResult, checklistsResult, dependenciesResult, requirementsResult, evidenceResult, exceptionResult, scheduleEventResult]) {
     if (result.error) throw new AccessControlError(`Could not load Work Plan details: ${result.error.message}`, 500);
   }
 
@@ -59,8 +61,10 @@ async function hydrateWorkPlan(row: Record<string, unknown>): Promise<BuildWorkP
   for (const item of dependenciesResult.data ?? []) predecessorCounts.set(item.successor_runtime_activity_id, (predecessorCounts.get(item.successor_runtime_activity_id) ?? 0) + 1);
   for (const item of requirementsResult.data ?? []) if (item.runtime_activity_id) resourceCounts.set(item.runtime_activity_id, (resourceCounts.get(item.runtime_activity_id) ?? 0) + 1);
   for (const item of evidenceResult.data ?? []) evidenceCounts.set(item.runtime_activity_id, (evidenceCounts.get(item.runtime_activity_id) ?? 0) + 1);
-  const now = Date.now();
-  for (const item of exceptionResult.data ?? []) { if (item.status === "open" || item.status === "in_remediation") activeExceptionCounts.set(item.runtime_activity_id, (activeExceptionCounts.get(item.runtime_activity_id) ?? 0) + 1); if (item.status !== "verified" && item.due_at && new Date(item.due_at).getTime() < now) overdueExceptionCounts.set(item.runtime_activity_id, (overdueExceptionCounts.get(item.runtime_activity_id) ?? 0) + 1); }
+  const requestNow = new Date();
+  for (const item of exceptionResult.data ?? []) { if (item.status === "open" || item.status === "in_remediation") activeExceptionCounts.set(item.runtime_activity_id, (activeExceptionCounts.get(item.runtime_activity_id) ?? 0) + 1); if (item.status !== "verified" && item.due_at && new Date(item.due_at).getTime() < requestNow.getTime()) overdueExceptionCounts.set(item.runtime_activity_id, (overdueExceptionCounts.get(item.runtime_activity_id) ?? 0) + 1); }
+  const eventsByActivity = new Map<string, Array<{ event_type: string; occurred_at: string; event_sequence: number | null }>>();
+  for (const event of scheduleEventResult.data ?? []) eventsByActivity.set(text(event.runtime_activity_id), [...(eventsByActivity.get(text(event.runtime_activity_id)) ?? []), { event_type: text(event.event_type), occurred_at: text(event.occurred_at), event_sequence: event.event_sequence == null ? null : Number(event.event_sequence) }]);
 
   const activities = (activitiesResult.data ?? []).map((item) => ({
     ...item,
@@ -71,6 +75,10 @@ async function hydrateWorkPlan(row: Record<string, unknown>): Promise<BuildWorkP
     overdue_exception_count: overdueExceptionCounts.get(item.id) ?? 0,
     resource_requirement_count: resourceCounts.get(item.id) ?? 0,
     predecessor_count: predecessorCounts.get(item.id) ?? 0,
+    schedule_performance: deriveSchedulePerformance({ scheduleConfirmedAt: text(row.schedule_baselined_at) || null,
+      plannedStartAt: text(item.planned_start_at) || null, plannedFinishAt: text(item.planned_finish_at) || null,
+      status: text(item.status) as BuildRuntimeActivity["status"], startedAt: text(item.started_at) || null,
+      completedAt: text(item.completed_at) || null, events: eventsByActivity.get(text(item.id)) ?? [] }, requestNow),
   })) as BuildRuntimeActivity[];
 
   return {
