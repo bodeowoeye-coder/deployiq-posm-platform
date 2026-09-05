@@ -2,6 +2,8 @@ import "server-only";
 
 import { createAdminSupabase } from "../../supabaseAdmin.ts";
 import { resolveCanonicalBuildProject } from "../projects/service.ts";
+import { deriveDependencyIntelligence, type DependencyEdgeIntelligence } from "./dependencyIntelligence.ts";
+import { deriveDependencyManagementRollup, type DependencyManagementCounts, type WorkPackageDependencyCounts } from "./dependencyRollup.ts";
 import { deriveSchedulePerformance, isCurrentlyOverdue, type SchedulePerformance, type SchedulePerformanceState } from "./schedulePerformance.ts";
 
 type Row = Record<string, unknown>;
@@ -22,10 +24,10 @@ export type BuildManagementSummary = {
   activities: Record<ManagementActivityStatus | "total", number>;
   exceptions: Record<ManagementExceptionStatus | "total" | "active" | "overdue" | "critical" | "high", number>;
   schedule: { scheduled: number; currentlyOverdue: number; completedOnTime: number; completedLate: number; workPackagesOverdue: number; blockedOverdue: number; changesRequiredOverdue: number; dataIncomplete: number };
-  workPackages: Array<{ id: string; name: string; siteId: string; siteName: string; activities: BuildManagementSummary["activities"]; activeExceptions: number; overdueExceptions: number; schedule: { scheduled: number; notYetDue: number; onSchedule: number; overdue: number; completedOnTime: number; completedLate: number } }>;
+  workPackages: Array<{ id: string; name: string; siteId: string; siteName: string; activities: BuildManagementSummary["activities"]; activeExceptions: number; overdueExceptions: number; schedule: { scheduled: number; notYetDue: number; onSchedule: number; overdue: number; completedOnTime: number; completedLate: number }; dependencies: WorkPackageDependencyCounts }>;
   responsibility: Array<{ ownerUserId: string; ownerName: string; outstanding: number; overdue: number; criticalHigh: number }>;
   scheduleResponsibility: Array<{ ownerUserId: string; ownerName: string; assignedScheduled: number; overdueToStart: number; overdueToComplete: number; completedLate: number; blockedOverdue: number; awaitingReview: number }>;
-  dependencyFacts: { total: number; incompleteFinishToStart: number };
+  dependencyFacts: DependencyManagementCounts;
   exceptionsRegister: BuildManagementException[];
 };
 
@@ -97,7 +99,7 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     supabase.from("build_runtime_inspections").select("id,runtime_activity_id,outcome,reviewed_at").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds),
     supabase.from("build_runtime_evidence").select("id,runtime_activity_id,runtime_exception_id").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds).not("runtime_exception_id", "is", null).is("archived_at", null),
     supabase.from("build_runtime_activity_events").select("runtime_activity_id,event_type,occurred_at,event_sequence").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds).in("event_type", ["submitted_for_review", "inspection_accepted"]),
-    supabase.from("build_runtime_dependencies").select("predecessor_runtime_activity_id,successor_runtime_activity_id,dependency_type,lag_value,lag_unit").in("work_plan_id", planIds),
+    supabase.from("build_runtime_dependencies").select("id,work_plan_id,predecessor_runtime_activity_id,successor_runtime_activity_id,dependency_type,lag_value,lag_unit,mandatory").in("work_plan_id", planIds),
   ]) : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
   requireQuery(exceptionResult.error, "exceptions"); requireQuery(inspectionResult.error, "inspections"); requireQuery(evidenceResult.error, "corrective evidence"); requireQuery(eventResult.error, "activity history"); requireQuery(dependencyResult.error, "dependencies");
   const exceptionRows = list(exceptionResult.data as Row[] | null);
@@ -122,6 +124,36 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     }, now);
     return [text(activity.id), performance] as const;
   }));
+  const dependencyRows = list(dependencyResult.data as Row[] | null);
+  const dependencyEdges: DependencyEdgeIntelligence[] = [];
+  for (const plan of plans) {
+    const planId = text(plan.id);
+    const planActivities = activities.filter((activity) => text(activity.work_plan_id) === planId);
+    const planActivityIds = new Set(planActivities.map((activity) => text(activity.id)));
+    const result = deriveDependencyIntelligence({
+      evaluatedAt: now,
+      activities: planActivities.map((activity) => ({
+        id: text(activity.id), workPlanId: planId, workPackageId: text(activity.work_package_id),
+        status: text(activity.status) as Parameters<typeof deriveSchedulePerformance>[0]["status"],
+        plannedStartAt: text(activity.planned_start_at) || null, plannedFinishAt: text(activity.planned_finish_at) || null,
+        ownerUserId: text(activity.activity_owner_user_id) || null, supervisorUserId: text(activity.supervisor_user_id) || null,
+        schedulePerformance: performanceByActivity.get(text(activity.id))!,
+      })),
+      dependencies: dependencyRows.filter((dependency) => text(dependency.work_plan_id) === planId
+        && planActivityIds.has(text(dependency.predecessor_runtime_activity_id))
+        && planActivityIds.has(text(dependency.successor_runtime_activity_id))).map((dependency) => ({
+        id: text(dependency.id), workPlanId: planId,
+        predecessorActivityId: text(dependency.predecessor_runtime_activity_id), successorActivityId: text(dependency.successor_runtime_activity_id),
+        dependencyType: text(dependency.dependency_type) as "FS" | "SS" | "FF" | "SF",
+        lagValue: Number(dependency.lag_value), lagUnit: text(dependency.lag_unit) as "hours" | "days" | "weeks",
+        mandatory: dependency.mandatory === true,
+      })),
+    });
+    if (!result.ok) throw new Error("Could not derive Build management dependency intelligence");
+    dependencyEdges.push(...result.edges);
+  }
+  const dependencyRollup = deriveDependencyManagementRollup(dependencyEdges);
+  const dependencyByWorkPackage = new Map(dependencyRollup.workPackages.map((item) => [item.workPackageId, item]));
   const evidenceCount = new Map<string, number>();
   for (const row of list(evidenceResult.data as Row[] | null)) { const id = text(row.runtime_exception_id); evidenceCount.set(id, (evidenceCount.get(id) ?? 0) + 1); }
   const register = exceptionRows.map((row): BuildManagementException => {
@@ -137,14 +169,14 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
   });
   const active = register.filter((row) => row.status === "open" || row.status === "in_remediation");
   const siteByIdMap = new Map(sites.map((row) => [text(row.id), text(row.name)]));
-  const planByWorkPackage = new Map(plans.map((row) => [text(row.work_package_id), text(row.id)]));
   const workPackageSummary = workPackages.map((wp) => {
-    const wpActivities = activities.filter((row) => text(row.work_plan_id) === planByWorkPackage.get(text(wp.id)));
+    const wpActivities = activities.filter((row) => text(row.work_package_id) === text(wp.id));
     const ids = new Set(wpActivities.map((row) => text(row.id))), exceptions = register.filter((row) => ids.has(row.activityId));
     const wpPerformance = wpActivities.map((row) => performanceByActivity.get(text(row.id))).filter((item): item is SchedulePerformance => Boolean(item));
+    const dependencies = dependencyByWorkPackage.get(text(wp.id)) ?? { workPackageId: text(wp.id), totalConstraints: 0, unreleasedConstraints: 0, downstreamActivitiesExposed: 0, overdueSuccessorsWithUnreleasedConstraints: 0, latePredecessorActivities: 0, dataIncompleteConstraints: 0, baselineControllingConstraints: 0, hasDependencyExceptions: false };
     return { id: text(wp.id), name: text(wp.name), siteId: text(wp.site_id), siteName: siteByIdMap.get(text(wp.site_id)) ?? "Site unavailable",
       activities: activityCounts(wpActivities), activeExceptions: exceptions.filter((row) => row.status === "open" || row.status === "in_remediation").length,
-      overdueExceptions: exceptions.filter((row) => row.overdue).length, schedule: scheduleCounts(wpPerformance) };
+      overdueExceptions: exceptions.filter((row) => row.overdue).length, schedule: scheduleCounts(wpPerformance), dependencies };
   });
   const owners = new Map<string, BuildManagementSummary["responsibility"][number]>();
   for (const row of active) { const current = owners.get(row.ownerUserId) ?? { ownerUserId: row.ownerUserId, ownerName: row.ownerName, outstanding: 0, overdue: 0, criticalHigh: 0 };
@@ -164,7 +196,6 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     scheduleOwners.set(ownerId, current);
   }
   const allPerformance = [...performanceByActivity.values()], projectSchedule = scheduleCounts(allPerformance);
-  const incompleteFinishToStart = list(dependencyResult.data as Row[] | null).filter((row) => text(row.dependency_type) === "FS" && text(activitiesById.get(text(row.predecessor_runtime_activity_id))?.status) !== "completed").length;
   const exceptionCount = (status: ManagementExceptionStatus) => register.filter((row) => row.status === status).length;
   return { projectId: project.id, hasWorkPlans: plans.length > 0, activities: activityCounts(activities),
     schedule: { scheduled: projectSchedule.scheduled, currentlyOverdue: projectSchedule.overdue, completedOnTime: projectSchedule.completedOnTime, completedLate: projectSchedule.completedLate,
@@ -175,5 +206,5 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     exceptions: { total: register.length, open: exceptionCount("open"), in_remediation: exceptionCount("in_remediation"), resolved: exceptionCount("resolved"), verified: exceptionCount("verified"), active: active.length, overdue: register.filter((row) => row.overdue).length, critical: active.filter((row) => row.severity === "critical").length, high: active.filter((row) => row.severity === "high").length },
     workPackages: workPackageSummary, responsibility: [...owners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
     scheduleResponsibility: [...scheduleOwners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
-    dependencyFacts: { total: list(dependencyResult.data as Row[] | null).length, incompleteFinishToStart }, exceptionsRegister: register };
+    dependencyFacts: dependencyRollup.project, exceptionsRegister: register };
 }
