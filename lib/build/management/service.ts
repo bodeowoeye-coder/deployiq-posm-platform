@@ -34,7 +34,15 @@ export type BuildManagementSummary = {
   dependencyFacts: DependencyManagementCounts;
   exceptionsRegister: BuildManagementException[];
   managementAttention: ManagementAttentionSummary;
+  managementAttentionItems: BuildManagementAttentionPreview[];
   managementAttentionPreview: BuildManagementAttentionPreview[];
+  activityDetails: Array<{
+    id: string; clientId: string; projectId: string; siteId: string; workPackageId: string; workPlanId: string;
+    name: string; status: ManagementActivityStatus; mandatory: boolean; requiresApproval: boolean;
+    plannedStartAt: string | null; plannedFinishAt: string | null; actualStartAt: string | null; actualFinishAt: string | null;
+    schedule: SchedulePerformance; ownerUserId: string | null; ownerName: string | null;
+    supervisorUserId: string | null; supervisorName: string | null;
+  }>;
   progressPerformance: Extract<ProjectProgressRollup, { ok: true }>;
   recentExecution: Extract<ProgressHistoryResult, { ok: true }>;
   qualityAdherence: Extract<QualityAdherenceResult, { ok: true }>;
@@ -231,13 +239,14 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     }),
     dependencyEdges,
   });
-  const attentionPreview = orderManagementAttentionPreview(attention.items.map((item) => {
+  const attentionItems = orderManagementAttentionPreview(attention.items.map((item) => {
     const activity = item.activityId ? activitiesById.get(item.activityId) ?? {} : {};
     const wp = workPackagesById.get(item.workPackageId) ?? {}, site = sitesById.get(item.siteId) ?? {};
     const exception = item.sourceRecordType === "runtime_exception" ? exceptionRows.find((row) => text(row.id) === item.sourceRecordId) : undefined;
     return { ...item, activityName: text(activity.name) || "Activity unavailable", workPackageName: text(wp.name) || "Work Package unavailable", siteName: text(site.name) || "Site unavailable",
       exceptionTitle: exception ? text(exception.title) : null, exceptionSeverity: exception ? text(exception.severity) as BuildManagementException["severity"] : null };
-  })).slice(0, 6);
+  }));
+  const attentionPreview = attentionItems.slice(0, 6);
   const progressPerformance = deriveProjectProgressRollup({
     projectId: project.id,
     clientId: project.client_id,
@@ -304,6 +313,21 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
         managementAttentionObligations: attention.items.filter((item) => item.workPackageId === workPackageId).length }; }),
   });
   if (!qualityAdherence.ok) throw new Error(`Could not derive Build quality and schedule adherence: ${qualityAdherence.reason}`);
+  const activityDetails: BuildManagementSummary["activityDetails"] = activities.map((activity) => {
+    const ownerId = text(activity.activity_owner_user_id), ownerProfile = profilesById.get(ownerId);
+    const supervisorId = text(activity.supervisor_user_id), supervisorProfile = profilesById.get(supervisorId);
+    const schedule = performanceByActivity.get(text(activity.id))!;
+    return { id: text(activity.id), clientId: text(activity.client_id), projectId: text(activity.project_id),
+      siteId: text(activity.site_id), workPackageId: text(activity.work_package_id), workPlanId: text(activity.work_plan_id),
+      name: text(activity.name), status: text(activity.status) as ManagementActivityStatus,
+      mandatory: activity.mandatory !== false, requiresApproval: activity.requires_approval === true,
+      plannedStartAt: text(activity.planned_start_at) || null, plannedFinishAt: text(activity.planned_finish_at) || null,
+      actualStartAt: schedule.actualStartedAt, actualFinishAt: schedule.actualWorkFinishedAt,
+      schedule, ownerUserId: ownerId || null,
+      ownerName: ownerId ? text(ownerProfile?.full_name) || text(ownerProfile?.email) || "Workspace member" : null,
+      supervisorUserId: supervisorId || null,
+      supervisorName: supervisorId ? text(supervisorProfile?.full_name) || text(supervisorProfile?.email) || "Workspace member" : null };
+  });
   return { projectId: project.id, hasWorkPlans: plans.length > 0, activities: activityCounts(activities),
     schedule: { scheduled: projectSchedule.scheduled, currentlyOverdue: projectSchedule.overdue, completedOnTime: projectSchedule.completedOnTime, completedLate: projectSchedule.completedLate,
       workPackagesOverdue: workPackageSummary.filter((item) => item.schedule.overdue > 0).length,
@@ -313,5 +337,6 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     exceptions: { total: register.length, open: exceptionCount("open"), in_remediation: exceptionCount("in_remediation"), resolved: exceptionCount("resolved"), verified: exceptionCount("verified"), active: active.length, overdue: register.filter((row) => row.overdue).length, critical: active.filter((row) => row.severity === "critical").length, high: active.filter((row) => row.severity === "high").length },
     workPackages: workPackageSummary, scheduleResponsibility: [...scheduleOwners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
     dependencyFacts: dependencyRollup.project, exceptionsRegister: register,
-    managementAttention: attention.summary, managementAttentionPreview: attentionPreview, progressPerformance, recentExecution, qualityAdherence };
+    managementAttention: attention.summary, managementAttentionItems: attentionItems, managementAttentionPreview: attentionPreview,
+    activityDetails, progressPerformance, recentExecution, qualityAdherence };
 }

@@ -4,9 +4,11 @@ import { BuildProjectManagement } from "@/components/workspace/BuildProjectManag
 import { BuildRuntimeWorkPlan } from "@/components/workspace/BuildRuntimeWorkPlan";
 import { BuildExceptionRegister } from "@/components/workspace/BuildExceptionRegister";
 import { BuildManagementReport } from "@/components/workspace/BuildManagementReport";
+import { BuildWorkPackageReport } from "@/components/workspace/BuildWorkPackageReport";
 import { getWorkPlan } from "@/lib/build/runtime/service";
 import { getBuildManagementSummary, type BuildExceptionFilters } from "@/lib/build/management/service";
 import { composeBuildManagementReport } from "@/lib/build/reporting/managementReport";
+import { composeBuildWorkPackageReport } from "@/lib/build/reporting/workPackageReport";
 import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
 
 export const dynamic = "force-dynamic";
@@ -77,8 +79,13 @@ async function BuildProjectSectionContent({
   }
 
   if (section === "reports") {
+    if (selectedWorkPackageId && !overview.workPackages.some((item) => item.id === selectedWorkPackageId)) notFound();
     const asOf = new Date();
     const management = await getBuildManagementSummary(overview.project.id, asOf);
+    if (selectedWorkPackageId) {
+      const report = composeBuildWorkPackageReport({ project: overview.project, management, workPackageId: selectedWorkPackageId, asOf, generatedAt: new Date() });
+      return <BuildWorkPackageReport report={report}/>;
+    }
     const report = composeBuildManagementReport({ project: overview.project, management, asOf, generatedAt: new Date() });
     return <BuildManagementReport report={report}/>;
   }
