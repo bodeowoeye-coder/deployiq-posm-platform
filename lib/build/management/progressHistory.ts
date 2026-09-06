@@ -21,6 +21,9 @@ export type ProgressHistoryResult = { ok: false; dataQuality: "invalid"; reason:
   timezone: string; counts: HistoryCounts;
   reviewTurnaround: { reviewCyclesTotal: number; reviewCyclesMeasured: number; reviewCyclesUnmeasurable: number;
     totalHours: number | null; averageHours: number | null; medianHours: number | null; minHours: number | null; maxHours: number | null };
+  activityReviews: Array<{ activityId: string; workPackageId: string; reviewCycles: number; firstOutcome: "accepted" | "changes_required";
+    accepted: boolean; changesRequiredOutcomes: number; correctiveCycles: number; measuredReviewCycles: number;
+    unmeasurableReviewCycles: number; medianReviewTurnaroundHours: number | null }>;
   buckets: Array<HistoryBucketBoundary & HistoryCounts>;
   workPackages: Array<{ id: string; name: string; operationalCompletions: number; acceptedActivities: number;
     submissions: number; changesRequiredOutcomes: number; reviewCyclesMeasured: number; medianReviewTurnaroundHours: number | null }>;
@@ -98,6 +101,12 @@ export function deriveProgressHistory(input: { projectId: string; clientId: stri
   for (const event of input.events.filter((item) => item.event_type === "inspection_accepted" || item.event_type === "changes_required")) {
     const outcome = event.event_type === "inspection_accepted" ? "accepted" : "changes_required";
     if (!input.inspections.some((inspection) => inspection.activityId === event.activityId && inspection.outcome === outcome && instant(inspection.reviewedAt) === instant(event.occurred_at))) return invalid("inspection_event_mismatch", event.id);
+  }
+  for (const inspection of input.inspections) {
+    const eventType = inspection.outcome === "accepted" ? "inspection_accepted" : "changes_required";
+    const matches = input.events.filter((event) => event.activityId === inspection.activityId && event.event_type === eventType &&
+      instant(event.occurred_at) === instant(inspection.reviewedAt));
+    if (matches.length !== 1) return invalid("inspection_event_mismatch", inspection.id);
   }
 
   const boundaryEvents = input.events.filter((event) => instant(event.occurred_at)! < end);
@@ -191,11 +200,28 @@ export function deriveProgressHistory(input: { projectId: string; clientId: stri
       changesRequiredOutcomes: periodInspections.filter((item) => item.workPackageId === id && item.outcome === "changes_required").length,
       reviewCyclesMeasured: reviews.length, medianReviewTurnaroundHours: median(reviews) };
   }).sort((left, right) => (left.sequence ?? Number.MAX_SAFE_INTEGER) - (right.sequence ?? Number.MAX_SAFE_INTEGER) || left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+  const activityReviews = activityIds.flatMap((activityId) => {
+    const inspections = [...boundaryInspections.filter((item) => item.activityId === activityId)]
+      .sort((left, right) => instant(left.reviewedAt)! - instant(right.reviewedAt)! || left.id.localeCompare(right.id));
+    if (inspections.length === 0) return [];
+    const orderedReviewEvents = ordered(boundaryEvents.filter((item) => item.activityId === activityId &&
+      (item.event_type === "inspection_accepted" || item.event_type === "changes_required")));
+    const reviews = reviewDurations.filter((item) => item.activityId === activityId);
+    const measured = reviews.flatMap((item) => item.hours === null ? [] : [item.hours]).sort((a, b) => a - b);
+    return [{ activityId, workPackageId: inspections[0].workPackageId, reviewCycles: inspections.length,
+      firstOutcome: orderedReviewEvents[0].event_type === "inspection_accepted" ? "accepted" as const : "changes_required" as const,
+      accepted: inspections.some((item) => item.outcome === "accepted"),
+      changesRequiredOutcomes: inspections.filter((item) => item.outcome === "changes_required").length,
+      correctiveCycles: correctiveCycles.filter((item) => item.activityId === activityId).length,
+      measuredReviewCycles: measured.length, unmeasurableReviewCycles: reviews.length - measured.length,
+      medianReviewTurnaroundHours: median(measured) }];
+  }).sort((left, right) => left.workPackageId.localeCompare(right.workPackageId) || left.activityId.localeCompare(right.activityId));
   return { ok: true, dataQuality: partial ? "partial" : "complete", projectId: input.projectId, clientId: input.clientId,
     periodStart: input.periodStart, periodEnd: input.periodEnd, timezone: input.timezone, counts: countFor(start, end),
     reviewTurnaround: { reviewCyclesTotal: periodReviews.length, reviewCyclesMeasured: measuredReviews.length,
       reviewCyclesUnmeasurable: periodReviews.length - measuredReviews.length, totalHours: hours.length ? hours.reduce((sum, value) => sum + value, 0) : null,
       averageHours: hours.length ? hours.reduce((sum, value) => sum + value, 0) / hours.length : null, medianHours: median(hours),
       minHours: hours.at(0) ?? null, maxHours: hours.at(-1) ?? null },
-    buckets: input.buckets.map((bucket) => ({ ...bucket, ...countFor(instant(bucket.bucketStart)!, instant(bucket.bucketEnd)!) })), workPackages };
+    buckets: input.buckets.map((bucket) => ({ ...bucket, ...countFor(instant(bucket.bucketStart)!, instant(bucket.bucketEnd)!) })),
+    workPackages, activityReviews };
 }

@@ -152,6 +152,7 @@ function BuildProjectOverview({ overview, management }: { overview: BuildProject
           </div></section>
           <ProgressAndPerformance management={management} projectId={overview.project.id}/>
           <RecentExecution management={management}/>
+          <QualityAndScheduleAdherence management={management}/>
           <section><h4 className="font-bold text-slate-950">Schedule Performance</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[["Scheduled Activities",management.schedule.scheduled,false],["Currently Overdue",management.schedule.currentlyOverdue,true],["Completed On Time",management.schedule.completedOnTime,false],["Completed Late",management.schedule.completedLate,false]].map(([label,value,attention])=><Metric key={String(label)} label={String(label)} value={String(value)} attention={Boolean(attention) && Number(value) > 0}/>) }
           </div>{management.schedule.dataIncomplete > 0 ? <p className="mt-3 text-sm font-semibold text-amber-800">{management.schedule.dataIncomplete} {countLabel(management.schedule.dataIncomplete, "Activity has", "Activities have")} incomplete schedule history or dates.</p> : null}</section>
@@ -258,6 +259,28 @@ function RecentExecution({ management }: { management: BuildManagementSummary })
     </div>
     {review.reviewCyclesMeasured > 0 ? <p className="mt-3 text-sm text-slate-600">Median Review Turnaround: <strong className="text-slate-900">{formatHours(review.medianHours)}</strong> · {review.reviewCyclesMeasured}/{review.reviewCyclesTotal} review cycles measured</p> : <p className="mt-3 text-sm text-slate-600">Review turnaround unavailable · {review.reviewCyclesMeasured}/{review.reviewCyclesTotal} review cycles measured</p>}
     <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-[640px] text-left text-sm"><thead className="text-xs uppercase tracking-wider text-slate-500"><tr>{["UTC period","Started","Completed","Accepted","Submissions","Changes Required"].map((label)=><th key={label} className="whitespace-nowrap border-b px-3 py-3">{label}</th>)}</tr></thead><tbody>{history.buckets.map((bucket)=><tr key={bucket.bucketStart} className="border-b border-slate-100 last:border-b-0"><td className="whitespace-nowrap px-3 py-2 font-semibold text-slate-800">{bucket.label}</td><td className="px-3 py-2">{bucket.activitiesStarted}</td><td className="px-3 py-2">{bucket.operationalCompletions}</td><td className="px-3 py-2">{bucket.acceptedActivities}</td><td className="px-3 py-2">{bucket.submissions}</td><td className="px-3 py-2">{bucket.changesRequiredOutcomes}</td></tr>)}</tbody></table></div>
+  </section>;
+}
+
+function QualityAndScheduleAdherence({ management }: { management: BuildManagementSummary }) {
+  const result = management.qualityAdherence;
+  const schedule = result.schedule;
+  const quality = result.quality;
+  return <section aria-labelledby="quality-adherence-heading" className="rounded-lg border border-slate-200 p-5">
+    <div><h4 id="quality-adherence-heading" className="font-bold text-slate-950">Quality &amp; Schedule Adherence</h4><p className="mt-1 text-sm text-slate-600">Observed schedule outcomes and authoritative review facts, reported separately as factual measures.</p></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <Metric label="Schedule Adherence" value={ratioWithCount(schedule.finishAdherence.ratio, schedule.completedOnOrBeforePlan, schedule.eligibleCompletedActivities)}/>
+      <Metric label="First-Pass Acceptance" value={ratioWithCount(quality.firstPassAcceptance.ratio, quality.firstPassAcceptedActivities, quality.reviewEligibleActivities)}/>
+      <Metric label="Activities Requiring Correction" value={String(quality.activitiesRequiringCorrection)}/>
+      <Metric label="Current Changes Required" value={String(quality.currentlyChangesRequiredActivities)}/>
+    </div>
+    <div className="mt-3 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+      <p>Schedule coverage: <strong className="text-slate-900">{schedule.eligibleCompletedActivities}/{schedule.completedActivities}</strong> completed Activities eligible · {schedule.completedActivitiesExcludedFromAdherence} excluded.</p>
+      <p>Review coverage: <strong className="text-slate-900">{quality.approvalActivitiesReviewed}/{quality.approvalActivitiesTotal}</strong> approval Activities reviewed · {quality.reviewHistoryIncompleteActivities} incomplete.</p>
+      <p>Review cycles: <strong className="text-slate-900">{quality.totalCompletedReviewCycles}</strong> · {quality.multipleReviewActivities} multiple-review Activities.</p>
+      <p>Median Review Turnaround: <strong className="text-slate-900">{formatHours(quality.medianReviewTurnaroundHours)}</strong> · {quality.measuredReviewCycles}/{quality.totalCompletedReviewCycles} cycles measured.</p>
+    </div>
+    {result.workPackages.length ? <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="w-full min-w-[760px] table-fixed text-left text-sm"><thead className="text-xs uppercase tracking-wider text-slate-500"><tr>{["Work Package","Schedule Adherence","First-Pass Acceptance","Required Correction","Current Changes Required","Review Coverage"].map((label,index)=><th key={label} className={index === 0 ? "w-56 border-b px-3 py-3" : "border-b px-3 py-3 align-bottom"}>{label}</th>)}</tr></thead><tbody>{result.workPackages.map((item)=><tr key={item.id} className="border-b border-slate-100 last:border-b-0"><td className="break-words px-3 py-3 font-semibold text-slate-900">{item.name}</td><td className="whitespace-nowrap px-3 py-3">{ratioWithCount(item.schedule.finishAdherence.ratio,item.schedule.completedOnOrBeforePlan,item.schedule.eligibleCompletedActivities)}</td><td className="whitespace-nowrap px-3 py-3">{ratioWithCount(item.quality.firstPassAcceptance.ratio,item.quality.firstPassAcceptedActivities,item.quality.reviewEligibleActivities)}</td><td className="px-3 py-3">{item.quality.activitiesRequiringCorrection}</td><td className="px-3 py-3">{item.quality.currentlyChangesRequiredActivities}</td><td className="whitespace-nowrap px-3 py-3">{item.quality.approvalActivitiesReviewed}/{item.quality.approvalActivitiesTotal}</td></tr>)}</tbody></table></div> : <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">No Work Package schedule or review facts are available.</p>}
   </section>;
 }
 

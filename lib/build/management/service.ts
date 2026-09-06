@@ -8,6 +8,7 @@ import { deriveManagementAttention, type ManagementAttentionSummary } from "./ma
 import { orderManagementAttentionPreview, type BuildManagementAttentionPreview } from "./managementAttentionPreview.ts";
 import { buildUtcHistoryBuckets, deriveProgressHistory, type ProgressHistoryResult } from "./progressHistory.ts";
 import { deriveProjectProgressRollup, type ProjectProgressRollup } from "./progressRollup.ts";
+import { deriveQualityAdherence, type QualityAdherenceResult } from "./qualityAdherence.ts";
 import { deriveSchedulePerformance, isCurrentlyOverdue, type SchedulePerformance, type SchedulePerformanceState } from "./schedulePerformance.ts";
 
 type Row = Record<string, unknown>;
@@ -36,6 +37,7 @@ export type BuildManagementSummary = {
   managementAttentionPreview: BuildManagementAttentionPreview[];
   progressPerformance: Extract<ProjectProgressRollup, { ok: true }>;
   recentExecution: Extract<ProgressHistoryResult, { ok: true }>;
+  qualityAdherence: Extract<QualityAdherenceResult, { ok: true }>;
 };
 
 export type BuildExceptionFilters = { status?: string; severity?: string; owner?: string; due?: string; site?: string; workPackage?: string };
@@ -270,20 +272,38 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     }),
   });
   if (!progressPerformance.ok) throw new Error(`Could not derive Build progress and performance: ${progressPerformance.reason}`);
+  const historicalEvents = list(eventResult.data as Row[] | null).map((event) => ({ id: text(event.id), clientId: text(event.client_id), projectId: text(event.project_id),
+    siteId: text(event.site_id), workPackageId: text(event.work_package_id), workPlanId: text(event.work_plan_id), activityId: text(event.runtime_activity_id),
+    event_type: text(event.event_type), occurred_at: text(event.occurred_at), event_sequence: event.event_sequence == null ? null : Number(event.event_sequence) }));
+  const historicalInspections = list(inspectionResult.data as Row[] | null).map((inspection) => ({ id: text(inspection.id), clientId: text(inspection.client_id), projectId: text(inspection.project_id),
+    siteId: text(inspection.site_id), workPackageId: text(inspection.work_package_id), workPlanId: text(inspection.work_plan_id), activityId: text(inspection.runtime_activity_id),
+    outcome: text(inspection.outcome) as "accepted" | "changes_required", reviewedAt: text(inspection.reviewed_at) }));
+  const historicalWorkPackages = workPackages.map((wp, index) => ({ id: text(wp.id), name: text(wp.name), sequence: index }));
   const recentPeriodEnd = now;
   const recentPeriodStart = new Date(now.getTime() - 7 * 86_400_000);
   const recentExecution = deriveProgressHistory({ projectId: project.id, clientId: project.client_id,
     periodStart: recentPeriodStart.toISOString(), periodEnd: recentPeriodEnd.toISOString(), timezone: "UTC",
     buckets: buildUtcHistoryBuckets(recentPeriodStart, recentPeriodEnd, "daily"),
-    workPackages: workPackages.map((wp, index) => ({ id: text(wp.id), name: text(wp.name), sequence: index })),
-    events: list(eventResult.data as Row[] | null).map((event) => ({ id: text(event.id), clientId: text(event.client_id), projectId: text(event.project_id),
-      siteId: text(event.site_id), workPackageId: text(event.work_package_id), workPlanId: text(event.work_plan_id), activityId: text(event.runtime_activity_id),
-      event_type: text(event.event_type), occurred_at: text(event.occurred_at), event_sequence: event.event_sequence == null ? null : Number(event.event_sequence) })),
-    inspections: list(inspectionResult.data as Row[] | null).map((inspection) => ({ id: text(inspection.id), clientId: text(inspection.client_id), projectId: text(inspection.project_id),
-      siteId: text(inspection.site_id), workPackageId: text(inspection.work_package_id), workPlanId: text(inspection.work_plan_id), activityId: text(inspection.runtime_activity_id),
-      outcome: text(inspection.outcome) as "accepted" | "changes_required", reviewedAt: text(inspection.reviewed_at) })),
+    workPackages: historicalWorkPackages, events: historicalEvents, inspections: historicalInspections,
   });
   if (!recentExecution.ok) throw new Error(`Could not derive Build execution history: ${recentExecution.reason}`);
+  const fullExecutionHistory = deriveProgressHistory({ projectId: project.id, clientId: project.client_id,
+    periodStart: new Date(0).toISOString(), periodEnd: now.toISOString(), timezone: "UTC", buckets: [],
+    workPackages: historicalWorkPackages, events: historicalEvents, inspections: historicalInspections });
+  if (!fullExecutionHistory.ok) throw new Error(`Could not derive cumulative Build review history: ${fullExecutionHistory.reason}`);
+  const qualityAdherence = deriveQualityAdherence({ projectId: project.id, clientId: project.client_id, history: fullExecutionHistory,
+    activities: activities.map((activity) => ({ id: text(activity.id), clientId: text(activity.client_id), projectId: text(activity.project_id),
+      workPackageId: text(activity.work_package_id), requiresApproval: activity.requires_approval === true, status: text(activity.status),
+      schedulePerformance: performanceByActivity.get(text(activity.id))! })),
+    workPackages: workPackages.map((wp, index) => ({ id: text(wp.id), clientId: project.client_id, projectId: project.id,
+      name: text(wp.name), sequence: index })),
+    context: workPackages.map((wp) => { const workPackageId = text(wp.id), wpActivities = activities.filter((activity) => text(activity.work_package_id) === workPackageId);
+      return { workPackageId,
+        currentOverdueActivities: wpActivities.filter((activity) => isCurrentlyOverdue(performanceByActivity.get(text(activity.id))?.state ?? "not_scheduled")).length,
+        activeExceptions: register.filter((item) => item.workPackageId === workPackageId && (item.status === "open" || item.status === "in_remediation")).length,
+        managementAttentionObligations: attention.items.filter((item) => item.workPackageId === workPackageId).length }; }),
+  });
+  if (!qualityAdherence.ok) throw new Error(`Could not derive Build quality and schedule adherence: ${qualityAdherence.reason}`);
   return { projectId: project.id, hasWorkPlans: plans.length > 0, activities: activityCounts(activities),
     schedule: { scheduled: projectSchedule.scheduled, currentlyOverdue: projectSchedule.overdue, completedOnTime: projectSchedule.completedOnTime, completedLate: projectSchedule.completedLate,
       workPackagesOverdue: workPackageSummary.filter((item) => item.schedule.overdue > 0).length,
@@ -293,5 +313,5 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     exceptions: { total: register.length, open: exceptionCount("open"), in_remediation: exceptionCount("in_remediation"), resolved: exceptionCount("resolved"), verified: exceptionCount("verified"), active: active.length, overdue: register.filter((row) => row.overdue).length, critical: active.filter((row) => row.severity === "critical").length, high: active.filter((row) => row.severity === "high").length },
     workPackages: workPackageSummary, scheduleResponsibility: [...scheduleOwners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
     dependencyFacts: dependencyRollup.project, exceptionsRegister: register,
-    managementAttention: attention.summary, managementAttentionPreview: attentionPreview, progressPerformance, recentExecution };
+    managementAttention: attention.summary, managementAttentionPreview: attentionPreview, progressPerformance, recentExecution, qualityAdherence };
 }
