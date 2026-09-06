@@ -4,6 +4,8 @@ import { createAdminSupabase } from "../../supabaseAdmin.ts";
 import { resolveCanonicalBuildProject } from "../projects/service.ts";
 import { deriveDependencyIntelligence, type DependencyEdgeIntelligence } from "./dependencyIntelligence.ts";
 import { deriveDependencyManagementRollup, type DependencyManagementCounts, type WorkPackageDependencyCounts } from "./dependencyRollup.ts";
+import { deriveManagementAttention, type ManagementAttentionSummary } from "./managementAttention.ts";
+import { orderManagementAttentionPreview, type BuildManagementAttentionPreview } from "./managementAttentionPreview.ts";
 import { deriveSchedulePerformance, isCurrentlyOverdue, type SchedulePerformance, type SchedulePerformanceState } from "./schedulePerformance.ts";
 
 type Row = Record<string, unknown>;
@@ -25,10 +27,11 @@ export type BuildManagementSummary = {
   exceptions: Record<ManagementExceptionStatus | "total" | "active" | "overdue" | "critical" | "high", number>;
   schedule: { scheduled: number; currentlyOverdue: number; completedOnTime: number; completedLate: number; workPackagesOverdue: number; blockedOverdue: number; changesRequiredOverdue: number; dataIncomplete: number };
   workPackages: Array<{ id: string; name: string; siteId: string; siteName: string; activities: BuildManagementSummary["activities"]; activeExceptions: number; overdueExceptions: number; schedule: { scheduled: number; notYetDue: number; onSchedule: number; overdue: number; completedOnTime: number; completedLate: number }; dependencies: WorkPackageDependencyCounts }>;
-  responsibility: Array<{ ownerUserId: string; ownerName: string; outstanding: number; overdue: number; criticalHigh: number }>;
   scheduleResponsibility: Array<{ ownerUserId: string; ownerName: string; assignedScheduled: number; overdueToStart: number; overdueToComplete: number; completedLate: number; blockedOverdue: number; awaitingReview: number }>;
   dependencyFacts: DependencyManagementCounts;
   exceptionsRegister: BuildManagementException[];
+  managementAttention: ManagementAttentionSummary;
+  managementAttentionPreview: BuildManagementAttentionPreview[];
 };
 
 export type BuildExceptionFilters = { status?: string; severity?: string; owner?: string; due?: string; site?: string; workPackage?: string };
@@ -44,6 +47,7 @@ export function isExceptionOverdue(dueAt: string | null, status: ManagementExcep
   const due = new Date(dueAt);
   return Number.isFinite(due.getTime()) && due.getTime() < now.getTime();
 }
+
 function activityCounts(rows: Row[]): BuildManagementSummary["activities"] {
   const count = (status: ManagementActivityStatus) => rows.filter((row) => text(row.status) === status).length;
   return { total: rows.length, not_started: count("not_started"), in_progress: count("in_progress"), completed: count("completed"), blocked: count("blocked"), submitted_for_review: count("submitted_for_review"), changes_required: count("changes_required"), approved: count("approved") };
@@ -90,20 +94,20 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     .eq("client_id", project.client_id).eq("project_id", project.id).in("work_package_id", workPackageIds).is("archived_at", null) : { data: [], error: null };
   requireQuery(planResult.error, "work plans");
   const plans = list(planResult.data as Row[] | null), planIds = plans.map((row) => text(row.id)).filter(Boolean);
-  const activityResult = planIds.length ? await supabase.from("build_runtime_activities").select("id,work_plan_id,work_package_id,name,status,activity_owner_user_id,supervisor_user_id,planned_start_at,planned_finish_at,started_at,completed_at")
+  const activityResult = planIds.length ? await supabase.from("build_runtime_activities").select("id,work_plan_id,work_package_id,name,status,requires_approval,activity_owner_user_id,supervisor_user_id,planned_start_at,planned_finish_at,started_at,completed_at,blocked_at,blocker_reason")
     .eq("client_id", project.client_id).eq("project_id", project.id).in("work_plan_id", planIds).is("archived_at", null) : { data: [], error: null };
   requireQuery(activityResult.error, "activities");
   const activities = list(activityResult.data as Row[] | null), activityIds = activities.map((row) => text(row.id)).filter(Boolean);
   const [exceptionResult, inspectionResult, evidenceResult, eventResult, dependencyResult] = activityIds.length ? await Promise.all([
-    supabase.from("build_runtime_exceptions").select("id,runtime_activity_id,runtime_inspection_id,title,severity,status,exception_owner_user_id,due_at").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds),
+    supabase.from("build_runtime_exceptions").select("id,runtime_activity_id,runtime_inspection_id,title,severity,status,exception_owner_user_id,due_at,raised_at").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds),
     supabase.from("build_runtime_inspections").select("id,runtime_activity_id,outcome,reviewed_at").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds),
     supabase.from("build_runtime_evidence").select("id,runtime_activity_id,runtime_exception_id").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds).not("runtime_exception_id", "is", null).is("archived_at", null),
-    supabase.from("build_runtime_activity_events").select("runtime_activity_id,event_type,occurred_at,event_sequence").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds).in("event_type", ["submitted_for_review", "inspection_accepted"]),
+    supabase.from("build_runtime_activity_events").select("runtime_activity_id,event_type,occurred_at,event_sequence").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds).in("event_type", ["submitted_for_review", "inspection_accepted", "changes_required"]),
     supabase.from("build_runtime_dependencies").select("id,work_plan_id,predecessor_runtime_activity_id,successor_runtime_activity_id,dependency_type,lag_value,lag_unit,mandatory").in("work_plan_id", planIds),
   ]) : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
   requireQuery(exceptionResult.error, "exceptions"); requireQuery(inspectionResult.error, "inspections"); requireQuery(evidenceResult.error, "corrective evidence"); requireQuery(eventResult.error, "activity history"); requireQuery(dependencyResult.error, "dependencies");
   const exceptionRows = list(exceptionResult.data as Row[] | null);
-  const ownerIds = [...new Set([...exceptionRows.map((row) => text(row.exception_owner_user_id)), ...activities.map((row) => text(row.activity_owner_user_id))].filter(Boolean))];
+  const ownerIds = [...new Set([...exceptionRows.map((row) => text(row.exception_owner_user_id)), ...activities.flatMap((row) => [text(row.activity_owner_user_id), text(row.supervisor_user_id)])].filter(Boolean))];
   const profileResult = ownerIds.length ? await supabase.from("user_profiles").select("user_id,full_name,email,status").in("user_id", ownerIds) : { data: [], error: null };
   requireQuery(profileResult.error, "owners");
   const sitesById = byId(sites), workPackagesById = byId(workPackages), activitiesById = byId(activities), inspectionsById = byId(list(inspectionResult.data as Row[] | null));
@@ -178,9 +182,6 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
       activities: activityCounts(wpActivities), activeExceptions: exceptions.filter((row) => row.status === "open" || row.status === "in_remediation").length,
       overdueExceptions: exceptions.filter((row) => row.overdue).length, schedule: scheduleCounts(wpPerformance), dependencies };
   });
-  const owners = new Map<string, BuildManagementSummary["responsibility"][number]>();
-  for (const row of active) { const current = owners.get(row.ownerUserId) ?? { ownerUserId: row.ownerUserId, ownerName: row.ownerName, outstanding: 0, overdue: 0, criticalHigh: 0 };
-    current.outstanding += 1; if (row.overdue) current.overdue += 1; if (row.severity === "critical" || row.severity === "high") current.criticalHigh += 1; owners.set(row.ownerUserId, current); }
   const scheduleOwners = new Map<string, BuildManagementSummary["scheduleResponsibility"][number]>();
   for (const activity of activities) {
     const performance = performanceByActivity.get(text(activity.id));
@@ -197,6 +198,37 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
   }
   const allPerformance = [...performanceByActivity.values()], projectSchedule = scheduleCounts(allPerformance);
   const exceptionCount = (status: ManagementExceptionStatus) => register.filter((row) => row.status === status).length;
+  const attention = deriveManagementAttention({
+    evaluatedAt: now,
+    activities: activities.map((activity) => {
+      const wp = workPackagesById.get(text(activity.work_package_id)) ?? {};
+      const ownerId = text(activity.activity_owner_user_id), ownerProfile = profilesById.get(ownerId);
+      const supervisorId = text(activity.supervisor_user_id), supervisorProfile = profilesById.get(supervisorId);
+      return { id: text(activity.id), projectId: project.id, siteId: text(wp.site_id), workPackageId: text(activity.work_package_id), workPlanId: text(activity.work_plan_id),
+        status: text(activity.status) as Parameters<typeof deriveSchedulePerformance>[0]["status"], requiresApproval: activity.requires_approval === true,
+        plannedStartAt: text(activity.planned_start_at) || null, plannedFinishAt: text(activity.planned_finish_at) || null,
+        activityOwnerUserId: ownerId || null, activityOwnerDisplayName: ownerId ? text(ownerProfile?.full_name) || text(ownerProfile?.email) || "Workspace member" : null,
+        supervisorUserId: supervisorId || null, supervisorDisplayName: supervisorId ? text(supervisorProfile?.full_name) || text(supervisorProfile?.email) || "Workspace member" : null,
+        blockerReason: text(activity.blocker_reason) || null, blockedAt: text(activity.blocked_at) || null,
+        schedulePerformance: performanceByActivity.get(text(activity.id))!,
+        events: (eventsByActivity.get(text(activity.id)) ?? []).map((event) => ({ event_type: text(event.event_type), occurred_at: text(event.occurred_at), event_sequence: typeof event.event_sequence === "number" ? event.event_sequence : null })) };
+    }),
+    exceptions: exceptionRows.map((row) => {
+      const activity = activitiesById.get(text(row.runtime_activity_id)) ?? {}, wp = workPackagesById.get(text(activity.work_package_id)) ?? {};
+      const ownerId = text(row.exception_owner_user_id), profile = profilesById.get(ownerId);
+      return { id: text(row.id), projectId: project.id, siteId: text(wp.site_id), workPackageId: text(activity.work_package_id), workPlanId: text(activity.work_plan_id), activityId: text(activity.id),
+        status: text(row.status) as ManagementExceptionStatus, ownerUserId: ownerId, ownerDisplayName: text(profile?.full_name) || text(profile?.email) || "Workspace member",
+        dueAt: text(row.due_at) || null, raisedAt: text(row.raised_at) };
+    }),
+    dependencyEdges,
+  });
+  const attentionPreview = orderManagementAttentionPreview(attention.items.map((item) => {
+    const activity = item.activityId ? activitiesById.get(item.activityId) ?? {} : {};
+    const wp = workPackagesById.get(item.workPackageId) ?? {}, site = sitesById.get(item.siteId) ?? {};
+    const exception = item.sourceRecordType === "runtime_exception" ? exceptionRows.find((row) => text(row.id) === item.sourceRecordId) : undefined;
+    return { ...item, activityName: text(activity.name) || "Activity unavailable", workPackageName: text(wp.name) || "Work Package unavailable", siteName: text(site.name) || "Site unavailable",
+      exceptionTitle: exception ? text(exception.title) : null, exceptionSeverity: exception ? text(exception.severity) as BuildManagementException["severity"] : null };
+  })).slice(0, 6);
   return { projectId: project.id, hasWorkPlans: plans.length > 0, activities: activityCounts(activities),
     schedule: { scheduled: projectSchedule.scheduled, currentlyOverdue: projectSchedule.overdue, completedOnTime: projectSchedule.completedOnTime, completedLate: projectSchedule.completedLate,
       workPackagesOverdue: workPackageSummary.filter((item) => item.schedule.overdue > 0).length,
@@ -204,7 +236,7 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
       changesRequiredOverdue: activities.filter((row) => text(row.status) === "changes_required" && isCurrentlyOverdue(performanceByActivity.get(text(row.id))?.state ?? "not_scheduled")).length,
       dataIncomplete: allPerformance.filter((item) => item.state === "schedule_data_incomplete" || item.dataQuality === "ambiguous_history" || item.dataQuality === "missing_history").length },
     exceptions: { total: register.length, open: exceptionCount("open"), in_remediation: exceptionCount("in_remediation"), resolved: exceptionCount("resolved"), verified: exceptionCount("verified"), active: active.length, overdue: register.filter((row) => row.overdue).length, critical: active.filter((row) => row.severity === "critical").length, high: active.filter((row) => row.severity === "high").length },
-    workPackages: workPackageSummary, responsibility: [...owners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
-    scheduleResponsibility: [...scheduleOwners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
-    dependencyFacts: dependencyRollup.project, exceptionsRegister: register };
+    workPackages: workPackageSummary, scheduleResponsibility: [...scheduleOwners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
+    dependencyFacts: dependencyRollup.project, exceptionsRegister: register,
+    managementAttention: attention.summary, managementAttentionPreview: attentionPreview };
 }

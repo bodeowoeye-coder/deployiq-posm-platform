@@ -175,7 +175,6 @@ function BuildProjectOverview({ overview, management }: { overview: BuildProject
           <ManagementAttention management={management} projectId={overview.project.id}/>
           <section><h4 className="font-bold text-slate-950">Work Package Execution</h4><div className="mt-3 max-w-full overflow-x-auto overscroll-x-contain rounded-lg border border-slate-200 pb-2"><table className="min-w-[1600px] text-left text-sm"><thead className="text-xs uppercase tracking-wider text-slate-500"><tr>{["Work Package","Site","Activities","Not Started","In Progress","Completed","Blocked","Awaiting Review","Changes Required","Approved","Scheduled","Not Yet Due","On Schedule","Schedule Overdue","Completed On Time","Completed Late","Dependency Exceptions","Active Exceptions","Exception Overdue"].map((label)=><th key={label} className="whitespace-nowrap border-b px-3 py-3">{label}</th>)}</tr></thead><tbody>{management.workPackages.map((item)=><tr key={item.id} className="border-b border-slate-100 last:border-b-0"><td className="min-w-56 whitespace-nowrap px-3 py-3"><Link className="font-bold text-orange-700" href={`/workspace/admin/projects/${overview.project.id}/activities?workPackage=${item.id}`}>{item.name}</Link></td><td className="min-w-52 whitespace-nowrap px-3 py-3">{item.siteName}</td>{[item.activities.total,item.activities.not_started,item.activities.in_progress,item.activities.completed,item.activities.blocked,item.activities.submitted_for_review,item.activities.changes_required,item.activities.approved,item.schedule.scheduled,item.schedule.notYetDue,item.schedule.onSchedule,item.schedule.overdue,item.schedule.completedOnTime,item.schedule.completedLate].map((value,index)=><td key={index} className="whitespace-nowrap px-3 py-3">{value}</td>)}<td className={item.dependencies.hasDependencyExceptions ? "whitespace-nowrap px-3 py-3 font-semibold text-orange-700" : "whitespace-nowrap px-3 py-3"}>{item.dependencies.unreleasedConstraints}</td>{[item.activeExceptions,item.overdueExceptions].map((value,index)=><td key={index} className="whitespace-nowrap px-3 py-3">{value}</td>)}</tr>)}</tbody></table></div></section>
           <section className="border-t border-slate-200 pt-5"><h4 className="font-bold text-slate-950">Schedule Responsibility</h4>{management.scheduleResponsibility.length?<ul className="mt-2 divide-y divide-slate-100">{management.scheduleResponsibility.map((item)=><li key={item.ownerUserId} className="py-3"><p className="font-semibold text-slate-900">{item.ownerName}</p><p className="mt-1 text-sm text-slate-600">{item.assignedScheduled} scheduled · {item.overdueToStart} overdue to start · {item.overdueToComplete} overdue to complete · {item.completedLate} completed late · {item.blockedOverdue} blocked and overdue · {item.awaitingReview} awaiting review</p></li>)}</ul>:<p className="mt-3 text-sm text-slate-600">No scheduled Activity responsibility.</p>}</section>
-          <section><div className="flex items-center justify-between gap-4"><h4 className="font-bold text-slate-950">Outstanding Responsibility</h4><Link href={`/workspace/admin/projects/${overview.project.id}/exceptions`} className="text-sm font-bold text-orange-700">Open Exception Register</Link></div>{management.responsibility.length?<ul className="mt-3 grid gap-3 md:grid-cols-2">{management.responsibility.map((item)=><li key={item.ownerUserId} className="rounded-lg border p-4"><p className="font-bold">{item.ownerName}</p><p className="mt-1 text-sm text-slate-600">{item.outstanding} outstanding · {item.overdue} overdue · {item.criticalHigh} Critical/High</p></li>)}</ul>:<p className="mt-3 text-sm text-slate-600">No outstanding Exception responsibility.</p>}</section>
         </>}
       </section>
       <section className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -205,15 +204,42 @@ function BuildProjectOverview({ overview, management }: { overview: BuildProject
 }
 
 function ManagementAttention({management,projectId}:{management:BuildManagementSummary;projectId:string}) {
-  const items = [
-    [management.exceptions.critical,countLabel(management.exceptions.critical,"Critical open Exception","Critical open Exceptions"),`${projectId}/exceptions?severity=critical`],
-    [management.exceptions.high,countLabel(management.exceptions.high,"High open Exception","High open Exceptions"),`${projectId}/exceptions?severity=high`],
-    [management.exceptions.overdue,countLabel(management.exceptions.overdue,"overdue Exception","overdue Exceptions"),`${projectId}/exceptions?due=overdue`],
-    [management.activities.blocked,countLabel(management.activities.blocked,"Blocked Activity","Blocked Activities"),`${projectId}/activities`],
-    [management.activities.changes_required,countLabel(management.activities.changes_required,"Activity with Changes Required","Activities with Changes Required"),`${projectId}/activities`],
-    [management.activities.submitted_for_review,countLabel(management.activities.submitted_for_review,"Activity awaiting review","Activities awaiting review"),`${projectId}/activities`],
-  ].filter(([value])=>Number(value)>0);
-  return <section className="rounded-lg border border-slate-200 p-5"><h4 className="font-bold text-slate-950">Management Attention</h4>{items.length?<ul className="mt-3 grid gap-2 sm:grid-cols-2">{items.map(([value,label,path])=><li key={String(label)}><Link href={`/workspace/admin/projects/${path}`} className="text-sm font-semibold text-orange-700">{value} {label}</Link></li>)}</ul>:<p className="mt-2 text-sm text-slate-600">No outstanding management attention.</p>}</section>;
+  const summary = management.managementAttention;
+  const categories = [
+    ["Schedule Overdue",summary.categoryCounts.scheduleOverdue], ["Execution Blocks",summary.categoryCounts.executionBlocks],
+    ["Corrective Action Required",summary.categoryCounts.correctiveActionsRequired], ["Active Exceptions",summary.categoryCounts.activeExceptions],
+    ["Overdue Exceptions",summary.categoryCounts.overdueExceptions], ["Reviews Pending",summary.categoryCounts.reviewsPending],
+    ["Assignments Missing",summary.categoryCounts.assignmentsMissing], ["Dependency Attention",summary.categoryCounts.dependencyAttention],
+    ["Data Incomplete",summary.categoryCounts.dataIncomplete],
+  ] as const;
+  return <section aria-labelledby="management-attention-heading" className="rounded-lg border border-slate-200 p-5">
+    <div><h4 id="management-attention-heading" className="font-bold text-slate-950">Management Attention</h4><p className="mt-1 text-sm text-slate-600">Factual unresolved operational obligations derived from current Project records.</p></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <Metric label="Outstanding Obligations" value={String(summary.outstandingObligations)} attention={summary.outstandingObligations > 0}/>
+      <Metric label="Overdue Obligations" value={String(summary.overdueObligations)} attention={summary.overdueObligations > 0}/>
+      <Metric label="Activities Affected" value={String(summary.activitiesAffected)}/>
+      <Metric label="Work Packages Affected" value={String(summary.workPackagesAffected)}/>
+      <Metric label="Unassigned Obligations" value={String(summary.unassignedObligations)} attention={summary.unassignedObligations > 0}/>
+    </div>
+    {summary.outstandingObligations ? <>
+      <dl className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{categories.filter(([,count])=>count>0).map(([label,count])=><div key={label} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"><dt className="text-sm text-slate-600">{label}</dt><dd className="font-bold text-slate-950">{count}</dd></div>)}</dl>
+      <div className="mt-5 border-t border-slate-200 pt-4"><h5 className="text-sm font-bold text-slate-950">Attention preview</h5><ul className="mt-3 grid gap-3">{management.managementAttentionPreview.map((item)=><li key={item.key} className={item.overdue ? "rounded-lg border border-orange-200 bg-orange-50/50 p-4" : "rounded-lg border border-slate-200 p-4"}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><p className="font-bold text-slate-950">{item.exceptionTitle ?? item.activityName}</p><p className="mt-1 text-xs text-slate-500">{item.siteName} · {item.workPackageName}</p></div><span className={item.overdue ? "w-fit rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-900" : "w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700"}>{item.overdue ? "Overdue" : item.condition}</span></div>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2"><div><dt className="text-xs font-semibold uppercase tracking-wider text-slate-400">Owner</dt><dd className="mt-1 font-semibold text-slate-800">{item.ownerDisplayName ?? "Unassigned"}</dd></div><div><dt className="text-xs font-semibold uppercase tracking-wider text-slate-400">Expected next action</dt><dd className="mt-1 text-slate-700">{item.expectedNextAction ?? "Awaiting action"}</dd></div></dl>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-500">Expected actor: {expectedActorLabel(item.expectedActor, item.expectedActorDisplayName)}</p><Link href={item.route} className="text-sm font-bold text-orange-700">Open details</Link></div>
+      </li>)}</ul></div>
+    </> : <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-5 text-sm text-slate-600">No outstanding management attention items.</p>}
+  </section>;
+}
+
+function expectedActorLabel(actor: BuildManagementSummary["managementAttentionPreview"][number]["expectedActor"], name: string | null) {
+  if (actor === "activity_owner") return name ?? "Activity Owner";
+  if (actor === "assigned_supervisor_or_management") return name ? `${name} or authorized project management` : "Assigned Supervisor or authorized project management";
+  if (actor === "exception_owner_or_management") return name ? `${name} or authorized project management` : "Exception Owner or authorized project management";
+  if (actor === "independent_reviewer") return "Independent authorized reviewer";
+  if (actor === "project_management") return "Authorized project management";
+  if (actor === "system_time") return "Dependency timing";
+  return "Not specified";
 }
 
 function FoundationList({ title, empty, rows }: { title: string; empty: string; rows: Array<{ id: string; name: string; detail: string }> }) {
