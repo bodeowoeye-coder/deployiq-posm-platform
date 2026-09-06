@@ -50,6 +50,7 @@ export type BuildRuntimeActivityExecution = {
   incomingDependencies: BuildRuntimeDependencyDetail[];
   outgoingDependencies: BuildRuntimeDependencyDetail[];
   dependencyContext: import("../management/dependencyIntelligence").DependencyActivityIntelligence | null;
+  attentionItems: import("../management/managementAttention").ManagementAttentionItem[];
   checklistItems: Array<{
     id: string; item: string; description: string | null; mandatory: boolean;
     requiresPhoto: boolean; requiresComment: boolean; acceptanceType: string | null;

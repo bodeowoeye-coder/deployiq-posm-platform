@@ -6,6 +6,8 @@ import { fetchBuildEvidenceSignature } from "@/lib/build/runtime/evidenceVerific
 import { deriveSchedulePerformance } from "@/lib/build/management/schedulePerformance";
 import { deriveDependencyIntelligence } from "@/lib/build/management/dependencyIntelligence";
 import { buildDependencyDrilldown } from "@/lib/build/management/dependencyDrilldown";
+import { deriveManagementAttention } from "@/lib/build/management/managementAttention";
+import { selectActivityAttentionItems } from "@/lib/build/management/activityAttention";
 import type { BuildEvidenceUploadAuthorization, BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimeEvidence, BuildRuntimeEvidenceType, BuildRuntimePerson, BuildWorkPlan, BuildWorkPlanSchedulePreview } from "@/lib/build/runtime/types";
 
 export const BUILD_EVIDENCE_BUCKET = "build-runtime-evidence" as const;
@@ -207,6 +209,38 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
   }));
   const safe = (person: typeof people.owners[number]): BuildRuntimePerson => ({ userId: person.userId, name: person.name, roleLabel: person.roleLabel });
   const timeline = (events ?? []).map((event) => ({ ...event, actorName: allPeople.get(text(event.actor_user_id))?.name ?? "Workspace member" })) as BuildRuntimeActivityExecution["events"];
+  const mappedExceptions: BuildRuntimeActivityExecution["exceptions"] = (exceptionRows ?? []).map((item) => ({
+    id: text(item.id), runtimeInspectionId: text(item.runtime_inspection_id), title: text(item.title),
+    description: text(item.description), severity: text(item.severity) as BuildRuntimeActivityExecution["exceptions"][number]["severity"],
+    status: text(item.status) as BuildRuntimeActivityExecution["exceptions"][number]["status"],
+    ownerUserId: text(item.exception_owner_user_id), ownerName: allPeople.get(text(item.exception_owner_user_id))?.name ?? "Workspace member",
+    dueAt: text(item.due_at) || null, raisedByUserId: text(item.raised_by_user_id),
+    raisedByName: allPeople.get(text(item.raised_by_user_id))?.name ?? "Workspace reviewer", raisedAt: text(item.raised_at),
+    remediationStartedAt: text(item.remediation_started_at) || null, resolutionNote: text(item.resolution_note) || null,
+    resolvedAt: text(item.resolved_at) || null, verifiedAt: text(item.verified_at) || null,
+    verificationNote: text(item.verification_note) || null,
+  }));
+  const attention = deriveManagementAttention({
+    evaluatedAt: new Date(),
+    activities: [{
+      id: activity.id, projectId: params.projectId, siteId: params.siteId, workPackageId: params.workPackageId, workPlanId: plan.id,
+      status: activity.status, requiresApproval: activity.requires_approval, plannedStartAt: activity.planned_start_at,
+      plannedFinishAt: activity.planned_finish_at, activityOwnerUserId: activity.activity_owner_user_id,
+      activityOwnerDisplayName: allPeople.get(activity.activity_owner_user_id ?? "")?.name ?? null,
+      supervisorUserId: activity.supervisor_user_id, supervisorDisplayName: allPeople.get(activity.supervisor_user_id ?? "")?.name ?? null,
+      blockerReason: activity.blocker_reason, blockedAt: activity.blocked_at, schedulePerformance: activity.schedule_performance,
+      events: timeline.map((event) => ({ event_type: event.event_type, occurred_at: event.occurred_at, event_sequence: event.event_sequence })),
+    }],
+    exceptions: mappedExceptions.map((item) => ({
+      id: item.id, projectId: params.projectId, siteId: params.siteId, workPackageId: params.workPackageId, workPlanId: plan.id,
+      activityId: activity.id, status: item.status, ownerUserId: item.ownerUserId, ownerDisplayName: item.ownerName,
+      dueAt: item.dueAt, raisedAt: item.raisedAt,
+    })),
+    dependencyEdges: plan.dependencies.filter((item) => item.successorActivityId === activity.id),
+  });
+  const attentionItems = selectActivityAttentionItems(attention.items.map((item) => item.expectedActorUserId && !item.expectedActorDisplayName
+    ? { ...item, expectedActorDisplayName: allPeople.get(item.expectedActorUserId)?.name ?? null }
+    : item), activity.id);
   const legacyTimestampCounts = new Map<string, number>();
   for (const event of timeline) if (event.event_sequence == null) legacyTimestampCounts.set(event.occurred_at, (legacyTimestampCounts.get(event.occurred_at) ?? 0) + 1);
   return {
@@ -223,6 +257,7 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
     incomingDependencies: plan.dependencies.filter((item) => item.successorActivityId === activity.id),
     outgoingDependencies: plan.dependencies.filter((item) => item.predecessorActivityId === activity.id),
     dependencyContext: plan.dependencyActivityFacts.find((item) => item.activityId === activity.id) ?? null,
+    attentionItems,
     checklistItems: (checklistItems ?? []).map((item) => ({ id: text(item.id), item: text(item.item), description: text(item.description) || null,
       mandatory: Boolean(item.mandatory), requiresPhoto: Boolean(item.requires_photo), requiresComment: Boolean(item.requires_comment),
       acceptanceType: text(item.acceptance_type) || null, status: text(item.status) as BuildRuntimeActivityExecution["checklistItems"][number]["status"],
@@ -234,17 +269,7 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
       outcome: text(item.outcome) as BuildRuntimeActivityExecution["inspections"][number]["outcome"],
       comments: text(item.comments) || null, reviewedAt: text(item.reviewed_at),
     })),
-    exceptions: (exceptionRows ?? []).map((item) => ({
-      id: text(item.id), runtimeInspectionId: text(item.runtime_inspection_id), title: text(item.title),
-      description: text(item.description), severity: text(item.severity) as BuildRuntimeActivityExecution["exceptions"][number]["severity"],
-      status: text(item.status) as BuildRuntimeActivityExecution["exceptions"][number]["status"],
-      ownerUserId: text(item.exception_owner_user_id), ownerName: allPeople.get(text(item.exception_owner_user_id))?.name ?? "Workspace member",
-      dueAt: text(item.due_at) || null, raisedByUserId: text(item.raised_by_user_id),
-      raisedByName: allPeople.get(text(item.raised_by_user_id))?.name ?? "Workspace reviewer", raisedAt: text(item.raised_at),
-      remediationStartedAt: text(item.remediation_started_at) || null, resolutionNote: text(item.resolution_note) || null,
-      resolvedAt: text(item.resolved_at) || null, verifiedAt: text(item.verified_at) || null,
-      verificationNote: text(item.verification_note) || null,
-    })),
+    exceptions: mappedExceptions,
     resourceRequirements: (resourceRequirements ?? []).map((item) => ({ id: text(item.id), name: text(item.resource_name), type: text(item.resource_type), quantity: Number(item.quantity), unit: text(item.unit_of_measure) || null, mandatory: Boolean(item.mandatory) })),
     hasLegacyAmbiguousOrder: [...legacyTimestampCounts.values()].some((count) => count > 1),
   };
