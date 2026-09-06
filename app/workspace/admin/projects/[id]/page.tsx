@@ -150,6 +150,7 @@ function BuildProjectOverview({ overview, management }: { overview: BuildProject
           <section><h4 className="font-bold text-slate-950">Activity Execution</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[["Total Activities",management.activities.total],["Not Started",management.activities.not_started],["In Progress",management.activities.in_progress],["Completed",management.activities.completed],["Blocked",management.activities.blocked],["Awaiting Review",management.activities.submitted_for_review],["Changes Required",management.activities.changes_required],["Approved",management.activities.approved]].map(([label,value])=><Metric key={label} label={String(label)} value={String(value)}/>) }
           </div></section>
+          <ProgressAndPerformance management={management} projectId={overview.project.id}/>
           <section><h4 className="font-bold text-slate-950">Schedule Performance</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[["Scheduled Activities",management.schedule.scheduled,false],["Currently Overdue",management.schedule.currentlyOverdue,true],["Completed On Time",management.schedule.completedOnTime,false],["Completed Late",management.schedule.completedLate,false]].map(([label,value,attention])=><Metric key={String(label)} label={String(label)} value={String(value)} attention={Boolean(attention) && Number(value) > 0}/>) }
           </div>{management.schedule.dataIncomplete > 0 ? <p className="mt-3 text-sm font-semibold text-amber-800">{management.schedule.dataIncomplete} {countLabel(management.schedule.dataIncomplete, "Activity has", "Activities have")} incomplete schedule history or dates.</p> : null}</section>
@@ -201,6 +202,76 @@ function BuildProjectOverview({ overview, management }: { overview: BuildProject
       </section>
     </BuildProjectShell>
   );
+}
+
+function ProgressAndPerformance({ management, projectId }: { management: BuildManagementSummary; projectId: string }) {
+  const rollup = management.progressPerformance;
+  const measurement = rollup.measurement;
+  const duration = measurement?.durationPosition;
+  const coverage = measurement?.coverage;
+  return <section aria-labelledby="progress-performance-heading" className="rounded-lg border border-slate-200 p-5">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div><h4 id="progress-performance-heading" className="font-bold text-slate-950">Progress &amp; Performance</h4><p className="mt-1 text-sm text-slate-600">Deterministic Activity completion and planned-position facts across active measurable scope. This is not a physical-progress claim.</p></div>
+      <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{qualityLabel(rollup.dataQuality)}</span>
+    </div>
+    {measurement ? <>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Metric label="Activities Completed" value={ratioWithCount(measurement.progressMeasurement.activityCounts.operationalCompletionRatio, measurement.counts.operationallyCompletedActivities, measurement.counts.totalActivities)}/>
+        <Metric label="Activities Accepted" value={ratioWithCount(measurement.progressMeasurement.activityCounts.acceptedCompletionRatio, measurement.counts.acceptedActivities, measurement.counts.totalActivities)}/>
+        <Metric label="Activities Expected Complete" value={countOrUnavailable(measurement.finishPosition.activitiesExpectedFinished)}/>
+        <Metric label="Operational Completion Shortfall" value={countOrUnavailable(measurement.finishPosition.operationalCompletionShortfallActivities)} attention={Boolean(measurement.finishPosition.operationalCompletionShortfallActivities)}/>
+        <Metric label="Accepted Completion Shortfall" value={countOrUnavailable(measurement.finishPosition.acceptedCompletionShortfallActivities)} attention={Boolean(measurement.finishPosition.acceptedCompletionShortfallActivities)}/>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Planned-Duration Share Expected Complete" value={percentOrUnavailable(duration?.plannedDurationExpectedCompleteRatio)}/>
+        <Metric label="Planned-Duration Share Completed" value={percentOrUnavailable(duration?.operationalDurationCompletionRatio)}/>
+        <Metric label="Planned-Duration Share Accepted" value={percentOrUnavailable(duration?.acceptedDurationCompletionRatio)}/>
+        <Metric label="Duration Coverage" value={percentOrUnavailable(coverage?.duration.usableDurationCoverageRatio)}/>
+      </div>
+      <p className="mt-3 text-sm text-slate-600">Coverage: {coverage?.validStartActivities ?? 0}/{coverage?.totalActivities ?? 0} planned starts · {coverage?.validFinishActivities ?? 0}/{coverage?.totalActivities ?? 0} planned finishes · {coverage?.duration.validDurationActivities ?? 0}/{coverage?.totalActivities ?? 0} valid planned durations. {coverage?.duration.missingDurationActivities ?? 0} missing, {coverage?.duration.zeroDurationActivities ?? 0} zero and {coverage?.duration.invalidDurationActivities ?? 0} invalid duration {countLabel((coverage?.duration.invalidDurationActivities ?? 0) + (coverage?.duration.zeroDurationActivities ?? 0) + (coverage?.duration.missingDurationActivities ?? 0), "record", "records")}.</p>
+    </> : <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">Project progress is unavailable because no active measurable Activity scope exists.</p>}
+    <div className="mt-5 border-t border-slate-200 pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2"><h5 className="text-sm font-bold text-slate-950">Work Package performance</h5><p className="text-xs text-slate-500">{rollup.scope.workPackagesWithActiveWorkPlan}/{rollup.scope.workPackagesTotal} with an active Work Plan</p></div>
+      {rollup.workPackages.length ? <ul className="mt-3 grid gap-3 xl:grid-cols-2">{rollup.workPackages.map((item) => {
+        const measured = item.measurement;
+        return <li key={item.id} className="rounded-lg border border-slate-200 p-4">
+          <div className="flex items-start justify-between gap-3"><div><Link href={`/workspace/admin/projects/${projectId}/activities?workPackage=${item.id}`} className="font-bold text-orange-700">{item.name}</Link><p className="mt-1 text-xs text-slate-500">{item.siteName}</p></div><span className="whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{qualityLabel(item.measurementAvailability)}</span></div>
+          {measured ? <><dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3"><CompactFact label="Activities" value={String(measured.counts.totalActivities)}/><CompactFact label="Completed" value={String(measured.counts.operationallyCompletedActivities)}/><CompactFact label="Accepted" value={String(measured.counts.acceptedActivities)}/><CompactFact label="Expected Complete" value={countOrUnavailable(measured.finishPosition.activitiesExpectedFinished)}/><CompactFact label="Operational Shortfall" value={countOrUnavailable(measured.finishPosition.operationalCompletionShortfallActivities)}/><CompactFact label="Accepted Shortfall" value={countOrUnavailable(measured.finishPosition.acceptedCompletionShortfallActivities)}/></dl><p className="mt-3 text-xs text-slate-600">Duration share: {percentOrUnavailable(measured.durationPosition.operationalDurationCompletionRatio)} completed · {percentOrUnavailable(measured.durationPosition.acceptedDurationCompletionRatio)} accepted · coverage {percentOrUnavailable(measured.coverage.duration.usableDurationCoverageRatio)} ({measured.coverage.duration.validDurationActivities}/{measured.coverage.totalActivities} Activities).</p></> : <p className="mt-3 text-sm text-slate-600">{unavailableReason(item.unavailableReason)}</p>}
+          <p className="mt-3 text-xs text-slate-500">{item.context.overdueActivities} overdue · {item.context.blockedActivities} blocked · {item.context.activeExceptions} active exceptions · {item.context.managementAttentionObligations} attention obligations · {item.context.unreleasedDependencyConstraints} unreleased dependencies</p>
+        </li>;
+      })}</ul> : <p className="mt-3 text-sm text-slate-600">No active Work Packages are available.</p>}
+    </div>
+  </section>;
+}
+
+function CompactFact({ label, value }: { label: string; value: string }) {
+  return <div><dt className="text-xs font-semibold uppercase tracking-wider text-slate-400">{label}</dt><dd className="mt-1 font-bold text-slate-900">{value}</dd></div>;
+}
+
+function percentOrUnavailable(value: number | null | undefined) {
+  return value === null || value === undefined ? "Unavailable" : `${Math.round(value * 100)}%`;
+}
+
+function ratioWithCount(ratio: number | null, numerator: number, denominator: number) {
+  return ratio === null ? "Unavailable" : `${Math.round(ratio * 100)}% (${numerator}/${denominator})`;
+}
+
+function countOrUnavailable(value: number | null | undefined) {
+  return value === null || value === undefined ? "Unavailable" : String(value);
+}
+
+function qualityLabel(value: string) {
+  if (value === "complete" || value === "measurable") return "Measurable";
+  if (value === "partial" || value === "partially_measurable") return "Partially Measurable";
+  if (value === "invalid") return "Invalid";
+  return "Unavailable";
+}
+
+function unavailableReason(reason: BuildManagementSummary["progressPerformance"]["workPackages"][number]["unavailableReason"]) {
+  if (reason === "work_plan_not_available") return "No active Work Plan is available; progress cannot be measured.";
+  if (reason === "multiple_active_work_plans") return "Multiple active Work Plans make this scope ambiguous.";
+  if (reason === "empty_activity_scope") return "The active Work Plan has no Activities to measure.";
+  return "Progress measurement is unavailable because the source data is invalid.";
 }
 
 function ManagementAttention({management,projectId}:{management:BuildManagementSummary;projectId:string}) {
