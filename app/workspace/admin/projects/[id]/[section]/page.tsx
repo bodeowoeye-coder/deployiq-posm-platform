@@ -3,8 +3,10 @@ import { BuildProjectShell, type BuildProjectSection } from "@/components/worksp
 import { BuildProjectManagement } from "@/components/workspace/BuildProjectManagement";
 import { BuildRuntimeWorkPlan } from "@/components/workspace/BuildRuntimeWorkPlan";
 import { BuildExceptionRegister } from "@/components/workspace/BuildExceptionRegister";
+import { BuildManagementReport } from "@/components/workspace/BuildManagementReport";
 import { getWorkPlan } from "@/lib/build/runtime/service";
 import { getBuildManagementSummary, type BuildExceptionFilters } from "@/lib/build/management/service";
+import { composeBuildManagementReport } from "@/lib/build/reporting/managementReport";
 import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
 
 export const dynamic = "force-dynamic";
@@ -74,7 +76,14 @@ async function BuildProjectSectionContent({
     return <BuildExceptionRegister projectId={overview.project.id} management={management} filters={filters}/>;
   }
 
-  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities" | "exceptions">, { title: string; description: string }> = {
+  if (section === "reports") {
+    const asOf = new Date();
+    const management = await getBuildManagementSummary(overview.project.id, asOf);
+    const report = composeBuildManagementReport({ project: overview.project, management, asOf, generatedAt: new Date() });
+    return <BuildManagementReport report={report}/>;
+  }
+
+  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities" | "exceptions" | "reports">, { title: string; description: string }> = {
     resources: {
       title: "Resources",
       description: `${overview.counts.resources} eligible resource definition${overview.counts.resources === 1 ? " is" : "s are"} available to this tenant. Project resource planning arrives in a later Build phase.`,
@@ -82,10 +91,6 @@ async function BuildProjectSectionContent({
     documents: {
       title: "Documents",
       description: "Build document controls are planned for a later phase. No document records are fabricated here.",
-    },
-    reports: {
-      title: "Reports",
-      description: "Build reporting is planned for a later phase. Retail deployment reports are intentionally not reused.",
     },
     analytics: {
       title: "Analytics",
