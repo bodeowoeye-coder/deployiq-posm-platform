@@ -4,6 +4,8 @@ import { assertWorkPackageAccess } from "@/lib/build/workPackages/service";
 import { instantiateTemplate } from "@/lib/build/templates/service";
 import { fetchBuildEvidenceSignature } from "@/lib/build/runtime/evidenceVerification";
 import { deriveSchedulePerformance } from "@/lib/build/management/schedulePerformance";
+import { deriveDependencyIntelligence } from "@/lib/build/management/dependencyIntelligence";
+import { buildDependencyDrilldown } from "@/lib/build/management/dependencyDrilldown";
 import type { BuildEvidenceUploadAuthorization, BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimeEvidence, BuildRuntimeEvidenceType, BuildRuntimePerson, BuildWorkPlan, BuildWorkPlanSchedulePreview } from "@/lib/build/runtime/types";
 
 export const BUILD_EVIDENCE_BUCKET = "build-runtime-evidence" as const;
@@ -40,7 +42,7 @@ async function hydrateWorkPlan(row: Record<string, unknown>): Promise<BuildWorkP
   const [activitiesResult, checklistsResult, dependenciesResult, requirementsResult, evidenceResult, exceptionResult, scheduleEventResult] = await Promise.all([
     supabase.from("build_runtime_activities").select("*").eq("work_plan_id", planId).is("archived_at", null).order("sequence"),
     supabase.from("build_runtime_checklist_items").select("id,runtime_activity_id,status").eq("work_plan_id", planId).is("archived_at", null),
-    supabase.from("build_runtime_dependencies").select("id,successor_runtime_activity_id").eq("work_plan_id", planId),
+    supabase.from("build_runtime_dependencies").select("id,work_plan_id,predecessor_runtime_activity_id,successor_runtime_activity_id,dependency_type,lag_value,lag_unit,mandatory").eq("work_plan_id", planId),
     supabase.from("build_runtime_resource_requirements").select("id,runtime_activity_id").eq("work_plan_id", planId),
     supabase.from("build_runtime_evidence").select("id,runtime_activity_id").eq("work_plan_id", planId).is("archived_at", null),
     supabase.from("build_runtime_exceptions").select("id,runtime_activity_id,status,due_at").eq("work_plan_id", planId),
@@ -81,6 +83,41 @@ async function hydrateWorkPlan(row: Record<string, unknown>): Promise<BuildWorkP
       completedAt: text(item.completed_at) || null, events: eventsByActivity.get(text(item.id)) ?? [] }, requestNow),
   })) as BuildRuntimeActivity[];
 
+  const activeActivityIds = new Set(activities.map((activity) => activity.id));
+  const dependencyIntelligence = deriveDependencyIntelligence({
+    evaluatedAt: requestNow,
+    activities: activities.map((activity) => ({
+      id: activity.id,
+      workPlanId: planId,
+      workPackageId: text(row.work_package_id),
+      status: activity.status,
+      plannedStartAt: activity.planned_start_at,
+      plannedFinishAt: activity.planned_finish_at,
+      ownerUserId: activity.activity_owner_user_id,
+      supervisorUserId: activity.supervisor_user_id,
+      schedulePerformance: activity.schedule_performance,
+    })),
+    dependencies: (dependenciesResult.data ?? []).filter((dependency) =>
+      activeActivityIds.has(text(dependency.predecessor_runtime_activity_id))
+      && activeActivityIds.has(text(dependency.successor_runtime_activity_id)))
+      .map((dependency) => ({
+      id: text(dependency.id),
+      workPlanId: planId,
+      predecessorActivityId: text(dependency.predecessor_runtime_activity_id),
+      successorActivityId: text(dependency.successor_runtime_activity_id),
+      dependencyType: text(dependency.dependency_type) as "FS" | "SS" | "FF" | "SF",
+      lagValue: Number(dependency.lag_value),
+      lagUnit: text(dependency.lag_unit) as "hours" | "days" | "weeks",
+      mandatory: dependency.mandatory === true,
+    })),
+  });
+  if (!dependencyIntelligence.ok) throw new AccessControlError("Work Plan dependency details could not be derived.", 500);
+  const dependencyDrilldown = buildDependencyDrilldown({
+    edges: dependencyIntelligence.edges,
+    activities,
+    activityFacts: dependencyIntelligence.activities,
+  });
+
   return {
     ...(row as Omit<BuildWorkPlan, "counts" | "activities">),
     counts: {
@@ -97,6 +134,8 @@ async function hydrateWorkPlan(row: Record<string, unknown>): Promise<BuildWorkP
       approved: activities.filter((item) => item.status === "approved").length,
     },
     activities,
+    dependencies: dependencyDrilldown.dependencies,
+    dependencyActivityFacts: dependencyDrilldown.activityFacts,
   };
 }
 
@@ -181,6 +220,9 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
       const predecessor = predecessorById.get(text(item.predecessor_runtime_activity_id));
       return { id: text(item.predecessor_runtime_activity_id), name: text(predecessor?.name) || "Predecessor Activity", status: (text(predecessor?.status) || "not_started") as BuildRuntimeActivity["status"], dependencyType: text(item.dependency_type) };
     }),
+    incomingDependencies: plan.dependencies.filter((item) => item.successorActivityId === activity.id),
+    outgoingDependencies: plan.dependencies.filter((item) => item.predecessorActivityId === activity.id),
+    dependencyContext: plan.dependencyActivityFacts.find((item) => item.activityId === activity.id) ?? null,
     checklistItems: (checklistItems ?? []).map((item) => ({ id: text(item.id), item: text(item.item), description: text(item.description) || null,
       mandatory: Boolean(item.mandatory), requiresPhoto: Boolean(item.requires_photo), requiresComment: Boolean(item.requires_comment),
       acceptanceType: text(item.acceptance_type) || null, status: text(item.status) as BuildRuntimeActivityExecution["checklistItems"][number]["status"],

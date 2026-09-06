@@ -47,6 +47,9 @@ export type BuildRuntimeActivityExecution = {
   events: Array<BuildRuntimeActivityEvent & { actorName: string }>;
   dependencyTypes: string[];
   predecessors: Array<{ id: string; name: string; status: BuildRuntimeActivity["status"]; dependencyType: string }>;
+  incomingDependencies: BuildRuntimeDependencyDetail[];
+  outgoingDependencies: BuildRuntimeDependencyDetail[];
+  dependencyContext: import("../management/dependencyIntelligence").DependencyActivityIntelligence | null;
   checklistItems: Array<{
     id: string; item: string; description: string | null; mandatory: boolean;
     requiresPhoto: boolean; requiresComment: boolean; acceptanceType: string | null;
@@ -58,6 +61,13 @@ export type BuildRuntimeActivityExecution = {
   exceptions: BuildRuntimeException[];
   resourceRequirements: Array<{ id: string; name: string; type: string; quantity: number; unit: string | null; mandatory: boolean }>;
   hasLegacyAmbiguousOrder: boolean;
+};
+
+export type BuildRuntimeDependencyDetail = import("../management/dependencyIntelligence").DependencyEdgeIntelligence & {
+  predecessorName: string;
+  successorName: string;
+  predecessorPlannedMilestoneAt: string | null;
+  successorPlannedBoundaryAt: string | null;
 };
 
 export type BuildRuntimeInspection = {
@@ -135,6 +145,8 @@ export type BuildWorkPlan = {
     approved: number;
   };
   activities: BuildRuntimeActivity[];
+  dependencies: BuildRuntimeDependencyDetail[];
+  dependencyActivityFacts: import("../management/dependencyIntelligence").DependencyActivityIntelligence[];
 };
 
 export type BuildWorkPlanScheduleActivity = {

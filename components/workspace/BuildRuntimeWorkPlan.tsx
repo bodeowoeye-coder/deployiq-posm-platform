@@ -5,6 +5,8 @@ import { useState } from "react";
 import type { BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
 import { deriveBuildWorkPlanDisplayStatus, type BuildWorkPlan, type BuildWorkPlanSchedulePreview } from "@/lib/build/runtime/types";
 import { formatScheduleVariance, SCHEDULE_STATE_LABELS } from "@/lib/build/management/schedulePerformance";
+import type { BuildRuntimeDependencyDetail } from "@/lib/build/runtime/types";
+import { ACTUAL_SEQUENCE_LABELS, DEPENDENCY_CONDITION_LABELS, DEPENDENCY_TYPE_LABELS, formatDependencyLag } from "@/lib/build/management/dependencyDrilldown";
 
 export function BuildRuntimeWorkPlan({ overview, selectedWorkPackageId, plan }: {
   overview: BuildProjectWorkspaceOverview;
@@ -86,6 +88,13 @@ export function BuildRuntimeWorkPlan({ overview, selectedWorkPackageId, plan }: 
           <p className="mt-4 text-sm text-slate-600">{plan.counts.notStarted} Not Started · {plan.counts.inProgress} In Progress · {plan.counts.completed} Completed · {plan.counts.blocked} Blocked</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-600">Schedule Dependencies</p>
+          <h3 className="mt-2 text-xl font-bold text-slate-950">Dependencies</h3>
+          <p className="mt-2 text-sm text-slate-600">Dependency conditions reflect the confirmed Work Plan schedule. They do not by themselves imply an execution gate or a cause of delay.</p>
+          {plan.dependencies.length ? <div className="mt-5 space-y-4">{plan.dependencies.map((dependency) => <DependencyCard key={dependency.dependencyId} dependency={dependency} activityBase={base} />)}</div>
+            : <div className="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-sm text-slate-600">No schedule dependencies are recorded for this Work Plan.</div>}
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <div><p className="text-xs font-black uppercase tracking-[0.2em] text-orange-600">Work Schedule</p><h3 className="mt-2 text-xl font-bold text-slate-950">{plan.schedule_baselined_at ? "Schedule Confirmed" : "Not Confirmed"}</h3></div>
           {plan.schedule_baselined_at ? <><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Context label="Schedule Confirmed On" value={formatDateTime(plan.schedule_baselined_at, "Unavailable")} /><Context label="Planned Work Start" value={formatDateTime(earliestPlannedStart(plan), "Unavailable")} /></dl><p className="mt-4 text-sm text-slate-600">Activity start and finish dates are calculated from this confirmed schedule.</p></> : <div className="mt-5 max-w-3xl space-y-4">
             <p className="text-sm leading-6 text-slate-600">Confirming the schedule establishes the planned start and finish dates for this Work Plan. The confirmed schedule cannot be changed in this version.</p>
@@ -116,4 +125,37 @@ function schedulePerformanceCopy(performance: BuildWorkPlan["activities"][number
   if (performance.state === "awaiting_review" && performance.submissionVarianceMs !== null) return `Awaiting Review · submitted ${formatScheduleVariance(performance.submissionVarianceMs)}`;
   return SCHEDULE_STATE_LABELS[performance.state];
 }
+function DependencyCard({ dependency, activityBase }: { dependency: BuildRuntimeDependencyDetail; activityBase: string }) {
+  const attention = dependency.condition !== "constraint_released";
+  return <article className={`rounded-lg border p-4 ${attention ? "border-orange-200 bg-orange-50/40" : "border-slate-200"}`}>
+    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center">
+      <ActivityLink label="Predecessor Activity" name={dependency.predecessorName} href={`${activityBase}/${encodeURIComponent(dependency.predecessorActivityId)}`} />
+      <div className="flex flex-wrap items-center gap-2 md:max-w-56 md:justify-center">
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-800">{DEPENDENCY_TYPE_LABELS[dependency.dependencyType]}</span>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{formatDependencyLag(dependency.lagValue, dependency.lagUnit)}</span>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{dependency.mandatory ? "Mandatory" : "Advisory"}</span>
+      </div>
+      <ActivityLink label="Successor Activity" name={dependency.successorName} href={`${activityBase}/${encodeURIComponent(dependency.successorActivityId)}`} />
+    </div>
+    <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+      <span className={`rounded-full px-3 py-1 text-xs font-bold ${attention ? "bg-orange-100 text-orange-900" : "bg-emerald-50 text-emerald-800"}`}>{DEPENDENCY_CONDITION_LABELS[dependency.condition]}</span>
+      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">Predecessor · {SCHEDULE_STATE_LABELS[dependency.predecessorScheduleState]}</span>
+      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">Successor · {SCHEDULE_STATE_LABELS[dependency.successorScheduleState]}</span>
+    </div>
+    <details className="mt-4 rounded-lg border border-slate-200 bg-white">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-orange-700">View milestone detail</summary>
+      <dl className="grid gap-4 border-t border-slate-200 p-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Context label={`Predecessor Planned ${titleWord(dependency.requiredPredecessorMilestone)}`} value={formatDateTime(dependency.predecessorPlannedMilestoneAt)} />
+        <Context label={`Predecessor Actual ${titleWord(dependency.requiredPredecessorMilestone)}`} value={formatDateTime(dependency.predecessorMilestoneAt)} />
+        <Context label="Dependency Release Boundary" value={formatDateTime(dependency.releaseAt)} />
+        <Context label={`Successor Planned ${titleWord(dependency.relevantSuccessorBoundary)}`} value={formatDateTime(dependency.successorPlannedBoundaryAt)} />
+        <Context label={`Successor Actual ${titleWord(dependency.relevantSuccessorBoundary)}`} value={formatDateTime(dependency.successorActualBoundaryAt)} />
+        <Context label="Actual Sequence Compliance" value={ACTUAL_SEQUENCE_LABELS[dependency.actualSequenceCompliance]} />
+      </dl>
+      {dependency.baselineControlling ? <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-600"><strong>Baseline-controlling constraint.</strong> This constraint aligned with the successor&apos;s confirmed baseline schedule.</p> : null}
+    </details>
+  </article>;
+}
+function ActivityLink({ label, name, href }: { label: string; name: string; href: string }) { return <div className="min-w-0"><p className="text-[11px] font-black uppercase tracking-wider text-slate-400">{label}</p><a href={href} className="mt-1 block break-words text-sm font-bold text-orange-700 hover:text-orange-800">{name}</a></div>; }
+function titleWord(value: string) { return value.charAt(0).toUpperCase() + value.slice(1); }
 function Empty({ children }: { children: React.ReactNode }) { return <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-sm text-slate-600">{children}</div>; }
