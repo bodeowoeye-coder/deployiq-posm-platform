@@ -151,6 +151,7 @@ function BuildProjectOverview({ overview, management }: { overview: BuildProject
             {[["Total Activities",management.activities.total],["Not Started",management.activities.not_started],["In Progress",management.activities.in_progress],["Completed",management.activities.completed],["Blocked",management.activities.blocked],["Awaiting Review",management.activities.submitted_for_review],["Changes Required",management.activities.changes_required],["Approved",management.activities.approved]].map(([label,value])=><Metric key={label} label={String(label)} value={String(value)}/>) }
           </div></section>
           <ProgressAndPerformance management={management} projectId={overview.project.id}/>
+          <RecentExecution management={management}/>
           <section><h4 className="font-bold text-slate-950">Schedule Performance</h4><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[["Scheduled Activities",management.schedule.scheduled,false],["Currently Overdue",management.schedule.currentlyOverdue,true],["Completed On Time",management.schedule.completedOnTime,false],["Completed Late",management.schedule.completedLate,false]].map(([label,value,attention])=><Metric key={String(label)} label={String(label)} value={String(value)} attention={Boolean(attention) && Number(value) > 0}/>) }
           </div>{management.schedule.dataIncomplete > 0 ? <p className="mt-3 text-sm font-semibold text-amber-800">{management.schedule.dataIncomplete} {countLabel(management.schedule.dataIncomplete, "Activity has", "Activities have")} incomplete schedule history or dates.</p> : null}</section>
@@ -242,6 +243,27 @@ function ProgressAndPerformance({ management, projectId }: { management: BuildMa
       })}</ul> : <p className="mt-3 text-sm text-slate-600">No active Work Packages are available.</p>}
     </div>
   </section>;
+}
+
+function RecentExecution({ management }: { management: BuildManagementSummary }) {
+  const history = management.recentExecution;
+  const review = history.reviewTurnaround;
+  return <section aria-labelledby="recent-execution-heading" className="rounded-lg border border-slate-200 p-5">
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between"><div><h4 id="recent-execution-heading" className="font-bold text-slate-950">Recent Execution</h4><p className="mt-1 text-sm text-slate-600">Recorded execution events during the selected period.</p></div><p className="text-xs font-semibold text-slate-500">Last 7 Days · UTC</p></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <Metric label="Activities Completed" value={String(history.counts.operationalCompletions)}/>
+      <Metric label="Activities Accepted" value={String(history.counts.acceptedActivities)}/>
+      <Metric label="Submissions" value={String(history.counts.submissions)}/>
+      <Metric label="Changes Required Outcomes" value={String(history.counts.changesRequiredOutcomes)}/>
+    </div>
+    {review.reviewCyclesMeasured > 0 ? <p className="mt-3 text-sm text-slate-600">Median Review Turnaround: <strong className="text-slate-900">{formatHours(review.medianHours)}</strong> · {review.reviewCyclesMeasured}/{review.reviewCyclesTotal} review cycles measured</p> : <p className="mt-3 text-sm text-slate-600">Review turnaround unavailable · {review.reviewCyclesMeasured}/{review.reviewCyclesTotal} review cycles measured</p>}
+    <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-[640px] text-left text-sm"><thead className="text-xs uppercase tracking-wider text-slate-500"><tr>{["UTC period","Started","Completed","Accepted","Submissions","Changes Required"].map((label)=><th key={label} className="whitespace-nowrap border-b px-3 py-3">{label}</th>)}</tr></thead><tbody>{history.buckets.map((bucket)=><tr key={bucket.bucketStart} className="border-b border-slate-100 last:border-b-0"><td className="whitespace-nowrap px-3 py-2 font-semibold text-slate-800">{bucket.label}</td><td className="px-3 py-2">{bucket.activitiesStarted}</td><td className="px-3 py-2">{bucket.operationalCompletions}</td><td className="px-3 py-2">{bucket.acceptedActivities}</td><td className="px-3 py-2">{bucket.submissions}</td><td className="px-3 py-2">{bucket.changesRequiredOutcomes}</td></tr>)}</tbody></table></div>
+  </section>;
+}
+
+function formatHours(value: number | null) {
+  if (value === null) return "Unavailable";
+  return `${Math.round(value * 10) / 10} ${value === 1 ? "hour" : "hours"}`;
 }
 
 function CompactFact({ label, value }: { label: string; value: string }) {

@@ -6,6 +6,7 @@ import { deriveDependencyIntelligence, type DependencyEdgeIntelligence } from ".
 import { deriveDependencyManagementRollup, type DependencyManagementCounts, type WorkPackageDependencyCounts } from "./dependencyRollup.ts";
 import { deriveManagementAttention, type ManagementAttentionSummary } from "./managementAttention.ts";
 import { orderManagementAttentionPreview, type BuildManagementAttentionPreview } from "./managementAttentionPreview.ts";
+import { buildUtcHistoryBuckets, deriveProgressHistory, type ProgressHistoryResult } from "./progressHistory.ts";
 import { deriveProjectProgressRollup, type ProjectProgressRollup } from "./progressRollup.ts";
 import { deriveSchedulePerformance, isCurrentlyOverdue, type SchedulePerformance, type SchedulePerformanceState } from "./schedulePerformance.ts";
 
@@ -34,6 +35,7 @@ export type BuildManagementSummary = {
   managementAttention: ManagementAttentionSummary;
   managementAttentionPreview: BuildManagementAttentionPreview[];
   progressPerformance: Extract<ProjectProgressRollup, { ok: true }>;
+  recentExecution: Extract<ProgressHistoryResult, { ok: true }>;
 };
 
 export type BuildExceptionFilters = { status?: string; severity?: string; owner?: string; due?: string; site?: string; workPackage?: string };
@@ -101,13 +103,15 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     .eq("client_id", project.client_id).eq("project_id", project.id).in("work_plan_id", planIds).is("archived_at", null) : { data: [], error: null };
   requireQuery(activityResult.error, "activities");
   const activities = list(activityResult.data as Row[] | null), activityIds = activities.map((row) => text(row.id)).filter(Boolean);
-  const [exceptionResult, inspectionResult, evidenceResult, eventResult, dependencyResult] = activityIds.length ? await Promise.all([
+  const [eventResult, inspectionResult] = await Promise.all([
+    supabase.from("build_runtime_activity_events").select("id,client_id,project_id,site_id,work_package_id,work_plan_id,runtime_activity_id,event_type,occurred_at,event_sequence").eq("client_id", project.client_id).eq("project_id", project.id),
+    supabase.from("build_runtime_inspections").select("id,client_id,project_id,site_id,work_package_id,work_plan_id,runtime_activity_id,outcome,reviewed_at").eq("client_id", project.client_id).eq("project_id", project.id),
+  ]);
+  const [exceptionResult, evidenceResult, dependencyResult] = activityIds.length ? await Promise.all([
     supabase.from("build_runtime_exceptions").select("id,runtime_activity_id,runtime_inspection_id,title,severity,status,exception_owner_user_id,due_at,raised_at").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds),
-    supabase.from("build_runtime_inspections").select("id,runtime_activity_id,outcome,reviewed_at").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds),
     supabase.from("build_runtime_evidence").select("id,runtime_activity_id,runtime_exception_id").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds).not("runtime_exception_id", "is", null).is("archived_at", null),
-    supabase.from("build_runtime_activity_events").select("runtime_activity_id,event_type,occurred_at,event_sequence").eq("client_id", project.client_id).eq("project_id", project.id).in("runtime_activity_id", activityIds).in("event_type", ["submitted_for_review", "inspection_accepted", "changes_required"]),
     supabase.from("build_runtime_dependencies").select("id,work_plan_id,predecessor_runtime_activity_id,successor_runtime_activity_id,dependency_type,lag_value,lag_unit,mandatory").in("work_plan_id", planIds),
-  ]) : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
+  ]) : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
   requireQuery(exceptionResult.error, "exceptions"); requireQuery(inspectionResult.error, "inspections"); requireQuery(evidenceResult.error, "corrective evidence"); requireQuery(eventResult.error, "activity history"); requireQuery(dependencyResult.error, "dependencies");
   const exceptionRows = list(exceptionResult.data as Row[] | null);
   const ownerIds = [...new Set([...exceptionRows.map((row) => text(row.exception_owner_user_id)), ...activities.flatMap((row) => [text(row.activity_owner_user_id), text(row.supervisor_user_id)])].filter(Boolean))];
@@ -266,6 +270,20 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     }),
   });
   if (!progressPerformance.ok) throw new Error(`Could not derive Build progress and performance: ${progressPerformance.reason}`);
+  const recentPeriodEnd = now;
+  const recentPeriodStart = new Date(now.getTime() - 7 * 86_400_000);
+  const recentExecution = deriveProgressHistory({ projectId: project.id, clientId: project.client_id,
+    periodStart: recentPeriodStart.toISOString(), periodEnd: recentPeriodEnd.toISOString(), timezone: "UTC",
+    buckets: buildUtcHistoryBuckets(recentPeriodStart, recentPeriodEnd, "daily"),
+    workPackages: workPackages.map((wp, index) => ({ id: text(wp.id), name: text(wp.name), sequence: index })),
+    events: list(eventResult.data as Row[] | null).map((event) => ({ id: text(event.id), clientId: text(event.client_id), projectId: text(event.project_id),
+      siteId: text(event.site_id), workPackageId: text(event.work_package_id), workPlanId: text(event.work_plan_id), activityId: text(event.runtime_activity_id),
+      event_type: text(event.event_type), occurred_at: text(event.occurred_at), event_sequence: event.event_sequence == null ? null : Number(event.event_sequence) })),
+    inspections: list(inspectionResult.data as Row[] | null).map((inspection) => ({ id: text(inspection.id), clientId: text(inspection.client_id), projectId: text(inspection.project_id),
+      siteId: text(inspection.site_id), workPackageId: text(inspection.work_package_id), workPlanId: text(inspection.work_plan_id), activityId: text(inspection.runtime_activity_id),
+      outcome: text(inspection.outcome) as "accepted" | "changes_required", reviewedAt: text(inspection.reviewed_at) })),
+  });
+  if (!recentExecution.ok) throw new Error(`Could not derive Build execution history: ${recentExecution.reason}`);
   return { projectId: project.id, hasWorkPlans: plans.length > 0, activities: activityCounts(activities),
     schedule: { scheduled: projectSchedule.scheduled, currentlyOverdue: projectSchedule.overdue, completedOnTime: projectSchedule.completedOnTime, completedLate: projectSchedule.completedLate,
       workPackagesOverdue: workPackageSummary.filter((item) => item.schedule.overdue > 0).length,
@@ -275,5 +293,5 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     exceptions: { total: register.length, open: exceptionCount("open"), in_remediation: exceptionCount("in_remediation"), resolved: exceptionCount("resolved"), verified: exceptionCount("verified"), active: active.length, overdue: register.filter((row) => row.overdue).length, critical: active.filter((row) => row.severity === "critical").length, high: active.filter((row) => row.severity === "high").length },
     workPackages: workPackageSummary, scheduleResponsibility: [...scheduleOwners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
     dependencyFacts: dependencyRollup.project, exceptionsRegister: register,
-    managementAttention: attention.summary, managementAttentionPreview: attentionPreview, progressPerformance };
+    managementAttention: attention.summary, managementAttentionPreview: attentionPreview, progressPerformance, recentExecution };
 }
