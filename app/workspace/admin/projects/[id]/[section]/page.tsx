@@ -5,8 +5,10 @@ import { BuildRuntimeWorkPlan } from "@/components/workspace/BuildRuntimeWorkPla
 import { BuildExceptionRegister } from "@/components/workspace/BuildExceptionRegister";
 import { BuildManagementReport } from "@/components/workspace/BuildManagementReport";
 import { BuildWorkPackageReport } from "@/components/workspace/BuildWorkPackageReport";
+import { BuildExecutionHistoryReport } from "@/components/workspace/BuildExecutionHistoryReport";
 import { getWorkPlan } from "@/lib/build/runtime/service";
-import { getBuildManagementSummary, type BuildExceptionFilters } from "@/lib/build/management/service";
+import { getBuildExecutionHistory, getBuildManagementSummary, type BuildExceptionFilters } from "@/lib/build/management/service";
+import { composeBuildExecutionHistoryReport, parseExecutionHistoryQuery } from "@/lib/build/reporting/executionHistoryReport";
 import { composeBuildManagementReport } from "@/lib/build/reporting/managementReport";
 import { composeBuildWorkPackageReport } from "@/lib/build/reporting/workPackageReport";
 import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
@@ -30,7 +32,7 @@ export default async function BuildProjectSectionPage({
   searchParams,
 }: {
   params: { id: string; section: string };
-  searchParams: { workPackage?: string; status?: string; severity?: string; owner?: string; due?: string; site?: string };
+  searchParams: { workPackage?: string; status?: string; severity?: string; owner?: string; due?: string; site?: string; view?: string; from?: string; through?: string; cadence?: string; timezone?: string };
 }) {
   if (!BUILD_PROJECT_SECTIONS.has(params.section as BuildProjectSection)) notFound();
 
@@ -52,7 +54,7 @@ async function BuildProjectSectionContent({
   section: BuildProjectSection;
   overview: BuildProjectWorkspaceOverview;
   selectedWorkPackageId?: string;
-  filters: BuildExceptionFilters;
+  filters: BuildExceptionFilters & { view?: string; from?: string; through?: string; cadence?: string; timezone?: string };
 }) {
   if (section === "sites") {
     return <BuildProjectManagement mode="sites" overview={overview} />;
@@ -80,6 +82,19 @@ async function BuildProjectSectionContent({
 
   if (section === "reports") {
     if (selectedWorkPackageId && !overview.workPackages.some((item) => item.id === selectedWorkPackageId)) notFound();
+    if (filters.view && filters.view !== "history") notFound();
+    if (filters.view === "history") {
+      const query = parseExecutionHistoryQuery(filters);
+      if (query.state === "invalid") notFound();
+      const selectedWorkPackage = selectedWorkPackageId ? overview.workPackages.find((item) => item.id === selectedWorkPackageId) : undefined;
+      const site = selectedWorkPackage ? overview.sites.find((item) => item.id === selectedWorkPackage.siteId) : undefined;
+      if ((selectedWorkPackage && !site) || (selectedWorkPackageId && !selectedWorkPackage)) notFound();
+      const workPackage = selectedWorkPackage && site ? { id: selectedWorkPackage.id, name: selectedWorkPackage.name, siteName: site.name } : undefined;
+      if (query.state === "selection") return <BuildExecutionHistoryReport project={overview.project} workPackage={workPackage} query={query}/>;
+      const history = await getBuildExecutionHistory({ projectId: overview.project.id, periodStart: new Date(query.periodStart), periodEnd: new Date(query.periodEnd), cadence: query.cadence });
+      const report = composeBuildExecutionHistoryReport({ project: overview.project, history, period: query, generatedAt: new Date(), workPackage: workPackage ? { ...workPackage, clientId: overview.project.client_id, projectId: overview.project.id } : undefined });
+      return <BuildExecutionHistoryReport report={report} project={overview.project} workPackage={workPackage} query={query}/>;
+    }
     const asOf = new Date();
     const management = await getBuildManagementSummary(overview.project.id, asOf);
     if (selectedWorkPackageId) {

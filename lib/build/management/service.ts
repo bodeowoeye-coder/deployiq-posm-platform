@@ -49,6 +49,7 @@ export type BuildManagementSummary = {
 };
 
 export type BuildExceptionFilters = { status?: string; severity?: string; owner?: string; due?: string; site?: string; workPackage?: string };
+export type BuildExecutionHistory = Extract<ProgressHistoryResult, { ok: true }>;
 
 const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const numeric = (value: unknown) => value === null || value === undefined ? null : typeof value === "number" ? value : Number(value);
@@ -339,4 +340,34 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
     dependencyFacts: dependencyRollup.project, exceptionsRegister: register,
     managementAttention: attention.summary, managementAttentionItems: attentionItems, managementAttentionPreview: attentionPreview,
     activityDetails, progressPerformance, recentExecution, qualityAdherence };
+}
+
+export async function getBuildExecutionHistory(input: { projectId: string; periodStart: Date; periodEnd: Date; cadence: "daily" | "weekly" }): Promise<BuildExecutionHistory> {
+  const { project } = await resolveCanonicalBuildProject({ projectId: input.projectId, requiredPermission: "projects:read" });
+  if (![input.periodStart, input.periodEnd].every((date) => date instanceof Date && Number.isFinite(date.getTime())) || input.periodStart >= input.periodEnd) {
+    throw new Error("Invalid Build execution-history period");
+  }
+  const supabase = createAdminSupabase();
+  const [siteResult, eventResult, inspectionResult] = await Promise.all([
+    supabase.from("build_sites").select("id").eq("client_id", project.client_id).eq("project_id", project.id).is("archived_at", null),
+    supabase.from("build_runtime_activity_events").select("id,client_id,project_id,site_id,work_package_id,work_plan_id,runtime_activity_id,event_type,occurred_at,event_sequence").eq("client_id", project.client_id).eq("project_id", project.id),
+    supabase.from("build_runtime_inspections").select("id,client_id,project_id,site_id,work_package_id,work_plan_id,runtime_activity_id,outcome,reviewed_at").eq("client_id", project.client_id).eq("project_id", project.id),
+  ]);
+  requireQuery(siteResult.error, "history sites"); requireQuery(eventResult.error, "history events"); requireQuery(inspectionResult.error, "history inspections");
+  const activeSiteIds = list(siteResult.data as Row[] | null).map((row) => text(row.id)).filter(Boolean);
+  const workPackageResult = activeSiteIds.length ? await supabase.from("build_work_packages").select("id,name")
+    .eq("client_id", project.client_id).eq("project_id", project.id).in("site_id", activeSiteIds).is("archived_at", null) : { data: [], error: null };
+  requireQuery(workPackageResult.error, "history work packages");
+  const history = deriveProgressHistory({ projectId: project.id, clientId: project.client_id,
+    periodStart: input.periodStart.toISOString(), periodEnd: input.periodEnd.toISOString(), timezone: "UTC",
+    buckets: buildUtcHistoryBuckets(input.periodStart, input.periodEnd, input.cadence),
+    workPackages: list(workPackageResult.data as Row[] | null).map((row, sequence) => ({ id: text(row.id), name: text(row.name), sequence })),
+    events: list(eventResult.data as Row[] | null).map((row) => ({ id: text(row.id), clientId: text(row.client_id), projectId: text(row.project_id), siteId: text(row.site_id),
+      workPackageId: text(row.work_package_id), workPlanId: text(row.work_plan_id), activityId: text(row.runtime_activity_id), event_type: text(row.event_type),
+      occurred_at: text(row.occurred_at), event_sequence: row.event_sequence == null ? null : Number(row.event_sequence) })),
+    inspections: list(inspectionResult.data as Row[] | null).map((row) => ({ id: text(row.id), clientId: text(row.client_id), projectId: text(row.project_id), siteId: text(row.site_id),
+      workPackageId: text(row.work_package_id), workPlanId: text(row.work_plan_id), activityId: text(row.runtime_activity_id), outcome: text(row.outcome) as "accepted" | "changes_required", reviewedAt: text(row.reviewed_at) })),
+  });
+  if (!history.ok) throw new Error(`Could not derive Build execution history: ${history.reason}`);
+  return history;
 }
