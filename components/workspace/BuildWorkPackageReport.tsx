@@ -16,7 +16,7 @@ export function BuildWorkPackageReport({ report }: { report: Report }) {
         <Fact label="Timezone" value={report.timing.recentExecution.timezone}/>
       </div>
       <p className="mt-4 text-xs text-slate-500">{report.timing.currentStateNotice}</p>
-      <div className="mt-4 flex flex-wrap gap-4"><Link className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={`/workspace/admin/projects/${report.project.id}/reports`}>Back to Project Report</Link><Link className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={`/workspace/admin/projects/${report.project.id}/reports?view=history&workPackage=${report.scope.workPackageId}`}>Execution History</Link></div>
+      <div className="mt-4 flex flex-wrap gap-4"><Link className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={`/workspace/admin/projects/${report.project.id}/reports`}>Back to Project Report</Link><Link className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={`/workspace/admin/projects/${report.project.id}/reports?view=history&workPackage=${report.scope.workPackageId}`}>Execution History</Link><a className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={`/api/workspace/build/reports/pdf?type=work_package&projectId=${report.project.id}&workPackageId=${report.scope.workPackageId}`} download>Download PDF</a></div>
     </section>
 
     {report.workPlan.state !== "available" ? <Section eyebrow="Operational availability" title="Work Plan Status"><Empty>{workPlanMessage(report.workPlan.state)}</Empty></Section> : null}

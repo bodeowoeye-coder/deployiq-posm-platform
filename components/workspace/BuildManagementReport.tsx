@@ -16,7 +16,7 @@ export function BuildManagementReport({ report }: { report: Report }) {
         <Fact label="Recent Execution Period" value={`${dateOnly(report.timing.recentExecution.periodStart)} – ${dateOnly(report.timing.recentExecution.periodEnd)}`}/>
         <Fact label="Timezone" value={report.timing.recentExecution.timezone}/>
       </div><p className="mt-4 text-xs text-slate-500">{report.timing.currentStateNotice}</p>
-      <Link className="mt-4 inline-flex text-sm font-semibold text-orange-700 hover:underline" href={`/workspace/admin/projects/${report.project.id}/reports?view=history`}>Execution History</Link>
+      <div className="mt-4 flex flex-wrap gap-4"><Link className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={`/workspace/admin/projects/${report.project.id}/reports?view=history`}>Execution History</Link><a className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={`/api/workspace/build/reports/pdf?type=project_management&projectId=${report.project.id}`} download>Download PDF</a></div>
     </section>
 
     <Section eyebrow="Current state" title="Project Status Summary"><MetricGrid>{[

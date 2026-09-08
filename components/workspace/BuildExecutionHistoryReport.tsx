@@ -18,7 +18,7 @@ export function BuildExecutionHistoryReport({ report, project, workPackage, quer
         {workPackage ? <><Fact label="Site" value={workPackage.siteName}/><Fact label="Work Package" value={workPackage.name}/></> : null}
         {report ? <><Fact label="Generated At" value={dateTime(report.timing.generatedAt)}/><Fact label="Reporting Period" value={`${dateOnly(report.timing.period.periodStart)} – ${dateOnlyInclusive(report.timing.period.periodEnd)}`}/><Fact label="Timezone" value="UTC"/><Fact label="Cadence" value={words(report.timing.period.cadence)}/></> : <Fact label="Timezone" value="UTC"/>}
       </div>
-      <Link className="mt-4 inline-flex text-sm font-semibold text-orange-700 hover:underline" href={currentHref}>Back to Current Report</Link>
+      <div className="mt-4 flex flex-wrap gap-4"><Link className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={currentHref}>Back to Current Report</Link>{report ? <a className="inline-flex text-sm font-semibold text-orange-700 hover:underline" href={historyPdfHref(report)} download>Download PDF</a> : null}</div>
     </section>
 
     <Section eyebrow="Report definition" title="Report Scope & Period">
@@ -61,3 +61,4 @@ const dateTime=(value:string)=>new Intl.DateTimeFormat("en-GB",{dateStyle:"mediu
 const dateOnly=(value:string)=>new Intl.DateTimeFormat("en-GB",{dateStyle:"medium",timeZone:"UTC"}).format(new Date(value));
 const dateOnlyInclusive=(periodEnd:string)=>dateOnly(new Date(new Date(periodEnd).getTime()-86_400_000).toISOString());
 const words=(value:string)=>value.replaceAll("_"," ").replace(/^./,character=>character.toUpperCase());
+const historyPdfHref=(report:Report)=>{const p=new URLSearchParams({type:report.scope.kind==="project"?"project_history":"work_package_history",projectId:report.project.id,from:report.timing.period.from,through:report.timing.period.through,cadence:report.timing.period.cadence,timezone:report.timing.period.timezone});if(report.scope.workPackageId)p.set("workPackageId",report.scope.workPackageId);return `/api/workspace/build/reports/pdf?${p.toString()}`};
