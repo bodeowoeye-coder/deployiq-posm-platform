@@ -32,6 +32,7 @@ export type BuildManagementSummary = {
   workPackages: Array<{ id: string; name: string; siteId: string; siteName: string; activities: BuildManagementSummary["activities"]; activeExceptions: number; overdueExceptions: number; schedule: { scheduled: number; notYetDue: number; onSchedule: number; overdue: number; completedOnTime: number; completedLate: number }; dependencies: WorkPackageDependencyCounts }>;
   scheduleResponsibility: Array<{ ownerUserId: string; ownerName: string; assignedScheduled: number; overdueToStart: number; overdueToComplete: number; completedLate: number; blockedOverdue: number; awaitingReview: number }>;
   dependencyFacts: DependencyManagementCounts;
+  dependencyEdges: DependencyEdgeIntelligence[];
   exceptionsRegister: BuildManagementException[];
   managementAttention: ManagementAttentionSummary;
   managementAttentionItems: BuildManagementAttentionPreview[];
@@ -337,7 +338,7 @@ export async function getBuildManagementSummary(projectId: string, now = new Dat
       dataIncomplete: allPerformance.filter((item) => item.state === "schedule_data_incomplete" || item.dataQuality === "ambiguous_history" || item.dataQuality === "missing_history").length },
     exceptions: { total: register.length, open: exceptionCount("open"), in_remediation: exceptionCount("in_remediation"), resolved: exceptionCount("resolved"), verified: exceptionCount("verified"), active: active.length, overdue: register.filter((row) => row.overdue).length, critical: active.filter((row) => row.severity === "critical").length, high: active.filter((row) => row.severity === "high").length },
     workPackages: workPackageSummary, scheduleResponsibility: [...scheduleOwners.values()].sort((a,b) => a.ownerName.localeCompare(b.ownerName)),
-    dependencyFacts: dependencyRollup.project, exceptionsRegister: register,
+    dependencyFacts: dependencyRollup.project, dependencyEdges, exceptionsRegister: register,
     managementAttention: attention.summary, managementAttentionItems: attentionItems, managementAttentionPreview: attentionPreview,
     activityDetails, progressPerformance, recentExecution, qualityAdherence };
 }
