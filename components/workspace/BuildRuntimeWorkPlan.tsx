@@ -68,8 +68,8 @@ export function BuildRuntimeWorkPlan({ overview, selectedWorkPackageId, plan }: 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-600">Build Work Plan</p>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
-          <label className="grid min-w-72 gap-2 text-sm font-bold text-slate-700">Work Package
-            <select value={selectedWorkPackageId ?? ""} onChange={(event) => router.replace(`${base}?workPackage=${encodeURIComponent(event.target.value)}`)} className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900">
+          <label className="grid min-w-0 w-full gap-2 text-sm font-bold text-slate-700 sm:min-w-72 sm:w-auto">Work Package
+            <select value={selectedWorkPackageId ?? ""} onChange={(event) => router.replace(`${base}?workPackage=${encodeURIComponent(event.target.value)}`)} className="min-h-11 min-w-0 w-full max-w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900">
               <option value="" disabled>Select a Work Package</option>
               {overview.workPackages.map((item) => <option key={item.id} value={item.id}>{item.name} · {overview.sites.find((candidate) => candidate.id === item.siteId)?.name ?? "Site unavailable"}</option>)}
             </select>
