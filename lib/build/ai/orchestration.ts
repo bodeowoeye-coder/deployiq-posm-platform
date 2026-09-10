@@ -1,7 +1,7 @@
 import "server-only";
 
 import { DEFAULT_BUILD_AI_GOVERNANCE } from "./governance.ts";
-import type { BuildAIProvider, BuildAIProviderMetadata, BuildAIProviderRequest, BuildAIProviderToolContext } from "./provider.ts";
+import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderMetadata, type BuildAIProviderRequest, type BuildAIProviderToolContext } from "./provider.ts";
 import type { BuildAIAcceptedToolCall, BuildAIInterpretationV1, BuildAITask, BuildAIValidationError } from "./types.ts";
 import { validateBuildAIModelOutput } from "./validation.ts";
 import { BUILD_INTELLIGENCE_TOOLS, type BuildIntelligenceTool, type BuildIntelligenceToolName } from "../intelligence/tools.ts";
@@ -131,7 +131,7 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   const boundedTimeout = new Promise<never>((_, reject) => { rejectTimeout = reject; });
   const timeout = setTimeout(() => { controller.abort(); rejectTimeout?.(new Error("Build AI provider timed out.")); }, providerTimeoutMs);
   try { generated = await Promise.race([dependencies.provider.generate(providerRequest(request.task, request.question, context, controller.signal)), boundedTimeout]); }
-  catch { clearTimeout(timeout); audit.completedAt = clock().toISOString(); return { ok: true, status: "ai_unavailable", toolResults: [accepted], interpretation: null, audit }; }
+  catch (error) { clearTimeout(timeout); audit.completedAt = clock().toISOString(); return { ok: true, status: error instanceof BuildAIProviderError ? error.availability : "ai_unavailable", toolResults: [accepted], interpretation: null, audit }; }
   clearTimeout(timeout);
   audit.provider = safeProviderMetadata(generated.metadata);
   if (!audit.provider) { audit.completedAt = clock().toISOString(); return { ok: true, status: "interpretation_unavailable", toolResults: [accepted], interpretation: null, audit }; }

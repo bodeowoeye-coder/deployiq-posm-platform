@@ -27,9 +27,11 @@ function compile(source, requires) {
 }
 
 const validator = compile(validationSource, {});
+const providerContract = compile(providerSource, {});
 function runtime() {
   return compile(orchestrationSource, {
     "./governance.ts": { DEFAULT_BUILD_AI_GOVERNANCE: governance },
+    "./provider.ts": providerContract,
     "./validation.ts": validator,
     "../intelligence/tools.ts": { BUILD_INTELLIGENCE_TOOLS: [] },
   });

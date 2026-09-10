@@ -48,4 +48,13 @@ export interface BuildAIProvider {
   generate(request: BuildAIProviderRequest): Promise<BuildAIProviderResult>;
 }
 
+export type BuildAIProviderFailureAvailability = "ai_unavailable" | "interpretation_unavailable";
+
+export class BuildAIProviderError extends Error {
+  constructor(readonly availability: BuildAIProviderFailureAvailability, readonly category: string) {
+    super("Build AI provider is unavailable.");
+    this.name = "BuildAIProviderError";
+  }
+}
+
 export type BuildAIValidatedProviderOutput = BuildAIModelOutputV1;
