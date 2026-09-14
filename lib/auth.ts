@@ -26,7 +26,7 @@ export async function getAuthoritativeAccountSecurityState(userId: string): Prom
   const { data, error } = await createAdminSupabase().auth.admin.getUserById(userId);
   if (error || !data.user) {
     console.error("[auth-security] authoritative auth user lookup failed", {
-      userId,
+      authenticatedUserPresent: Boolean(userId),
       message: error?.message ?? "No user returned",
     });
     throw error ?? new Error("Authoritative auth user lookup failed.");
@@ -108,20 +108,18 @@ export type CurrentUserContextResolution =
 function authContextDiagnostic(input: {
   step: string;
   result: string;
-  userId?: string | null;
-  email?: string | null;
-  sessionRole?: string | null;
-  clientId?: string | null;
+  authenticated?: boolean;
+  roleResolved?: boolean;
+  clientContextResolved?: boolean;
   elapsedMs?: number | null;
 }) {
   if (process.env.NODE_ENV !== "development") return;
   console.info("[auth-context]", {
     step: input.step,
     result: input.result,
-    userId: input.userId ?? null,
-    email: input.email ?? null,
-    sessionRole: input.sessionRole ?? null,
-    clientId: input.clientId ?? null,
+    authenticated: input.authenticated ?? null,
+    roleResolved: input.roleResolved ?? null,
+    clientContextResolved: input.clientContextResolved ?? null,
     elapsedMs: input.elapsedMs ?? null,
   });
 }
@@ -145,11 +143,10 @@ function failedAuthContext(input: {
 }): CurrentUserContextResolution {
   authContextDiagnostic({
     step: input.step,
-    result: input.result,
-    userId: input.userId,
-    email: input.email,
-    sessionRole: input.role,
-    clientId: input.clientId,
+    result: "FAILED",
+    authenticated: Boolean(input.userId),
+    roleResolved: Boolean(input.role),
+    clientContextResolved: Boolean(input.clientId),
     elapsedMs: authContextElapsedMs(input.startedAt),
   });
   return {
@@ -192,7 +189,8 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
     if (error || !data.user) {
       console.error("[auth-context] auth.getUser failed", {
         message: error?.message ?? "No user returned",
-        cookies: inspectAuthCookiePresence(),
+        accessTokenPresent: true,
+        refreshTokenPresent: Boolean(await getCurrentRefreshToken()),
         failureStage: "auth.getUser"
       });
       if (isExpiredJwtAuthError(error)) {
@@ -218,8 +216,7 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
     authContextDiagnostic({
       step: "Authenticated user",
       result: "OK",
-      userId: data.user.id,
-      email: data.user.email ?? null,
+      authenticated: true,
       elapsedMs: authContextElapsedMs(authStartedAt),
     });
 
@@ -227,7 +224,7 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
     const authoritativeUserResult = await createAdminSupabase().auth.admin.getUserById(data.user.id);
     if (authoritativeUserResult.error || !authoritativeUserResult.data.user) {
       console.error("[auth-context] authoritative auth user lookup failed", {
-        userId: data.user.id,
+        authenticatedUserPresent: true,
         message: authoritativeUserResult.error?.message ?? "No user returned",
       });
       return failedAuthContext({
@@ -242,14 +239,10 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
     authContextDiagnostic({
       step: "Authoritative auth user",
       result: "OK",
-      userId: resolvedUser.id,
-      email: resolvedUser.email ?? null,
+      authenticated: true,
       elapsedMs: authContextElapsedMs(authoritativeStartedAt),
     });
-    console.info("[auth-context] auth user resolved", {
-      userId: resolvedUser.id,
-      email: resolvedUser.email ?? null
-    });
+    authContextDiagnostic({ step: "Authenticated user resolution", result: "OK", authenticated: true });
 
     const roleStartedAt = authContextStartedAt();
     const { data: userRole, error: userRoleError } = await userClient
@@ -261,11 +254,10 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
     if (userRoleError) {
       console.error("[auth-context] user-scoped role lookup failed", dbErrorPayload(userRoleError));
     }
-    console.info("[auth-context] user-scoped role lookup result", {
-      userId: resolvedUser.id,
-      found: Boolean(userRole),
-      role: userRole?.role ?? null,
-      clientId: userRole?.client_id ?? null
+    authContextDiagnostic({ step: "User-scoped role lookup", result: "COMPLETE",
+      authenticated: true,
+      roleResolved: Boolean(userRole),
+      clientContextResolved: Boolean(userRole?.client_id),
     });
 
     let role = userRole as RoleRecord | null;
@@ -283,17 +275,13 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
         if (fallbackRoleError) {
           console.error("[auth-context] service role lookup failed", dbErrorPayload(fallbackRoleError));
         }
-        console.info("[auth-context] service role fallback result", {
-          userId: resolvedUser.id,
-          found: Boolean(fallbackRole),
-          role: fallbackRole?.role ?? null,
-          clientId: fallbackRole?.client_id ?? null
-        });
+        authContextDiagnostic({ step: "Service role fallback", result: fallbackRole ? "RESOLVED" : "NO_ROWS",
+          authenticated: true, roleResolved: Boolean(fallbackRole), clientContextResolved: Boolean(fallbackRole?.client_id) });
 
         role = (fallbackRole as RoleRecord | null) ?? null;
       } catch (err) {
         console.error("[auth-context] service role fallback threw", {
-          error: err instanceof Error ? { message: err.message, stack: err.stack } : err,
+          errorType: err instanceof Error ? err.name : "UnknownError",
           failureStage: "service_role_user_roles"
         });
       }
@@ -301,8 +289,7 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
 
     if (!role) {
       console.error("[auth-context] role lookup returned no record", {
-        userId: resolvedUser.id,
-        email: resolvedUser.email ?? null,
+        authenticated: true,
         failureStage: "role_not_found"
       });
       return failedAuthContext({
@@ -316,9 +303,8 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
 
     if (!VALID_ROLES.includes(role.role)) {
       console.error("[auth-context] invalid role value", {
-        userId: resolvedUser.id,
-        email: resolvedUser.email ?? null,
-        role: role.role,
+        authenticated: true,
+        roleResolved: true,
         failureStage: "invalid_role"
       });
       return failedAuthContext({
@@ -334,10 +320,9 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
     authContextDiagnostic({
       step: "Application role lookup",
       result: "OK",
-      userId: resolvedUser.id,
-      email: resolvedUser.email ?? null,
-      sessionRole: role.role,
-      clientId: role.client_id,
+      authenticated: true,
+      roleResolved: true,
+      clientContextResolved: Boolean(role.client_id),
       elapsedMs: authContextElapsedMs(roleStartedAt),
     });
 
@@ -346,12 +331,8 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
     let client: Client | null = null;
     let profile: Record<string, unknown> | null = null;
     if (role.client_id) {
-      console.info("[auth-context] client lookup started", {
-        userId: resolvedUser.id,
-        email: resolvedUser.email ?? null,
-        clientId: role.client_id,
-        source: "user-scoped"
-      });
+      authContextDiagnostic({ step: "Client lookup", result: "STARTED", authenticated: true,
+        roleResolved: true, clientContextResolved: false });
       const { data: clientRow, error: clientRowError } = await userClient
         .from("clients")
         .select("id, name")
@@ -362,13 +343,8 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
       }
       client = (clientRow as Client | null) ?? null;
 
-      console.info("[auth-context] user-scoped client lookup result", {
-        userId: resolvedUser.id,
-        email: resolvedUser.email ?? null,
-        clientId: role.client_id,
-        found: Boolean(client),
-        client: client ? { id: client.id, name: client.name } : null
-      });
+      authContextDiagnostic({ step: "User-scoped client lookup", result: client ? "RESOLVED" : "NO_ROWS",
+        authenticated: true, roleResolved: true, clientContextResolved: Boolean(client) });
 
       if (!client) {
         try {
@@ -385,19 +361,13 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
           }
 
           client = (fallbackClient as Client | null) ?? null;
-          console.info("[auth-context] service client lookup result", {
-            userId: resolvedUser.id,
-            email: resolvedUser.email ?? null,
-            clientId: role.client_id,
-            found: Boolean(client),
-            client: client ? { id: client.id, name: client.name } : null
-          });
+          authContextDiagnostic({ step: "Service client lookup", result: client ? "RESOLVED" : "NO_ROWS",
+            authenticated: true, roleResolved: true, clientContextResolved: Boolean(client) });
         } catch (err) {
           console.error("[auth-context] service client fallback threw", {
-            userId: resolvedUser.id,
-            email: resolvedUser.email ?? null,
-            clientId: role.client_id,
-            error: err instanceof Error ? { message: err.message, stack: err.stack } : err,
+            authenticated: true,
+            roleResolved: true,
+            errorType: err instanceof Error ? err.name : "UnknownError",
             failureStage: "service_role_clients"
           });
         }
@@ -422,15 +392,6 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
       });
     }
 
-    console.info("[auth-context] final context result", {
-      userId: resolvedUser.id,
-      email: resolvedUser.email ?? null,
-      role: role.role,
-      clientId: role.client_id,
-      clientFound: Boolean(client),
-      client: client ? { id: client.id, name: client.name } : null
-    });
-
     const context = {
       user: resolvedUser,
       role: role as RoleRecord,
@@ -440,10 +401,9 @@ export async function resolveCurrentUserContext(): Promise<CurrentUserContextRes
     authContextDiagnostic({
       step: "Application user context",
       result: "OK",
-      userId: resolvedUser.id,
-      email: resolvedUser.email ?? null,
-      sessionRole: role.role,
-      clientId: role.client_id,
+      authenticated: true,
+      roleResolved: true,
+      clientContextResolved: role.client_id ? Boolean(client) : true,
       elapsedMs: authContextElapsedMs(totalStartedAt),
     });
     return { status: "resolved", context, step: "Customer workspace context", result: "OK" };

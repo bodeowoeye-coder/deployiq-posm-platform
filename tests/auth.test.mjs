@@ -521,6 +521,14 @@ describe("mandatory password change routing", () => {
     const auth = readFileSync(new URL("../lib/auth.ts", import.meta.url), "utf8");
     assert.match(auth, /function authContextDiagnostic/);
     assert.match(auth, /if \(process\.env\.NODE_ENV !== "development"\) return/);
+    const diagnostic = auth.slice(auth.indexOf("function authContextDiagnostic"), auth.indexOf("function authContextStartedAt"));
+    for (const identityField of ["userId", "email", "clientId", "company", "name", "token", "cookie", "session"]) {
+      assert.doesNotMatch(diagnostic, new RegExp(identityField, "i"));
+    }
+    for (const structuralField of ["authenticated", "roleResolved", "clientContextResolved", "elapsedMs"]) {
+      assert.match(diagnostic, new RegExp(structuralField));
+    }
+    assert.doesNotMatch(auth, /console\.info\("\[auth-context\][^\n]*(?:userId|email|clientId|client|company|name)/i);
     assert.doesNotMatch(auth, /cache\(.*getCurrentUserContext|cache\(.*resolveCurrentUserContext/);
     assert.doesNotMatch(auth, /let currentUserContext|let cachedUser|moduleCached|globalThis\.__.*auth/i);
   });

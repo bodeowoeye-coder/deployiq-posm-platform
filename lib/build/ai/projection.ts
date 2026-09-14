@@ -22,6 +22,11 @@ export type BuildAIProjectedToolContext = {
   coverage: unknown;
   provenance: { authority: "deployiq_deterministic_build_intelligence"; availableKeys: readonly string[] };
   constraints: { unsupportedConclusions: readonly string[] };
+  selection: {
+    contract: "all_allowed_facts" | "project_executive_summary_v1";
+    sourceCoverage: "preserved";
+    detail: "full_allowed_detail" | "project_rollups_and_canonical_previews";
+  };
 };
 export type BuildAIProviderProjection = {
   task: BuildAIProviderRequest["task"];
@@ -48,12 +53,75 @@ function collect(value: unknown, path: string, toolCallId: string, provenanceKey
   }
 }
 
-function projectToolContext(context: BuildAIProviderToolContext): BuildAIProjectedToolContext {
+function collectKeys(
+  value: unknown,
+  path: string,
+  keys: readonly string[],
+  toolCallId: string,
+  provenanceKeys: readonly string[],
+  facts: BuildAIProjectedFact[],
+) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const record = value as Record<string, unknown>;
+  for (const key of keys) if (key in record && !sensitiveKey(key)) collect(record[key], `${path}/${escapePointer(key)}`, toolCallId, provenanceKeys, facts);
+}
+
+function collectPreview(
+  value: unknown,
+  path: string,
+  itemKeys: readonly string[],
+  toolCallId: string,
+  provenanceKeys: readonly string[],
+  facts: BuildAIProjectedFact[],
+) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const preview = value as Record<string, unknown>;
+  collectKeys(preview, path, ["total", "returned", "truncated", "continuationToken"], toolCallId, provenanceKeys, facts);
+  if (!Array.isArray(preview.items)) return;
+  preview.items.forEach((item, index) => collectKeys(item, `${path}/items/${index}`, itemKeys, toolCallId, provenanceKeys, facts));
+}
+
+function collectProjectExecutiveSummary(
+  dataset: BuildAIProviderToolContext["dataset"],
+  toolCallId: string,
+  provenanceKeys: readonly string[],
+  facts: BuildAIProjectedFact[],
+) {
+  for (const root of ["currentState", "progress", "plannedPosition", "schedule", "quality", "coverage"] as const) {
+    if (root in dataset) collect(dataset[root], `/${root}`, toolCallId, provenanceKeys, facts);
+  }
+
+  collectKeys(dataset.attention?.summary, "/attention/summary", [
+    "outstandingObligations", "overdueObligations", "activitiesAffected", "workPackagesAffected",
+    "explicitOwnersAffected", "unassignedObligations", "categoryCounts",
+  ], toolCallId, provenanceKeys, facts);
+  collectPreview(dataset.attention?.preview, "/attention/preview", [
+    "type", "dueAt", "overdue", "dataQuality",
+  ], toolCallId, provenanceKeys, facts);
+
+  collect(dataset.dependencies?.summary, "/dependencies/summary", toolCallId, provenanceKeys, facts);
+  collect(dataset.exceptions?.summary, "/exceptions/summary", toolCallId, provenanceKeys, facts);
+  collectPreview(dataset.exceptions?.preview, "/exceptions/preview", [
+    "status", "severity", "dueAt", "overdue",
+  ], toolCallId, provenanceKeys, facts);
+
+  collectKeys(dataset.recentExecution, "/recentExecution", [
+    "ok", "dataQuality", "periodStart", "periodEnd", "timezone", "interval", "counts",
+  ], toolCallId, provenanceKeys, facts);
+}
+
+function projectToolContext(context: BuildAIProviderToolContext, task: BuildAIProviderRequest["task"]): BuildAIProjectedToolContext {
   const dataset = context.dataset;
   const availableKeys = [...new Set(dataset.provenance.groups.map((group) => group.key))];
+  const provenanceKeys = availableKeys.slice(0, 8);
   const facts: BuildAIProjectedFact[] = [];
-  for (const root of INCLUDED_ROOTS) {
-    if (root in dataset) collect(dataset[root], `/${root}`, context.toolCallId, availableKeys.slice(0, 8), facts);
+  const isProjectExecutiveSummary = task === "executive_summary" && dataset.scope.kind === "project";
+  if (isProjectExecutiveSummary) {
+    collectProjectExecutiveSummary(dataset, context.toolCallId, provenanceKeys, facts);
+  } else {
+    for (const root of INCLUDED_ROOTS) {
+      if (root in dataset) collect(dataset[root], `/${root}`, context.toolCallId, provenanceKeys, facts);
+    }
   }
   if (facts.length > BUILD_AI_MAX_PROJECTED_FACTS) throw new Error("Build AI provider projection exceeds its deterministic bound.");
   return {
@@ -64,6 +132,9 @@ function projectToolContext(context: BuildAIProviderToolContext): BuildAIProject
     coverage: dataset.coverage,
     provenance: { authority: dataset.provenance.authority, availableKeys },
     constraints: { unsupportedConclusions: dataset.constraints.unsupportedConclusions },
+    selection: isProjectExecutiveSummary
+      ? { contract: "project_executive_summary_v1", sourceCoverage: "preserved", detail: "project_rollups_and_canonical_previews" }
+      : { contract: "all_allowed_facts", sourceCoverage: "preserved", detail: "full_allowed_detail" },
   };
 }
 
@@ -71,7 +142,7 @@ export function projectBuildAIProviderRequest(request: BuildAIProviderRequest): 
   return {
     task: request.task,
     question: request.question,
-    context: request.authorizedContext.map(projectToolContext),
+    context: request.authorizedContext.map((context) => projectToolContext(context, request.task)),
     policy: request.policy,
     outputContract: request.outputContract,
   };
