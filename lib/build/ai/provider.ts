@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { BuildAIGovernanceV1 } from "./governance.ts";
-import type { BuildAIModelOutputV1, BuildAITask } from "./types.ts";
+import type { BuildAILimitation, BuildAIModelOutputV1, BuildAIModelStatement, BuildAITask } from "./types.ts";
 import type { BuildIntelligenceDatasetV1 } from "../intelligence/types.ts";
 import type { BuildIntelligenceToolName } from "../intelligence/tools.ts";
 
@@ -42,6 +42,13 @@ export type BuildAIProviderRequest = {
 export type BuildAIProviderResult = {
   metadata: BuildAIProviderMetadata;
   output: unknown;
+};
+
+/** Model-authored interpretation content. DeployIQ attaches the authoritative envelope. */
+export type BuildAIProviderOutputV1 = {
+  schemaVersion: "1.0";
+  statements: BuildAIModelStatement[];
+  limitations: BuildAILimitation[];
 };
 
 export interface BuildAIProvider {

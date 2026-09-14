@@ -53,10 +53,9 @@ function tool(name, resultFactory = (input) => ({ ok: true, tool: name, scope: n
 }
 
 function validOutput(context, task = "executive_summary", overrides = {}) {
-  const item = context.authorizedContext[0], data = item.dataset;
+  const item = context.authorizedContext[0];
   return {
-    schemaVersion: "1.0", generatedAt: "2026-09-09T12:00:01.000Z", scope: data.scope, task,
-    dataset: { schemaVersion: "1.0", toolCalls: [{ id: item.toolCallId, tool: item.tool, scope: data.scope, datasetSchemaVersion: "1.0", asOf: AS_OF }] },
+    schemaVersion: "1.0",
     statements: [{ id: "statement-1", type: task === "management_attention" ? "attention" : "interpretation", text: "Overdue work requires attention.", supportingFacts: [{ toolCallId: item.toolCallId, factPath: "/schedule/currentlyOverdue", provenanceKeys: ["schedule"] }], limitationIds: [] }], limitations: [], ...overrides,
   };
 }
@@ -70,9 +69,37 @@ test("project executive summary routes once through D.4 and validates one provid
   const project = tool("get_build_project_intelligence");
   const ai = provider((request) => ({ metadata: { providerId: "fake", modelId: "fixture" }, output: validOutput(request) }));
   const result = await runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project] });
-  assert.equal(result.status, "interpreted"); assert.equal(project.calls.length, 1); assert.equal(ai.calls.length, 1);
+  assert.equal(result.status, "interpreted", JSON.stringify(result)); assert.equal(project.calls.length, 1); assert.equal(ai.calls.length, 1);
   assert.equal(ai.calls[0].authorizedContext[0].toolCallId, "tool-call-1"); assert.equal(result.interpretation.validation.status, "accepted");
   assert.equal(result.toolResults[0].result.dataset.schedule.currentlyOverdue, 3);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.interpretation.scope)), { kind: "project", projectId: PROJECT });
+  assert.equal(result.interpretation.generatedAt, AS_OF); assert.equal(result.interpretation.task, "executive_summary");
+  assert.deepEqual(JSON.parse(JSON.stringify(result.interpretation.dataset.toolCalls)), [{ id: "tool-call-1", tool: "get_build_project_intelligence", scope: { kind: "project", projectId: PROJECT }, datasetSchemaVersion: "1.0", asOf: AS_OF }]);
+});
+
+test("provider cannot author or override the deterministic envelope", async () => {
+  for (const injected of [
+    { task: "change_interpretation" }, { scope: { kind: "project", projectId: "wrong" } },
+    { generatedAt: "2099-01-01T00:00:00.000Z" }, { dataset: { schemaVersion: "1.0", toolCalls: [] } },
+    { governanceVersion: "model-policy" },
+  ]) {
+    const project = tool("get_build_project_intelligence");
+    const ai = provider((request) => ({ metadata: { providerId: "fake" }, output: { ...validOutput(request), ...injected } }));
+    const result = await runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project] });
+    assert.equal(result.status, "interpretation_unavailable"); assert.equal(result.audit.validationOutcome, "rejected");
+  }
+});
+
+test("deterministic envelope composition restores exact D.4 authority", () => {
+  const data = dataset({ kind: "project", projectId: PROJECT });
+  const accepted = { id: "tool-call-1", tool: "get_build_project_intelligence", result: { ok: true, tool: "get_build_project_intelligence", scope: data.scope, dataset: data } };
+  const body = validOutput({ authorizedContext: [{ toolCallId: "tool-call-1", dataset: data }] });
+  const output = runtime().composeBuildAIModelOutput(body, "executive_summary", [accepted]);
+  assert.deepEqual(JSON.parse(JSON.stringify(output)), {
+    schemaVersion: "1.0", generatedAt: AS_OF, scope: data.scope, task: "executive_summary",
+    dataset: { schemaVersion: "1.0", toolCalls: [{ id: "tool-call-1", tool: "get_build_project_intelligence", scope: data.scope, datasetSchemaVersion: "1.0", asOf: AS_OF }] },
+    statements: body.statements, limitations: [],
+  });
 });
 
 test("work package and Activity current-state scopes select their fixed tools", async () => {

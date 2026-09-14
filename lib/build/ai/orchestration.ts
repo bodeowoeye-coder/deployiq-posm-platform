@@ -2,7 +2,7 @@ import "server-only";
 
 import { DEFAULT_BUILD_AI_GOVERNANCE } from "./governance.ts";
 import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderMetadata, type BuildAIProviderRequest, type BuildAIProviderToolContext } from "./provider.ts";
-import type { BuildAIAcceptedToolCall, BuildAIInterpretationV1, BuildAITask, BuildAIValidationError } from "./types.ts";
+import type { BuildAIAcceptedToolCall, BuildAIInterpretationV1, BuildAIModelOutputV1, BuildAITask, BuildAIValidationError } from "./types.ts";
 import { validateBuildAIModelOutput } from "./validation.ts";
 import { BUILD_INTELLIGENCE_TOOLS, type BuildIntelligenceTool, type BuildIntelligenceToolName } from "../intelligence/tools.ts";
 
@@ -110,6 +110,36 @@ function safeProviderMetadata(value: unknown): BuildAIProviderMetadata | null {
   return { providerId, ...(modelId ? { modelId } : {}), ...(modelVersion ? { modelVersion } : {}) };
 }
 
+export function composeBuildAIModelOutput(body: unknown, task: BuildAITask, toolCalls: readonly BuildAIAcceptedToolCall[]): unknown {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return body;
+  const keys = Reflect.ownKeys(body);
+  if (keys.length !== 3 || keys.some((key) => typeof key !== "string" || !["schemaVersion", "statements", "limitations"].includes(key))) return body;
+  const candidate = body as Record<string, unknown>;
+  if (candidate.schemaVersion !== "1.0" || !Array.isArray(candidate.statements) || !Array.isArray(candidate.limitations)) return body;
+  const primary = toolCalls[0]?.result.dataset;
+  if (!primary) return body;
+  const prototype = Object.getPrototypeOf(body);
+  const record = <T extends Record<string, unknown>>(value: T): T => Object.assign(Object.create(prototype), value) as T;
+  return record({
+    schemaVersion: "1.0",
+    generatedAt: primary.timing.generatedAt,
+    scope: primary.scope,
+    task,
+    dataset: record({
+      schemaVersion: primary.schemaVersion,
+      toolCalls: toolCalls.map((call) => record({
+        id: call.id,
+        tool: call.tool,
+        scope: call.result.dataset.scope,
+        datasetSchemaVersion: call.result.dataset.schemaVersion,
+        asOf: call.result.dataset.timing.currentState.asOf,
+      })),
+    }),
+    statements: candidate.statements,
+    limitations: candidate.limitations,
+  }) satisfies BuildAIModelOutputV1;
+}
+
 export async function orchestrateBuildAI(input: unknown, dependencies: Dependencies): Promise<BuildAIOrchestrationResult> {
   const clock = dependencies.clock ?? (() => new Date());
   const startedAt = clock().toISOString();
@@ -135,7 +165,7 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   clearTimeout(timeout);
   audit.provider = safeProviderMetadata(generated.metadata);
   if (!audit.provider) { audit.completedAt = clock().toISOString(); return { ok: true, status: "interpretation_unavailable", toolResults: [accepted], interpretation: null, audit }; }
-  const validation = validateBuildAIModelOutput({ output: generated.output, toolCalls: [accepted], governance: DEFAULT_BUILD_AI_GOVERNANCE });
+  const validation = validateBuildAIModelOutput({ output: composeBuildAIModelOutput(generated.output, request.task, [accepted]), toolCalls: [accepted], governance: DEFAULT_BUILD_AI_GOVERNANCE });
   audit.completedAt = clock().toISOString();
   if (!validation.ok) { audit.validationOutcome = "rejected"; return { ok: true, status: "interpretation_unavailable", toolResults: [accepted], interpretation: null, errors: validation.errors, audit }; }
   audit.validationOutcome = "accepted";

@@ -9,25 +9,10 @@ import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderRequest
 export const BUILD_AI_OPENAI_OUTPUT_SCHEMA_NAME = "deployiq_build_ai_model_output_v1";
 const identifier = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" } as const;
 const boundedText = { type: "string", minLength: 1, maxLength: 500 } as const;
-const scopeSchema = {
-  anyOf: [
-    { type: "object", additionalProperties: false, properties: { kind: { const: "project", type: "string" }, projectId: { type: "string" } }, required: ["kind", "projectId"] },
-    { type: "object", additionalProperties: false, properties: { kind: { const: "work_package", type: "string" }, projectId: { type: "string" }, workPackageId: { type: "string" } }, required: ["kind", "projectId", "workPackageId"] },
-    { type: "object", additionalProperties: false, properties: { kind: { const: "activity", type: "string" }, projectId: { type: "string" }, workPackageId: { type: "string" }, activityId: { type: "string" } }, required: ["kind", "projectId", "workPackageId", "activityId"] },
-  ],
-} as const;
 export const BUILD_AI_OPENAI_OUTPUT_SCHEMA = {
   type: "object", additionalProperties: false,
   properties: {
-    schemaVersion: { type: "string", const: "1.0" }, generatedAt: { type: "string", format: "date-time" }, scope: scopeSchema,
-    task: { type: "string", enum: ["executive_summary", "change_interpretation", "management_attention"] },
-    dataset: { type: "object", additionalProperties: false, properties: {
-      schemaVersion: { type: "string", const: "1.0" },
-      toolCalls: { type: "array", minItems: 1, maxItems: 1, items: { type: "object", additionalProperties: false, properties: {
-        id: identifier, tool: { type: "string", enum: ["get_build_project_intelligence", "get_build_work_package_intelligence", "get_build_activity_intelligence", "get_build_execution_history"] }, scope: scopeSchema,
-        datasetSchemaVersion: { type: "string", const: "1.0" }, asOf: { type: "string", format: "date-time" },
-      }, required: ["id", "tool", "scope", "datasetSchemaVersion", "asOf"] } },
-    }, required: ["schemaVersion", "toolCalls"] },
+    schemaVersion: { type: "string", const: "1.0" },
     statements: { type: "array", maxItems: 12, items: { type: "object", additionalProperties: false, properties: {
       id: identifier, type: { type: "string", enum: ["interpretation", "attention", "decision_option", "limitation"] }, text: boundedText,
       supportingFacts: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, properties: {
@@ -39,7 +24,7 @@ export const BUILD_AI_OPENAI_OUTPUT_SCHEMA = {
       id: identifier, code: { type: "string", enum: ["partial_coverage", "data_unavailable", "history_unavailable", "interpretation_unavailable", "unsupported_conclusion", "governance_not_configured"] }, text: boundedText,
       coverageRefs: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, properties: { toolCallId: identifier, coveragePath: { type: "string" } }, required: ["toolCallId", "coveragePath"] } },
     }, required: ["id", "code", "text", "coverageRefs"] } },
-  }, required: ["schemaVersion", "generatedAt", "scope", "task", "dataset", "statements", "limitations"],
+  }, required: ["schemaVersion", "statements", "limitations"],
 } as const;
 
 type OpenAIResponse = { status?: string; output_text?: string; model?: string };
