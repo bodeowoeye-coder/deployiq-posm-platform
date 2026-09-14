@@ -1,6 +1,6 @@
 import "server-only";
 
-import OpenAI from "openai";
+import OpenAI, { APIConnectionTimeoutError } from "openai";
 import { readBuildAIConfig, type BuildAIEnabledConfig } from "../config.ts";
 import { buildBuildAIInstructions } from "../prompt.ts";
 import { projectBuildAIProviderRequest } from "../projection.ts";
@@ -36,7 +36,7 @@ export class OpenAIBuildAIProvider implements BuildAIProvider {
   constructor(private readonly config: BuildAIEnabledConfig, private readonly client: BuildAIOpenAIClient) {}
 
   async generate(request: BuildAIProviderRequest): Promise<BuildAIProviderResult> {
-    if (request.signal.aborted) throw new BuildAIProviderError("ai_unavailable", "timeout");
+    if (request.signal.aborted) throw new BuildAIProviderError("ai_unavailable", "provider_timeout");
     const projected = projectBuildAIProviderRequest(request);
     const instructions = buildBuildAIInstructions(projected);
     try {
@@ -45,6 +45,7 @@ export class OpenAIBuildAIProvider implements BuildAIProvider {
         instructions: JSON.stringify({ systemPolicyId: instructions.systemPolicyId, systemPolicy: instructions.systemPolicy }),
         input: JSON.stringify({ taskInstruction: instructions.taskInstruction, userContent: instructions.userContent, deterministicContext: instructions.deterministicContext }),
         text: { format: { type: "json_schema", name: BUILD_AI_OPENAI_OUTPUT_SCHEMA_NAME, strict: true, schema: BUILD_AI_OPENAI_OUTPUT_SCHEMA } },
+        reasoning: { effort: "none" },
         max_output_tokens: this.config.maxOutputTokens,
         store: false,
         truncation: "disabled",
@@ -59,7 +60,15 @@ export class OpenAIBuildAIProvider implements BuildAIProvider {
     } catch (error) {
       if (error instanceof BuildAIProviderError) throw error;
       const status = Number((error as { status?: unknown })?.status ?? 0);
-      const category = request.signal.aborted ? "timeout" : status === 401 || status === 403 ? "configuration_error" : status === 429 ? "rate_limited" : status >= 500 ? "provider_unavailable" : "network_error";
+      const category = error instanceof APIConnectionTimeoutError || request.signal.aborted
+        ? "provider_timeout"
+        : status === 401 || status === 403
+          ? "configuration_error"
+          : status === 429
+            ? "rate_limited"
+            : status >= 500
+              ? "provider_unavailable"
+              : "transport_error";
       throw new BuildAIProviderError("ai_unavailable", category);
     }
   }

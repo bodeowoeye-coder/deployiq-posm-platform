@@ -56,9 +56,19 @@ export interface BuildAIProvider {
 }
 
 export type BuildAIProviderFailureAvailability = "ai_unavailable" | "interpretation_unavailable";
+export type BuildAIProviderFailureCategory =
+  | "provider_timeout"
+  | "transport_error"
+  | "outer_timeout"
+  | "configuration_error"
+  | "rate_limited"
+  | "provider_unavailable"
+  | "incomplete_response"
+  | "provider_refusal"
+  | "invalid_provider_response";
 
 export class BuildAIProviderError extends Error {
-  constructor(readonly availability: BuildAIProviderFailureAvailability, readonly category: string) {
+  constructor(readonly availability: BuildAIProviderFailureAvailability, readonly category: BuildAIProviderFailureCategory) {
     super("Build AI provider is unavailable.");
     this.name = "BuildAIProviderError";
   }

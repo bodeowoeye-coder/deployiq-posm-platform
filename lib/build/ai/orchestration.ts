@@ -2,7 +2,7 @@ import "server-only";
 
 import { BUILD_AI_DEFAULT_TIMEOUT_MS } from "./config.ts";
 import { DEFAULT_BUILD_AI_GOVERNANCE } from "./governance.ts";
-import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderMetadata, type BuildAIProviderRequest, type BuildAIProviderToolContext } from "./provider.ts";
+import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderFailureCategory, type BuildAIProviderMetadata, type BuildAIProviderRequest, type BuildAIProviderToolContext } from "./provider.ts";
 import type { BuildAIAcceptedToolCall, BuildAIInterpretationV1, BuildAIModelOutputV1, BuildAITask, BuildAIValidationError } from "./types.ts";
 import { validateBuildAIModelOutput } from "./validation.ts";
 import { BUILD_INTELLIGENCE_TOOLS, type BuildIntelligenceTool, type BuildIntelligenceToolName } from "../intelligence/tools.ts";
@@ -30,6 +30,7 @@ export type BuildAIOrchestrationAudit = {
   governanceVersion: string;
   outputSchemaVersion: "1.0";
   provider: BuildAIProviderMetadata | null;
+  providerFailureCategory: BuildAIProviderFailureCategory | null;
   validationOutcome: "not_run" | "accepted" | "rejected";
   startedAt: string;
   completedAt: string;
@@ -152,7 +153,7 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   const clock = dependencies.clock ?? (() => new Date());
   const startedAt = clock().toISOString();
   const request = validateRequest(input);
-  const baseAudit = (task: BuildAITask, scope: BuildAIOrchestrationAudit["scope"]): BuildAIOrchestrationAudit => ({ orchestrationVersion: BUILD_AI_ORCHESTRATION_VERSION, task, scope, toolCalls: [], governanceVersion: DEFAULT_BUILD_AI_GOVERNANCE.version, outputSchemaVersion: "1.0", provider: null, validationOutcome: "not_run", startedAt, completedAt: clock().toISOString() });
+  const baseAudit = (task: BuildAITask, scope: BuildAIOrchestrationAudit["scope"]): BuildAIOrchestrationAudit => ({ orchestrationVersion: BUILD_AI_ORCHESTRATION_VERSION, task, scope, toolCalls: [], governanceVersion: DEFAULT_BUILD_AI_GOVERNANCE.version, outputSchemaVersion: "1.0", provider: null, providerFailureCategory: null, validationOutcome: "not_run", startedAt, completedAt: clock().toISOString() });
   if (!request) return { ok: false, status: "invalid_request", toolResults: [], interpretation: null, audit: baseAudit("executive_summary", "project") };
   const routed = route(request), audit = baseAudit(request.task, routed.scope);
   const tool = (dependencies.tools ?? BUILD_INTELLIGENCE_TOOLS).find((candidate) => candidate.name === routed.tool);
@@ -169,9 +170,15 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   const timer = dependencies.timer ?? { set: (callback, delayMs) => setTimeout(callback, delayMs), clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
   let rejectTimeout: ((reason?: unknown) => void) | undefined;
   const boundedTimeout = new Promise<never>((_, reject) => { rejectTimeout = reject; });
-  const timeout = timer.set(() => { controller.abort(); rejectTimeout?.(new Error("Build AI provider timed out.")); }, outerTimeoutMs);
+  const timeout = timer.set(() => { controller.abort(); rejectTimeout?.(new BuildAIProviderError("ai_unavailable", "outer_timeout")); }, outerTimeoutMs);
   try { generated = await Promise.race([dependencies.provider.generate(providerRequest(request.task, request.question, context, controller.signal)), boundedTimeout]); }
-  catch (error) { timer.clear(timeout); audit.completedAt = clock().toISOString(); return { ok: true, status: error instanceof BuildAIProviderError ? error.availability : "ai_unavailable", toolResults: [accepted], interpretation: null, audit }; }
+  catch (error) {
+    timer.clear(timeout);
+    audit.completedAt = clock().toISOString();
+    if (error instanceof BuildAIProviderError) audit.providerFailureCategory = error.category;
+    else audit.providerFailureCategory = "transport_error";
+    return { ok: true, status: error instanceof BuildAIProviderError ? error.availability : "ai_unavailable", toolResults: [accepted], interpretation: null, audit };
+  }
   timer.clear(timeout);
   audit.provider = safeProviderMetadata(generated.metadata);
   if (!audit.provider) { audit.completedAt = clock().toISOString(); return { ok: true, status: "interpretation_unavailable", toolResults: [accepted], interpretation: null, audit }; }

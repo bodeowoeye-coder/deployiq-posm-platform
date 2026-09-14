@@ -19,7 +19,9 @@ const config = compile(sources.config);
 const providerContract = compile(sources.provider);
 const projection = compile(sources.projection);
 const prompt = compile(sources.prompt);
+class APIConnectionTimeoutError extends Error {}
 class ForbiddenOpenAI { constructor() { throw new Error("OpenAI construction was not injected"); } }
+ForbiddenOpenAI.APIConnectionTimeoutError = APIConnectionTimeoutError;
 const openai = compile(sources.openai, { openai: ForbiddenOpenAI, "../config.ts": config, "../prompt.ts": prompt, "../projection.ts": projection, "../provider.ts": providerContract });
 const PROJECT = "a1000000-0000-4000-8000-000000000002", WP = "b1000000-0000-4000-8000-000000000002", ACTIVITY = "c1000000-0000-4000-8000-000000000002", AS_OF = "2026-09-10T10:00:00.000Z";
 const governance = { governanceVersion: "build-ai-governance-v1", visibility: "shadow", allowedTask: "executive_summary", allowedStatementTypes: ["interpretation", "attention", "decision_option", "limitation"], requireFactReferences: true, requireCoverageQualification: true, unsupportedConclusions: ["root_cause", "forecasting"], allowAutonomousActions: false, allowModelAuthoredFacts: false, decisionOptionsOnly: true };
@@ -172,6 +174,7 @@ test("OpenAI adapter sends one synchronous Responses request with strict schema,
   const fake = client(); const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "gpt-evaluation", timeoutMs: 15000, maxOutputTokens: 2000 }, fake);
   const providerRequest = request(); const result = await adapter.generate(providerRequest); assert.equal(fake.calls.length, 1); const { body, options } = fake.calls[0];
   assert.equal(body.model, "gpt-evaluation"); assert.equal(body.store, false); assert.equal(body.max_output_tokens, 2000); assert.equal(body.truncation, "disabled"); assert.equal(body.text.format.type, "json_schema"); assert.equal(body.text.format.strict, true); assert.equal("tools" in body, false); assert.equal("background" in body, false); assert.equal(options.signal, providerRequest.signal); assert.equal(result.metadata.providerId, "openai"); assert.equal(result.metadata.modelId, "gpt-evaluation");
+  assert.deepEqual(JSON.parse(JSON.stringify(body.reasoning)), { effort: "none" });
   assert.deepEqual(JSON.parse(JSON.stringify(body.text.format.schema.required)), ["schemaVersion", "statements", "limitations"]);
   for (const key of ["scope", "projectId", "workPackageId", "activityId", "generatedAt", "task", "dataset", "toolCalls", "governanceVersion", "asOf"]) assert.equal(key in body.text.format.schema.properties, false, key);
   const serialized = JSON.stringify(body); for (const forbidden of [PROJECT, WP, ACTIVITY, AS_OF, "Secret Customer Ltd", "Ada Person"]) assert.equal(serialized.includes(forbidden), false, forbidden);
@@ -180,18 +183,23 @@ test("configured model is transport-only and does not branch provider behavior",
   for (const modelId of ["model-alpha", "model-beta"]) { const fake = client({ status: "completed", output_text: JSON.stringify(model()), model: modelId }); const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: modelId, timeoutMs: 15000, maxOutputTokens: 1000 }, fake); await adapter.generate(request()); assert.equal(fake.calls[0].body.model, modelId); }
   assert.doesNotMatch(sources.openai, /if\s*\([^)]*model[^)]*(?:gpt|luna|terra)/i);
 });
-test("AbortSignal is passed and a pre-aborted request fails safely", async () => {
+test("AbortSignal is passed and a pre-aborted request is classified as provider timeout", async () => {
   const fake = client(); const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "model", timeoutMs: 15000, maxOutputTokens: 1000 }, fake); const controller = new AbortController(); const active = request(); active.signal = controller.signal; await adapter.generate(active); assert.equal(fake.calls[0].options.signal, controller.signal);
-  controller.abort(); await assert.rejects(() => adapter.generate(active), (error) => error.category === "timeout" && error.availability === "ai_unavailable"); assert.equal(fake.calls.length, 1);
+  controller.abort(); await assert.rejects(() => adapter.generate(active), (error) => error.category === "provider_timeout" && error.availability === "ai_unavailable"); assert.equal(fake.calls.length, 1);
 });
 test("incomplete refusal-like and malformed provider responses fail with interpretation unavailable", async () => {
   for (const response of [{ status: "incomplete", output_text: "{}" }, { status: "failed", output_text: "" }, { status: "completed", output_text: "not-json" }, { status: "completed" }]) {
     const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "model", timeoutMs: 15000, maxOutputTokens: 1000 }, client(response)); await assert.rejects(() => adapter.generate(request()), (error) => error.availability === "interpretation_unavailable" && !error.message.includes("not-json"));
   }
 });
-test("network rate-limit server and key failures map to neutral errors without raw details", async () => {
-  for (const [status, category] of [[0, "network_error"], [429, "rate_limited"], [503, "provider_unavailable"], [401, "configuration_error"]]) {
-    const raw = Object.assign(new Error("raw vendor secret"), { status }); const fake = { responses: { async create() { throw raw; } } }; const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "model", timeoutMs: 15000, maxOutputTokens: 1000 }, fake);
+test("provider timeout transport rate-limit server and key failures map to bounded neutral categories", async () => {
+  const failures = [[new APIConnectionTimeoutError("raw timeout detail"), "provider_timeout"],
+    [Object.assign(new Error("raw vendor secret"), { status: 0 }), "transport_error"],
+    [Object.assign(new Error("raw vendor secret"), { status: 429 }), "rate_limited"],
+    [Object.assign(new Error("raw vendor secret"), { status: 503 }), "provider_unavailable"],
+    [Object.assign(new Error("raw vendor secret"), { status: 401 }), "configuration_error"]];
+  for (const [raw, category] of failures) {
+    const fake = { responses: { async create() { throw raw; } } }; const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "model", timeoutMs: 15000, maxOutputTokens: 1000 }, fake);
     await assert.rejects(() => adapter.generate(request()), (error) => error.category === category && error.message === "Build AI provider is unavailable." && !error.message.includes("vendor"));
   }
 });
@@ -211,6 +219,6 @@ test("real adapter output passes orchestration and 11A.2 remains validation auth
 });
 test("only the OpenAI adapter imports the SDK and no Build authority persistence route or UI is introduced", () => {
   for (const source of [sources.config, sources.projection, sources.prompt]) { assert.match(source, /^import "server-only";/); assert.doesNotMatch(source, /from "openai"|supabase|management\/service|intelligence\/service|reporting\/|fetch\(|NextResponse|React|insert\(|update\(|delete\(/i); }
-  assert.match(sources.openai, /^import "server-only";/); assert.match(sources.openai, /import OpenAI from "openai"/); assert.doesNotMatch(sources.openai, /supabase|management\/service|intelligence\/service|reporting\/|fetch\(|NextResponse|React|insert\(|update\(|delete\(/i);
+  assert.match(sources.openai, /^import "server-only";/); assert.match(sources.openai, /import OpenAI, \{ APIConnectionTimeoutError \} from "openai"/); assert.doesNotMatch(sources.openai, /supabase|management\/service|intelligence\/service|reporting\/|fetch\(|NextResponse|React|insert\(|update\(|delete\(/i);
   assert.match(sources.openai, /store: false/); assert.match(sources.openai, /maxRetries: 0/); assert.doesNotMatch(sources.openai, /console\.|OPENAI_API_KEY.*(?:body|input|metadata)/);
 });

@@ -160,10 +160,11 @@ test("D.4 authorization failure stops before provider", async () => {
 });
 
 test("provider failure and timeout preserve deterministic intelligence without retry", async () => {
-  for (const behavior of [async () => { throw new Error("vendor secret"); }, async () => new Promise(() => {})]) {
+  for (const [behavior, category] of [[async () => { throw new Error("vendor secret"); }, "transport_error"], [async () => new Promise(() => {}), "outer_timeout"]]) {
     const project = tool("get_build_project_intelligence"), ai = provider(behavior);
     const result = await runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 5 });
     assert.equal(result.status, "ai_unavailable"); assert.equal(result.ok, true); assert.equal(result.toolResults.length, 1); assert.equal(ai.calls.length, 1); assert.equal(project.calls.length, 1);
+    assert.equal(result.audit.providerFailureCategory, category);
   }
 });
 
@@ -178,11 +179,12 @@ test("outer provider-call deadline derives from provider timeout with a fixed cl
 
 test("provider timeout settles before outer containment and clears the defensive timer", async () => {
   const timers = controlledTimer(), project = tool("get_build_project_intelligence"); let rejectProvider;
-  const ai = provider(() => new Promise((_, reject) => { rejectProvider = () => reject(new providerContract.BuildAIProviderError("ai_unavailable", "timeout")); }));
+  const ai = provider(() => new Promise((_, reject) => { rejectProvider = () => reject(new providerContract.BuildAIProviderError("ai_unavailable", "provider_timeout")); }));
   const pending = runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 15_000, timer: timers.timer });
   await reachProviderBoundary(); timers.advance(15_000); rejectProvider();
   const result = await pending;
   assert.equal(result.status, "ai_unavailable"); assert.equal(ai.calls.length, 1);
+  assert.equal(result.audit.providerFailureCategory, "provider_timeout");
   assert.equal(timers.scheduled[0].delayMs, 17_500); assert.deepEqual(timers.cleared, [timers.scheduled[0]]); assert.equal(timers.scheduled[0].fired, false);
 });
 
@@ -194,6 +196,7 @@ test("outer containment aborts a provider that never settles and completes once"
   assert.equal(timers.scheduled[0].delayMs, 5_500); assert.equal(observedSignal.aborted, false); timers.fire();
   const result = await pending;
   assert.equal(result.status, "ai_unavailable"); assert.equal(observedSignal.aborted, true); assert.equal(completions, 1); assert.deepEqual(timers.cleared, [timers.scheduled[0]]);
+  assert.equal(result.audit.providerFailureCategory, "outer_timeout");
 });
 
 test("success immediately before the provider bound is accepted and clears outer containment", async () => {
