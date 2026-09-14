@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { BuildAIGovernanceV1 } from "./governance.ts";
-import type { BuildAILimitation, BuildAIModelOutputV1, BuildAIModelStatement, BuildAITask } from "./types.ts";
+import type { BuildAILimitationCode, BuildAIModelOutputV1, BuildAIStatementType, BuildAITask } from "./types.ts";
 import type { BuildIntelligenceDatasetV1 } from "../intelligence/types.ts";
 import type { BuildIntelligenceToolName } from "../intelligence/tools.ts";
 
@@ -45,10 +45,25 @@ export type BuildAIProviderResult = {
 };
 
 /** Model-authored interpretation content. DeployIQ attaches the authoritative envelope. */
+export type BuildAIProviderFactReferenceV1 = { factRefId: string };
+export type BuildAIProviderCoverageReferenceV1 = { coverageRefId: string };
+export type BuildAIProviderStatementV1 = {
+  id: string;
+  type: BuildAIStatementType;
+  text: string;
+  supportingFacts: BuildAIProviderFactReferenceV1[];
+  limitationIds: string[];
+};
+export type BuildAIProviderLimitationV1 = {
+  id: string;
+  code: BuildAILimitationCode;
+  text: string;
+  coverageRefs: BuildAIProviderCoverageReferenceV1[];
+};
 export type BuildAIProviderOutputV1 = {
   schemaVersion: "1.0";
-  statements: BuildAIModelStatement[];
-  limitations: BuildAILimitation[];
+  statements: BuildAIProviderStatementV1[];
+  limitations: BuildAIProviderLimitationV1[];
 };
 
 export interface BuildAIProvider {
@@ -65,6 +80,7 @@ export type BuildAIProviderFailureCategory =
   | "provider_unavailable"
   | "incomplete_response"
   | "provider_refusal"
+  | "invalid_provider_reference"
   | "invalid_provider_response";
 
 export class BuildAIProviderError extends Error {

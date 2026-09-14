@@ -83,7 +83,7 @@ function projectRequest() {
 function resolvePointer(value, pointer) {
   return pointer.slice(1).split("/").reduce((current, part) => current?.[part.replaceAll("~1", "/").replaceAll("~0", "~")], value);
 }
-function model(overrides = {}) { return { schemaVersion: "1.0", statements: [{ id: "s1", type: "interpretation", text: "Overdue work needs attention.", supportingFacts: [{ toolCallId: "tool-call-1", factPath: "/schedule/currentlyOverdue", provenanceKeys: ["schedule"] }], limitationIds: [] }], limitations: [], ...overrides }; }
+function model(overrides = {}) { return { schemaVersion: "1.0", statements: [{ id: "s1", type: "interpretation", text: "Current work needs attention.", supportingFacts: [{ factRefId: "fact-001" }], limitationIds: [] }], limitations: [], ...overrides }; }
 function client(response = { status: "completed", output_text: JSON.stringify(model()), model: "gpt-evaluation" }) { const calls = []; return { calls, responses: { async create(body, options) { calls.push({ body, options }); return response; } } }; }
 const enabledEnv = { DEPLOYIQ_BUILD_AI_ENABLED: "1", DEPLOYIQ_BUILD_AI_MODE: "shadow", DEPLOYIQ_BUILD_AI_PROVIDER: "openai", DEPLOYIQ_BUILD_AI_MODEL: "gpt-evaluation", DEPLOYIQ_BUILD_AI_TIMEOUT_MS: "15000", DEPLOYIQ_BUILD_AI_MAX_OUTPUT_TOKENS: "2000", OPENAI_API_KEY: "test-placeholder-not-a-real-key" };
 
@@ -109,12 +109,14 @@ test("factory reads the secret lazily and constructs an SDK-compatible client wi
 test("projection removes company human location credential and evidence identity while retaining accepted meaning", () => {
   const projected = projection.projectBuildAIProviderRequest(request()); const serialized = JSON.stringify(projected);
   for (const forbidden of ["Secret Customer", "Secret Workspace", "Ada Person", "Tunde Person", "example.invalid", "+234", "Secret Road", "latitude", "longitude", "client-secret", "user-secret", "storage.invalid", "evidenceUrl", "ownerUserId", PROJECT, WP, ACTIVITY]) assert.equal(serialized.includes(forbidden), false, forbidden);
-  for (const retained of ["currentlyOverdue", "blocked", "activity_owner", "assigned_supervisor", "assignmentState", "tool-call-1", "/schedule/currentlyOverdue", "schedule", "root_cause"]) assert.equal(serialized.includes(retained), true, retained);
+  for (const retained of ["currentlyOverdue", "blocked", "activity_owner", "assigned_supervisor", "assignmentState", "fact-001", "schedule", "root_cause"]) assert.equal(serialized.includes(retained), true, retained);
+  for (const authoritative of ["toolCallId", "factPath", "provenanceKeys", "coveragePath"]) assert.equal(serialized.includes(authoritative), false, authoritative);
 });
 test("projection preserves canonical fact references coverage provenance and unsupported conclusions without calculations", () => {
-  const projected = projection.projectBuildAIProviderRequest(request()); const context = projected.context[0];
-  assert.ok(context.facts.some((fact) => fact.reference.factPath === "/schedule/currentlyOverdue" && fact.value === 3 && fact.reference.toolCallId === "tool-call-1"));
-  assert.equal(context.coverage.schedule.denominator, 9); assert.ok(context.provenance.availableKeys.includes("schedule")); assert.deepEqual([...context.constraints.unsupportedConclusions], ["root_cause", "forecasting"]);
+  const bundle = projection.buildBuildAIProviderProjection(request()); const context = bundle.projection.context[0];
+  const schedule = [...bundle.registry.facts].find(([, reference]) => reference.factPath === "/schedule/currentlyOverdue");
+  assert.ok(schedule); assert.equal(context.facts.find((fact) => fact.factRefId === schedule[0]).value, 3); assert.equal(schedule[1].toolCallId, "tool-call-1");
+  assert.ok(context.coverage.some((item) => item.label === "schedule" && item.value.denominator === 9)); assert.deepEqual([...context.constraints.unsupportedConclusions], ["root_cause", "forecasting"]);
   assert.doesNotMatch(sources.projection, /calculate|variance|riskScore|healthScore|forecast\s*\(/i);
 });
 test("Project executive-summary projection is deterministic bounded and retains rollups plus canonical preview support", () => {
@@ -124,25 +126,26 @@ test("Project executive-summary projection is deterministic bounded and retains 
   const context = first.context[0];
   assert.ok(context.facts.length < projection.BUILD_AI_MAX_PROJECTED_FACTS);
   assert.deepEqual(JSON.parse(JSON.stringify(context.selection)), { contract: "project_executive_summary_v1", sourceCoverage: "preserved", detail: "project_rollups_and_canonical_previews" });
+  const registry = projection.buildBuildAIProviderProjection(projectRequest()).registry;
   for (const prefix of ["/currentState/", "/progress/", "/plannedPosition/", "/schedule/", "/attention/summary/", "/quality/", "/dependencies/summary/", "/exceptions/summary/", "/recentExecution/counts/", "/coverage/"]) {
-    assert.ok(context.facts.some((fact) => fact.reference.factPath.startsWith(prefix)), prefix);
+    assert.ok([...registry.facts.values()].some((reference) => reference.factPath.startsWith(prefix)), prefix);
   }
-  assert.ok(context.facts.some((fact) => fact.reference.factPath === "/attention/preview/items/0/type"));
-  assert.ok(context.facts.some((fact) => fact.reference.factPath === "/exceptions/preview/items/0/severity"));
+  assert.ok([...registry.facts.values()].some((reference) => reference.factPath === "/attention/preview/items/0/type"));
+  assert.ok([...registry.facts.values()].some((reference) => reference.factPath === "/exceptions/preview/items/0/severity"));
   for (const excluded of ["/workPackages/", "/activities/", "/history/", "/recentExecution/buckets/", "/recentExecution/activityReviews/", "/recentExecution/workPackages/", "/attention/summary/owners/", "/attention/preview/items/0/condition"]) {
-    assert.equal(context.facts.some((fact) => fact.reference.factPath.startsWith(excluded)), false, excluded);
+    assert.equal([...registry.facts.values()].some((reference) => reference.factPath.startsWith(excluded)), false, excluded);
   }
 });
 test("Project executive-summary facts preserve canonical references provenance coverage and privacy", () => {
   const source = projectDataset();
-  const context = projection.projectBuildAIProviderRequest(projectRequest()).context[0];
+  const bundle = projection.buildBuildAIProviderProjection(projectRequest()); const context = bundle.projection.context[0];
   const provenanceKeys = new Set(source.provenance.groups.map((group) => group.key));
   for (const fact of context.facts) {
-    assert.equal(resolvePointer(source, fact.reference.factPath), fact.value, fact.reference.factPath);
-    assert.equal(fact.reference.toolCallId, "tool-call-1");
-    assert.ok(fact.reference.provenanceKeys.every((key) => provenanceKeys.has(key)));
+    const reference = bundle.registry.facts.get(fact.factRefId); assert.ok(reference);
+    assert.equal(resolvePointer(source, reference.factPath), fact.value, reference.factPath);
+    assert.equal(reference.toolCallId, "tool-call-1");
+    assert.ok(reference.provenanceKeys.every((key) => provenanceKeys.has(key)));
   }
-  assert.deepEqual(JSON.parse(JSON.stringify(context.coverage)), JSON.parse(JSON.stringify(source.coverage)));
   assert.deepEqual([...context.constraints.unsupportedConclusions], [...source.constraints.unsupportedConclusions]);
   const serialized = JSON.stringify(context);
   for (const forbidden of [PROJECT, WP, ACTIVITY, "client-secret", "person-secret", "Private Person", "Private activity",
@@ -178,6 +181,10 @@ test("OpenAI adapter sends one synchronous Responses request with strict schema,
   assert.deepEqual(JSON.parse(JSON.stringify(body.text.format.schema.required)), ["schemaVersion", "statements", "limitations"]);
   for (const key of ["scope", "projectId", "workPackageId", "activityId", "generatedAt", "task", "dataset", "toolCalls", "governanceVersion", "asOf"]) assert.equal(key in body.text.format.schema.properties, false, key);
   const serialized = JSON.stringify(body); for (const forbidden of [PROJECT, WP, ACTIVITY, AS_OF, "Secret Customer Ltd", "Ada Person"]) assert.equal(serialized.includes(forbidden), false, forbidden);
+  const schema = body.text.format.schema, factSchema = schema.properties.statements.items.properties.supportingFacts.items;
+  assert.deepEqual(Object.keys(factSchema.properties), ["factRefId"]); assert.ok(factSchema.properties.factRefId.enum.includes("fact-001"));
+  assert.ok(schema.properties.limitations.items.properties.coverageRefs.items.properties.coverageRefId.enum.every((id) => /^coverage-\d{3}$/.test(id)));
+  assert.doesNotMatch(JSON.stringify(schema), /toolCallId|factPath|provenanceKeys|coveragePath/);
 });
 test("configured model is transport-only and does not branch provider behavior", async () => {
   for (const modelId of ["model-alpha", "model-beta"]) { const fake = client({ status: "completed", output_text: JSON.stringify(model()), model: modelId }); const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: modelId, timeoutMs: 15000, maxOutputTokens: 1000 }, fake); await adapter.generate(request()); assert.equal(fake.calls[0].body.model, modelId); }
@@ -205,7 +212,42 @@ test("provider timeout transport rate-limit server and key failures map to bound
 });
 test("provider returns only parsed untrusted output and bounded metadata", async () => {
   const output = model(); const fake = client({ status: "completed", output_text: JSON.stringify(output), model: "model-version" }); const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "model", timeoutMs: 15000, maxOutputTokens: 1000 }, fake); const result = await adapter.generate(request());
-  assert.deepEqual(JSON.parse(JSON.stringify(result)), { metadata: { providerId: "openai", modelId: "model-version" }, output }); assert.equal("raw" in result, false); assert.equal("usage" in result, false);
+  assert.equal(result.metadata.modelId, "model-version"); assert.equal(result.output.statements[0].supportingFacts[0].toolCallId, "tool-call-1"); assert.equal("factRefId" in result.output.statements[0].supportingFacts[0], false); assert.equal("raw" in result, false); assert.equal("usage" in result, false);
+});
+
+test("aliases resolve deterministically and unknown duplicate or authoritative references fail closed", async () => {
+  const first = projection.buildBuildAIProviderProjection(projectRequest()), second = projection.buildBuildAIProviderProjection(projectRequest());
+  assert.deepEqual(JSON.parse(JSON.stringify(first.projection)), JSON.parse(JSON.stringify(second.projection)));
+  assert.deepEqual([...first.registry.facts], [...second.registry.facts]); assert.equal(first.projection.context[0].facts[0].factRefId, "fact-001");
+  const factIds = first.projection.context.flatMap((context) => context.facts.map((fact) => fact.factRefId)); assert.equal(new Set(factIds).size, factIds.length); assert.deepEqual(factIds, factIds.map((_, index) => `fact-${String(index + 1).padStart(3, "0")}`));
+  const registryText = JSON.stringify([...first.registry.facts, ...first.registry.coverage]); for (const forbidden of [PROJECT, WP, ACTIVITY, "client-secret", "person-secret", "Private Person", "example.invalid"]) assert.equal(registryText.includes(forbidden), false, forbidden);
+  const valid = projection.resolveBuildAIProviderOutput(model(), first.registry); assert.equal(valid.ok, true);
+  assert.deepEqual(valid.output.statements[0].supportingFacts[0], first.registry.facts.get("fact-001"));
+  for (const supportingFacts of [[{ factRefId: "unknown" }], [{ factRefId: "fact-001" }, { factRefId: "fact-001" }], [{ factRefId: "fact-001", factPath: "/tamper" }]]) {
+    assert.equal(projection.resolveBuildAIProviderOutput(model({ statements: [{ ...model().statements[0], supportingFacts }] }), first.registry).ok, false);
+  }
+});
+
+test("unknown provider aliases return interpretation unavailable without transport classification", async () => {
+  const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "model", timeoutMs: 15000, maxOutputTokens: 1000 }, client({ status: "completed", model: "model", output_text: JSON.stringify(model({ statements: [{ ...model().statements[0], supportingFacts: [{ factRefId: "unknown" }] }] })) }));
+  await assert.rejects(() => adapter.generate(request()), (error) => error.availability === "interpretation_unavailable" && error.category === "invalid_provider_reference");
+});
+
+test("coverage aliases resolve to canonical paths and pass unchanged validation", async () => {
+  const providerRequest = projectRequest(); providerRequest.authorizedContext[0].dataset.coverage.review = { numerator: 1, denominator: 2, state: "available" };
+  providerRequest.authorizedContext[0].dataset.timing = { generatedAt: AS_OF, currentState: { asOf: AS_OF, mutableAfterAsOf: true } };
+  const bundle = projection.buildBuildAIProviderProjection(providerRequest);
+  const qualityFact = [...bundle.registry.facts].find(([, reference]) => reference.factPath.startsWith("/quality/")); assert.ok(qualityFact);
+  const projectedFact = bundle.projection.context[0].facts.find((fact) => fact.factRefId === qualityFact[0]); assert.ok(projectedFact.coverageRefIds.length);
+  const limitation = { id: "limit-1", code: "partial_coverage", text: "Review coverage is partial.", coverageRefs: [{ coverageRefId: projectedFact.coverageRefIds[0] }] };
+  const body = model({ statements: [{ ...model().statements[0], supportingFacts: [{ factRefId: qualityFact[0] }], limitationIds: ["limit-1"] }], limitations: [limitation] });
+  const resolved = projection.resolveBuildAIProviderOutput(body, bundle.registry); assert.equal(resolved.ok, true); assert.equal(resolved.output.limitations[0].coverageRefs[0].coveragePath, "/coverage/review");
+  const validator = compile(sources.validation), orchestration = compile(sources.orchestration, { "./config.ts": { BUILD_AI_DEFAULT_TIMEOUT_MS: 15_000 }, "./governance.ts": { DEFAULT_BUILD_AI_GOVERNANCE: { version: "build-ai-governance-v1", allowedTasks: ["executive_summary"], permittedStatementTypes: ["interpretation", "attention", "decision_option", "limitation"], forbiddenConclusions: ["root_cause"], requireCoverageQualification: true, requireFactReferences: true, allowAutonomousActions: false, visibilityMode: "shadow" } }, "./provider.ts": providerContract, "./validation.ts": validator, "../intelligence/tools.ts": { BUILD_INTELLIGENCE_TOOLS: [] } });
+  const accepted = { id: "tool-call-1", tool: "get_build_project_intelligence", result: { ok: true, tool: "get_build_project_intelligence", scope: providerRequest.authorizedContext[0].dataset.scope, dataset: providerRequest.authorizedContext[0].dataset } };
+  const tool = { name: "get_build_project_intelligence", async handler() { return accepted.result; } };
+  const roundTrip = await orchestration.orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: { async generate() { return { metadata: { providerId: "offline" }, output: JSON.parse(JSON.stringify(resolved.output)) }; } }, tools: [tool] });
+  assert.equal(roundTrip.status, "interpreted", JSON.stringify(roundTrip.errors));
+  assert.equal(projection.resolveBuildAIProviderOutput({ ...body, limitations: [{ ...limitation, coverageRefs: [{ coverageRefId: "unknown" }] }] }, bundle.registry).ok, false);
 });
 test("real adapter output passes orchestration and 11A.2 remains validation authority", async () => {
   const validator = compile(sources.validation); const orchestration = compile(sources.orchestration, { "./config.ts": { BUILD_AI_DEFAULT_TIMEOUT_MS: 15_000 }, "./governance.ts": { DEFAULT_BUILD_AI_GOVERNANCE: { version: "build-ai-governance-v1", allowedTasks: ["executive_summary", "change_interpretation", "management_attention"], permittedStatementTypes: ["interpretation", "attention", "decision_option", "limitation"], forbiddenConclusions: ["root_cause"], requireCoverageQualification: true, requireFactReferences: true, allowAutonomousActions: false, visibilityMode: "shadow" } }, "./provider.ts": providerContract, "./validation.ts": validator, "../intelligence/tools.ts": { BUILD_INTELLIGENCE_TOOLS: [] } });
