@@ -30,12 +30,27 @@ const validator = compile(validationSource, {});
 const providerContract = compile(providerSource, {});
 function runtime() {
   return compile(orchestrationSource, {
+    "./config.ts": { BUILD_AI_DEFAULT_TIMEOUT_MS: 15_000 },
     "./governance.ts": { DEFAULT_BUILD_AI_GOVERNANCE: governance },
     "./provider.ts": providerContract,
     "./validation.ts": validator,
     "../intelligence/tools.ts": { BUILD_INTELLIGENCE_TOOLS: [] },
   });
 }
+
+function controlledTimer() {
+  const scheduled = [], cleared = []; let now = 0;
+  return {
+    scheduled, cleared,
+    timer: {
+      set(callback, delayMs) { const handle = { callback, delayMs, dueAt: now + delayMs, fired: false }; scheduled.push(handle); return handle; },
+      clear(handle) { cleared.push(handle); },
+    },
+    fire(handle = scheduled.at(-1)) { handle.fired = true; handle.callback(); },
+    advance(delayMs) { now += delayMs; for (const handle of scheduled) if (!handle.fired && !cleared.includes(handle) && handle.dueAt <= now) { handle.fired = true; handle.callback(); } },
+  };
+}
+async function reachProviderBoundary() { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }
 
 function dataset(scope = { kind: "project", projectId: PROJECT }, partial = false) {
   return {
@@ -150,6 +165,64 @@ test("provider failure and timeout preserve deterministic intelligence without r
     const result = await runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 5 });
     assert.equal(result.status, "ai_unavailable"); assert.equal(result.ok, true); assert.equal(result.toolResults.length, 1); assert.equal(ai.calls.length, 1); assert.equal(project.calls.length, 1);
   }
+});
+
+test("outer provider-call deadline derives from provider timeout with a fixed classification margin", () => {
+  const orchestration = runtime();
+  assert.equal(orchestration.BUILD_AI_PROVIDER_TIMEOUT_MS, 15_000);
+  assert.equal(orchestration.BUILD_AI_PROVIDER_TIMEOUT_MARGIN_MS, 2_500);
+  for (const [providerTimeoutMs, outerTimeoutMs] of [[3_000, 5_500], [10_000, 12_500], [15_000, 17_500], [20_000, 22_500]]) {
+    assert.equal(orchestration.buildAIOuterTimeoutMs(providerTimeoutMs), outerTimeoutMs);
+  }
+});
+
+test("provider timeout settles before outer containment and clears the defensive timer", async () => {
+  const timers = controlledTimer(), project = tool("get_build_project_intelligence"); let rejectProvider;
+  const ai = provider(() => new Promise((_, reject) => { rejectProvider = () => reject(new providerContract.BuildAIProviderError("ai_unavailable", "timeout")); }));
+  const pending = runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 15_000, timer: timers.timer });
+  await reachProviderBoundary(); timers.advance(15_000); rejectProvider();
+  const result = await pending;
+  assert.equal(result.status, "ai_unavailable"); assert.equal(ai.calls.length, 1);
+  assert.equal(timers.scheduled[0].delayMs, 17_500); assert.deepEqual(timers.cleared, [timers.scheduled[0]]); assert.equal(timers.scheduled[0].fired, false);
+});
+
+test("outer containment aborts a provider that never settles and completes once", async () => {
+  const timers = controlledTimer(), project = tool("get_build_project_intelligence"); let observedSignal, completions = 0;
+  const ai = provider((request) => { observedSignal = request.signal; return new Promise(() => {}); });
+  const pending = runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 3_000, timer: timers.timer }).then((result) => { completions += 1; return result; });
+  await reachProviderBoundary();
+  assert.equal(timers.scheduled[0].delayMs, 5_500); assert.equal(observedSignal.aborted, false); timers.fire();
+  const result = await pending;
+  assert.equal(result.status, "ai_unavailable"); assert.equal(observedSignal.aborted, true); assert.equal(completions, 1); assert.deepEqual(timers.cleared, [timers.scheduled[0]]);
+});
+
+test("success immediately before the provider bound is accepted and clears outer containment", async () => {
+  const timers = controlledTimer(), project = tool("get_build_project_intelligence"); let settle;
+  const ai = provider((request) => new Promise((resolve) => { settle = () => resolve({ metadata: { providerId: "fake" }, output: validOutput(request) }); }));
+  const pending = runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 15_000, timer: timers.timer });
+  await reachProviderBoundary();
+  assert.equal(timers.scheduled[0].delayMs, 17_500); timers.advance(14_900); settle();
+  const result = await pending;
+  assert.equal(result.status, "interpreted"); assert.equal(timers.scheduled[0].fired, false); assert.deepEqual(timers.cleared, [timers.scheduled[0]]);
+});
+
+test("late provider completion after outer containment is ignored without second validation", async () => {
+  const timers = controlledTimer(), project = tool("get_build_project_intelligence"); let settle, completions = 0;
+  const ai = provider((request) => new Promise((resolve) => { settle = () => resolve({ metadata: { providerId: "fake" }, output: validOutput(request) }); }));
+  const pending = runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 10_000, timer: timers.timer }).then((result) => { completions += 1; return result; });
+  await reachProviderBoundary();
+  assert.equal(timers.scheduled[0].delayMs, 12_500); timers.fire();
+  const result = await pending; assert.equal(result.status, "ai_unavailable"); assert.equal(result.audit.validationOutcome, "not_run");
+  settle(); await Promise.resolve(); await Promise.resolve();
+  assert.equal(completions, 1); assert.equal(result.audit.validationOutcome, "not_run"); assert.equal(ai.calls.length, 1);
+});
+
+test("validator rejection also leaves no active outer-containment timer", async () => {
+  const timers = controlledTimer(), project = tool("get_build_project_intelligence");
+  const ai = provider((request) => ({ metadata: { providerId: "fake" }, output: { ...validOutput(request), extra: true } }));
+  const result = await runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 15_000, timer: timers.timer });
+  assert.equal(result.status, "interpretation_unavailable"); assert.equal(result.audit.validationOutcome, "rejected");
+  assert.deepEqual(timers.cleared, [timers.scheduled[0]]); timers.advance(17_500); assert.equal(timers.scheduled[0].fired, false);
 });
 
 test("malformed output invalid facts and invalid provenance reject the whole interpretation", async () => {

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { BUILD_AI_DEFAULT_TIMEOUT_MS } from "./config.ts";
 import { DEFAULT_BUILD_AI_GOVERNANCE } from "./governance.ts";
 import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderMetadata, type BuildAIProviderRequest, type BuildAIProviderToolContext } from "./provider.ts";
 import type { BuildAIAcceptedToolCall, BuildAIInterpretationV1, BuildAIModelOutputV1, BuildAITask, BuildAIValidationError } from "./types.ts";
@@ -7,7 +8,8 @@ import { validateBuildAIModelOutput } from "./validation.ts";
 import { BUILD_INTELLIGENCE_TOOLS, type BuildIntelligenceTool, type BuildIntelligenceToolName } from "../intelligence/tools.ts";
 
 export const BUILD_AI_ORCHESTRATION_VERSION = "build-ai-orchestration-v1" as const;
-export const BUILD_AI_PROVIDER_TIMEOUT_MS = 10_000;
+export const BUILD_AI_PROVIDER_TIMEOUT_MS = BUILD_AI_DEFAULT_TIMEOUT_MS;
+export const BUILD_AI_PROVIDER_TIMEOUT_MARGIN_MS = 2_500;
 export const BUILD_AI_MAX_QUESTION_LENGTH = 1_000;
 
 export type BuildAIHistoryRequest = { from: string; through: string; timezone: "UTC"; cadence: "daily" | "weekly" };
@@ -42,12 +44,18 @@ export type BuildAIOrchestrationResult = {
 };
 
 type Clock = () => Date;
-type Dependencies = { provider: BuildAIProvider; tools?: readonly BuildIntelligenceTool[]; clock?: Clock; providerTimeoutMs?: number };
+type Timer = { set(callback: () => void, delayMs: number): unknown; clear(handle: unknown): void };
+type Dependencies = { provider: BuildAIProvider; tools?: readonly BuildIntelligenceTool[]; clock?: Clock; providerTimeoutMs?: number; timer?: Timer };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const REQUEST_KEYS = new Set(["task", "projectId", "workPackageId", "activityId", "question", "history"]);
 const HISTORY_KEYS = ["from", "through", "timezone", "cadence"];
 const TASKS = new Set<BuildAITask>(["executive_summary", "change_interpretation", "management_attention"]);
+
+export function buildAIOuterTimeoutMs(providerTimeoutMs: number): number {
+  if (!Number.isSafeInteger(providerTimeoutMs) || providerTimeoutMs <= 0 || providerTimeoutMs > Number.MAX_SAFE_INTEGER - BUILD_AI_PROVIDER_TIMEOUT_MARGIN_MS) throw new RangeError("Invalid Build AI provider timeout.");
+  return providerTimeoutMs + BUILD_AI_PROVIDER_TIMEOUT_MARGIN_MS;
+}
 
 function plain(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype && Reflect.ownKeys(value).every((key) => typeof key === "string");
@@ -157,12 +165,14 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   const controller = new AbortController();
   let generated;
   const providerTimeoutMs = dependencies.providerTimeoutMs ?? BUILD_AI_PROVIDER_TIMEOUT_MS;
+  const outerTimeoutMs = buildAIOuterTimeoutMs(providerTimeoutMs);
+  const timer = dependencies.timer ?? { set: (callback, delayMs) => setTimeout(callback, delayMs), clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
   let rejectTimeout: ((reason?: unknown) => void) | undefined;
   const boundedTimeout = new Promise<never>((_, reject) => { rejectTimeout = reject; });
-  const timeout = setTimeout(() => { controller.abort(); rejectTimeout?.(new Error("Build AI provider timed out.")); }, providerTimeoutMs);
+  const timeout = timer.set(() => { controller.abort(); rejectTimeout?.(new Error("Build AI provider timed out.")); }, outerTimeoutMs);
   try { generated = await Promise.race([dependencies.provider.generate(providerRequest(request.task, request.question, context, controller.signal)), boundedTimeout]); }
-  catch (error) { clearTimeout(timeout); audit.completedAt = clock().toISOString(); return { ok: true, status: error instanceof BuildAIProviderError ? error.availability : "ai_unavailable", toolResults: [accepted], interpretation: null, audit }; }
-  clearTimeout(timeout);
+  catch (error) { timer.clear(timeout); audit.completedAt = clock().toISOString(); return { ok: true, status: error instanceof BuildAIProviderError ? error.availability : "ai_unavailable", toolResults: [accepted], interpretation: null, audit }; }
+  timer.clear(timeout);
   audit.provider = safeProviderMetadata(generated.metadata);
   if (!audit.provider) { audit.completedAt = clock().toISOString(); return { ok: true, status: "interpretation_unavailable", toolResults: [accepted], interpretation: null, audit }; }
   const validation = validateBuildAIModelOutput({ output: composeBuildAIModelOutput(generated.output, request.task, [accepted]), toolCalls: [accepted], governance: DEFAULT_BUILD_AI_GOVERNANCE });
