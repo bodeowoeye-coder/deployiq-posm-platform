@@ -24,9 +24,9 @@ export type BuildAIProjectedToolContext = {
   coverage: readonly BuildAIProjectedCoverage[];
   constraints: { unsupportedConclusions: readonly string[] };
   selection: {
-    contract: "all_allowed_facts" | "project_executive_summary_v1" | "project_management_attention_v1";
+    contract: "all_allowed_facts" | "project_executive_summary_v1" | "project_management_attention_v1" | "project_change_interpretation_v1";
     sourceCoverage: "preserved";
-    detail: "full_allowed_detail" | "project_rollups_and_canonical_previews" | "project_attention_rollups_and_bounded_preview";
+    detail: "full_allowed_detail" | "project_rollups_and_canonical_previews" | "project_attention_rollups_and_bounded_preview" | "project_history_rollups_and_coverage";
   };
 };
 export type BuildAIReferenceRegistry = {
@@ -164,6 +164,18 @@ function collectProjectManagementAttention(
   collect(dataset.coverage, "/coverage", toolCallId, provenanceKeys, facts);
 }
 
+function collectProjectChangeInterpretation(
+  dataset: BuildAIProviderToolContext["dataset"],
+  toolCallId: string,
+  provenanceKeys: readonly string[],
+  facts: PendingFact[],
+) {
+  collect(dataset.timing?.requestedHistory, "/timing/requestedHistory", toolCallId, provenanceKeys, facts);
+  collect(dataset.history?.summary, "/history/summary", toolCallId, provenanceKeys, facts);
+  collect(dataset.history?.review, "/history/review", toolCallId, provenanceKeys, facts);
+  collect(dataset.history?.coverage, "/history/coverage", toolCallId, provenanceKeys, facts);
+}
+
 function projectToolContext(context: BuildAIProviderToolContext, task: BuildAIProviderRequest["task"], factOffset: number, coverageOffset: number): { context: BuildAIProjectedToolContext; facts: Array<[string, BuildAIFactReference]>; coverage: Array<[string, BuildAICoverageReference]> } {
   const dataset = context.dataset;
   const availableKeys = [...new Set(dataset.provenance.groups.map((group) => group.key))];
@@ -171,10 +183,13 @@ function projectToolContext(context: BuildAIProviderToolContext, task: BuildAIPr
   const pendingFacts: PendingFact[] = [];
   const isProjectExecutiveSummary = task === "executive_summary" && dataset.scope.kind === "project";
   const isProjectManagementAttention = task === "management_attention" && dataset.scope.kind === "project";
+  const isProjectChangeInterpretation = task === "change_interpretation" && dataset.scope.kind === "project";
   if (isProjectExecutiveSummary) {
     collectProjectExecutiveSummary(dataset, context.toolCallId, provenanceKeys, pendingFacts);
   } else if (isProjectManagementAttention) {
     collectProjectManagementAttention(dataset, context.toolCallId, provenanceKeys, pendingFacts);
+  } else if (isProjectChangeInterpretation) {
+    collectProjectChangeInterpretation(dataset, context.toolCallId, availableKeys.filter((key) => key === "history"), pendingFacts);
   } else {
     for (const root of INCLUDED_ROOTS) {
       if (root in dataset) collect(dataset[root], `/${root}`, context.toolCallId, provenanceKeys, pendingFacts);
@@ -199,6 +214,8 @@ function projectToolContext(context: BuildAIProviderToolContext, task: BuildAIPr
       ? { contract: "project_executive_summary_v1", sourceCoverage: "preserved", detail: "project_rollups_and_canonical_previews" }
       : isProjectManagementAttention
         ? { contract: "project_management_attention_v1", sourceCoverage: "preserved", detail: "project_attention_rollups_and_bounded_preview" }
+        : isProjectChangeInterpretation
+          ? { contract: "project_change_interpretation_v1", sourceCoverage: "preserved", detail: "project_history_rollups_and_coverage" }
       : { contract: "all_allowed_facts", sourceCoverage: "preserved", detail: "full_allowed_detail" },
   }, facts, coverage };
 }

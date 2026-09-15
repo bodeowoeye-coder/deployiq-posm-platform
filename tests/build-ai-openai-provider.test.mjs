@@ -89,6 +89,26 @@ function projectRequest() {
 function managementAttentionRequest() {
   return { ...projectRequest(), task: "management_attention", policy: { ...governance, allowedTask: "management_attention" } };
 }
+function changeInterpretationRequest(days = 45, cadence = "daily") {
+  const value = projectRequest(), from = "2026-08-01", through = "2026-09-14";
+  value.task = "change_interpretation";
+  value.policy = { ...governance, allowedTask: "change_interpretation" };
+  value.authorizedContext[0].tool = "get_build_execution_history";
+  value.authorizedContext[0].dataset.timing = { generatedAt: AS_OF, currentState: { asOf: AS_OF, mutableAfterAsOf: true }, recentExecution: { periodStart: from, periodEnd: through, interval: "half_open", timezone: "UTC" }, requestedHistory: { state: "ready", from, through, periodStart: `${from}T00:00:00.000Z`, periodEnd: "2026-09-15T00:00:00.000Z", timezone: "UTC", cadence, interval: "half_open" } };
+  value.authorizedContext[0].dataset.history = {
+    report: { type: "build_execution_history_report", title: "Execution History Report", version: 1 },
+    project: { id: PROJECT, clientId: "client-secret", name: "Secret Customer Ltd", code: "SECRET" },
+    scope: { kind: "project", workPackageId: null, workPackageName: null, siteName: null },
+    timing: { generatedAt: AS_OF, period: value.authorizedContext[0].dataset.timing.requestedHistory },
+    summary: { activitiesStarted: 9, activitiesCompleted: 4, activitiesAccepted: 3, submissions: 5, initialSubmissions: 4, resubmissions: 1, changesRequiredOutcomes: 1, activitiesRequiringCorrection: 1, correctiveCycles: 1, blockedEvents: 2, resumedEvents: 1 },
+    review: { cyclesTotal: 5, cyclesMeasured: 4, cyclesUnmeasurable: 1, averageHours: 5, medianHours: 4, minHours: 2, maxHours: 9 },
+    buckets: Array.from({ length: cadence === "daily" ? days : Math.ceil(days / 7) }, (_, index) => ({ bucketStart: `private-${index}`, activitiesStarted: index })),
+    workPackages: Array.from({ length: 20 }, (_, index) => ({ id: `wp-${index}`, name: `Private package ${index}`, submissions: index })),
+    coverage: { dataQuality: "complete", scopedBucketsAvailable: true, archivedWorkPackages: 0, reviewCyclesMeasured: 4, reviewCyclesTotal: 5 },
+  };
+  value.authorizedContext[0].dataset.provenance.groups.push({ key: "history", sourceKind: "derived_contract", sourceIds: [PROJECT], derivation: "B.4", periodStart: `${from}T00:00:00.000Z`, periodEnd: "2026-09-15T00:00:00.000Z" });
+  return value;
+}
 function resolvePointer(value, pointer) {
   return pointer.slice(1).split("/").reduce((current, part) => current?.[part.replaceAll("~1", "/").replaceAll("~0", "~")], value);
 }
@@ -191,13 +211,41 @@ test("Project management attention uses its exact bounded deterministic selectio
   const serialized = JSON.stringify(context);
   for (const forbidden of [PROJECT, WP, ACTIVITY, "client-secret", "person-secret", "supervisor-secret", "Private Person", "Private Supervisor", "Private activity", "Private package", "generatedAt", "asOf", "storageUrl"]) assert.equal(serialized.includes(forbidden), false, forbidden);
 });
-test("Project task routing isolates executive summary management attention and generic change interpretation", () => {
+test("Project task routing isolates executive summary management attention and bounded change interpretation", () => {
   assert.equal(projection.projectBuildAIProviderRequest(projectRequest()).context[0].selection.contract, "project_executive_summary_v1");
   assert.equal(projection.projectBuildAIProviderRequest(managementAttentionRequest()).context[0].selection.contract, "project_management_attention_v1");
-  const history = projectRequest(); history.task = "change_interpretation"; history.policy = { ...governance, allowedTask: "change_interpretation" };
-  history.authorizedContext[0].dataset.attention = { summary: { outstandingObligations: 1 } };
-  history.authorizedContext[0].dataset.recentExecution = { counts: { activitiesStarted: 1 } };
-  assert.equal(projection.projectBuildAIProviderRequest(history).context[0].selection.contract, "all_allowed_facts");
+  assert.equal(projection.projectBuildAIProviderRequest(changeInterpretationRequest()).context[0].selection.contract, "project_change_interpretation_v1");
+});
+test("Project change interpretation selects exactly the fixed authoritative history rollups for every valid range and cadence", () => {
+  for (const [days, cadence] of [[7, "daily"], [45, "daily"], [366, "daily"], [7, "weekly"], [45, "weekly"], [366, "weekly"]]) {
+    const request = changeInterpretationRequest(days, cadence), first = projection.buildBuildAIProviderProjection(request), second = projection.buildBuildAIProviderProjection(request);
+    assert.deepEqual(JSON.parse(JSON.stringify(first.projection)), JSON.parse(JSON.stringify(second.projection)));
+    const context = first.projection.context[0], paths = [...first.registry.facts.values()].map((item) => item.factPath);
+    assert.equal(context.facts.length, 31); assert.equal(projection.BUILD_AI_MAX_PROJECTED_FACTS - context.facts.length, 149);
+    assert.deepEqual(JSON.parse(JSON.stringify(context.selection)), { contract: "project_change_interpretation_v1", sourceCoverage: "preserved", detail: "project_history_rollups_and_coverage" });
+    const count = (prefix) => paths.filter((path) => path === prefix || path.startsWith(`${prefix}/`)).length;
+    assert.deepEqual({ timing: count("/timing/requestedHistory"), summary: count("/history/summary"), review: count("/history/review"), coverage: count("/history/coverage") }, { timing: 8, summary: 11, review: 7, coverage: 5 });
+    for (const prefix of ["/currentState", "/progress", "/plannedPosition", "/schedule", "/attention", "/quality", "/dependencies", "/exceptions", "/recentExecution", "/history/report", "/history/project", "/history/scope", "/history/timing", "/history/buckets", "/history/workPackages"]) assert.equal(paths.some((path) => path === prefix || path.startsWith(`${prefix}/`)), false, prefix);
+    assert.deepEqual(context.facts.map((fact) => fact.factRefId), context.facts.map((_, index) => `fact-${String(index + 1).padStart(3, "0")}`));
+    assert.ok([...first.registry.facts.values()].every((reference) => reference.toolCallId === "tool-call-1" && JSON.stringify(reference.provenanceKeys) === JSON.stringify(["history"])));
+    const serialized = JSON.stringify(context);
+    for (const forbidden of [PROJECT, WP, ACTIVITY, "client-secret", "Secret Customer", "Private package", "generatedAt", "asOf"]) assert.equal(serialized.includes(forbidden), false, forbidden);
+  }
+});
+test("Project change interpretation aliases reconstruct authoritative history and pass unchanged validation offline", async () => {
+  const providerRequest = changeInterpretationRequest(), bundle = projection.buildBuildAIProviderProjection(providerRequest);
+  const execution = [...bundle.registry.facts].find(([, reference]) => reference.factPath === "/history/summary/activitiesCompleted");
+  const review = [...bundle.registry.facts].find(([, reference]) => reference.factPath === "/history/review/cyclesMeasured");
+  const coverage = bundle.projection.context[0].coverage[0];
+  assert.ok(execution && review && coverage);
+  const body = { schemaVersion: "1.0", statements: [{ id: "history-1", type: "interpretation", text: "Execution and review activity occurred in the requested period.", supportingFacts: [{ factRefId: execution[0] }, { factRefId: review[0] }], limitationIds: ["coverage-1"] }], limitations: [{ id: "coverage-1", code: "partial_coverage", text: "Historical schedule, attention and exception movement is unavailable.", coverageRefs: [{ coverageRefId: coverage.coverageRefId }] }] };
+  const resolved = projection.resolveBuildAIProviderOutput(body, bundle.registry); assert.equal(resolved.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(resolved.output.statements[0].supportingFacts)), JSON.parse(JSON.stringify([execution[1], review[1]])));
+  const validator = compile(sources.validation), orchestration = compile(sources.orchestration, { "./config.ts": { BUILD_AI_DEFAULT_TIMEOUT_MS: 15_000 }, "./governance.ts": { DEFAULT_BUILD_AI_GOVERNANCE: { version: "build-ai-governance-v1", allowedTasks: ["change_interpretation"], permittedStatementTypes: ["interpretation", "attention", "decision_option", "limitation"], forbiddenConclusions: ["root_cause"], requireCoverageQualification: true, requireFactReferences: true, allowAutonomousActions: false, visibilityMode: "shadow" } }, "./provider.ts": providerContract, "./validation.ts": validator, "../intelligence/tools.ts": { BUILD_INTELLIGENCE_TOOLS: [] } });
+  const data = providerRequest.authorizedContext[0].dataset;
+  const tool = { name: "get_build_execution_history", async handler() { return { ok: true, tool: this.name, scope: data.scope, dataset: data }; } };
+  const result = await orchestration.orchestrateBuildAI({ task: "change_interpretation", projectId: PROJECT, history: { from: "2026-08-01", through: "2026-09-14", timezone: "UTC", cadence: "daily" } }, { provider: { async generate() { return { metadata: { providerId: "offline" }, output: JSON.parse(JSON.stringify(resolved.output)) }; } }, tools: [tool] });
+  assert.equal(result.status, "interpreted", JSON.stringify(result.errors));
 });
 test("Project management attention aliases round trip through authoritative reconstruction and unchanged validation", async () => {
   const providerRequest = managementAttentionRequest();
