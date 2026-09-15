@@ -44,6 +44,10 @@ function request(question = null) { return { task: "executive_summary", question
 function projectDataset() {
   const value = dataset();
   value.scope = { kind: "project", projectId: PROJECT };
+  value.currentState = { activitiesAccepted: 1, activitiesCompleted: 2, activitiesExpectedComplete: 3,
+    currentOverdue: 3, managementAttention: 12, openExceptions: 2 };
+  value.coverage = { ...value.coverage, assignmentsMissing: 1, workPackagesWithIncompleteMeasurement: 0,
+    workPackagesWithMultiplePlans: 0, workPackagesWithoutPlan: 0, sourceDataIncomplete: false, currentStateAvailable: true };
   value.attention = {
     summary: { outstandingObligations: 12, overdueObligations: 4, activitiesAffected: 6, workPackagesAffected: 3,
       explicitOwnersAffected: 2, unassignedObligations: 1, categoryCounts: { scheduleOverdue: 3, executionBlocks: 1,
@@ -55,9 +59,11 @@ function projectDataset() {
       type: index % 2 ? "execution_block" : "schedule_overdue", condition: "Detailed child condition",
       expectedNextAction: "Detailed child action", expectedActor: "activity_owner", dueAt: `2026-09-${10 + index}T10:00:00.000Z`,
       observedAt: AS_OF, overdue: index < 3, dataQuality: "complete", route: `/private/${index}`,
+      activityOwner: { assignmentState: "assigned", role: "activity_owner", displayName: "Private Person", userId: "person-secret" },
+      expectedNextActor: { assignmentState: "assigned", role: "assigned_supervisor", displayName: "Private Supervisor", userId: "supervisor-secret" },
       ownerDisplayName: "Private Person", ownerUserId: "person-secret" })), total: 6, returned: 6, truncated: false, continuationToken: null },
   };
-  value.exceptions = { summary: { open: 2, inRemediation: 1, resolved: 3, verified: 4, overdue: 1 },
+  value.exceptions = { summary: { active: 3, open: 2, inRemediation: 1, resolved: 3, verified: 4, overdue: 1 },
     preview: { items: Array.from({ length: 5 }, (_, index) => ({ id: `exception-${index}`, title: `Private exception ${index}`,
       status: "open", severity: "high", dueAt: `2026-09-${15 + index}T10:00:00.000Z`, overdue: index === 0,
       activityId: `activity-${index}`, workPackageId: `wp-${index}`, exceptionOwner: { displayName: "Private Person" } })),
@@ -79,6 +85,9 @@ function projectDataset() {
 }
 function projectRequest() {
   return { ...request(), authorizedContext: [{ toolCallId: "tool-call-1", tool: "get_build_project_intelligence", dataset: projectDataset() }] };
+}
+function managementAttentionRequest() {
+  return { ...projectRequest(), task: "management_attention", policy: { ...governance, allowedTask: "management_attention" } };
 }
 function resolvePointer(value, pointer) {
   return pointer.slice(1).split("/").reduce((current, part) => current?.[part.replaceAll("~1", "/").replaceAll("~0", "~")], value);
@@ -153,6 +162,59 @@ test("Project executive-summary facts preserve canonical references provenance c
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }
 });
+test("Project management attention uses its exact bounded deterministic selection", () => {
+  const first = projection.buildBuildAIProviderProjection(managementAttentionRequest());
+  const second = projection.buildBuildAIProviderProjection(managementAttentionRequest());
+  assert.deepEqual(JSON.parse(JSON.stringify(first.projection)), JSON.parse(JSON.stringify(second.projection)));
+  assert.deepEqual([...first.registry.facts], [...second.registry.facts]);
+  const context = first.projection.context[0], paths = [...first.registry.facts.values()].map((reference) => reference.factPath);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.selection)), { contract: "project_management_attention_v1", sourceCoverage: "preserved", detail: "project_attention_rollups_and_bounded_preview" });
+  assert.equal(context.facts.length, 104); assert.ok(context.facts.length < projection.BUILD_AI_MAX_PROJECTED_FACTS);
+  const count = (prefix) => paths.filter((path) => path === prefix || path.startsWith(`${prefix}/`)).length;
+  assert.deepEqual({ currentState: count("/currentState"), summary: count("/attention/summary"), preview: count("/attention/preview"), schedule: count("/schedule"), exceptions: count("/exceptions"), coverage: count("/coverage") },
+    { currentState: 6, summary: 17, preview: 63, schedule: 1, exceptions: 3, coverage: 14 });
+  for (const path of ["/attention/summary/outstandingObligations", "/attention/summary/overdueObligations", "/attention/summary/activitiesAffected", "/attention/summary/workPackagesAffected", "/attention/summary/unassignedObligations", "/attention/summary/categoryCounts/dependencyAttention", "/attention/preview/total", "/attention/preview/returned", "/attention/preview/truncated", "/attention/preview/items/0/condition", "/attention/preview/items/0/activityOwner/role", "/attention/preview/items/0/expectedNextActor/role", "/schedule/currentlyOverdue", "/exceptions/summary/active", "/exceptions/summary/open", "/exceptions/summary/overdue"]) assert.ok(paths.includes(path), path);
+  for (const prefix of ["/progress", "/plannedPosition", "/quality", "/dependencies", "/recentExecution", "/activities", "/workPackages"]) {
+    assert.equal(paths.some((path) => path === prefix || path.startsWith(`${prefix}/`)), false, prefix);
+  }
+  assert.equal(paths.some((path) => path.startsWith("/schedule/") && path !== "/schedule/currentlyOverdue"), false);
+  assert.equal(paths.some((path) => path.startsWith("/exceptions/") && !path.startsWith("/exceptions/summary/")), false);
+  for (const forbidden of ["dueAt", "observedAt", "route", "sourceRecordId", "continuationToken", "activityName", "workPackageName", "displayName", "userId"]) assert.equal(paths.some((path) => path.includes(forbidden)), false, forbidden);
+  const previewItems = new Set(paths.flatMap((path) => { const match = path.match(/^\/attention\/preview\/items\/(\d+)\//); return match ? [match[1]] : []; }));
+  assert.equal(previewItems.size, 6);
+  const factIds = context.facts.map((fact) => fact.factRefId);
+  assert.deepEqual(factIds, factIds.map((_, index) => `fact-${String(index + 1).padStart(3, "0")}`));
+  const schema = openai.buildBuildAIOpenAIOutputSchema(first.projection);
+  assert.deepEqual(JSON.parse(JSON.stringify(schema.properties.statements.items.properties.supportingFacts.items.properties.factRefId.enum)), JSON.parse(JSON.stringify(factIds)));
+  assert.deepEqual(JSON.parse(JSON.stringify(schema.properties.limitations.items.properties.coverageRefs.items.properties.coverageRefId.enum)), JSON.parse(JSON.stringify(context.coverage.map((item) => item.coverageRefId))));
+  assert.ok([...first.registry.facts.values()].every((reference) => reference.toolCallId === "tool-call-1" && reference.provenanceKeys.length > 0));
+  const serialized = JSON.stringify(context);
+  for (const forbidden of [PROJECT, WP, ACTIVITY, "client-secret", "person-secret", "supervisor-secret", "Private Person", "Private Supervisor", "Private activity", "Private package", "generatedAt", "asOf", "storageUrl"]) assert.equal(serialized.includes(forbidden), false, forbidden);
+});
+test("Project task routing isolates executive summary management attention and generic change interpretation", () => {
+  assert.equal(projection.projectBuildAIProviderRequest(projectRequest()).context[0].selection.contract, "project_executive_summary_v1");
+  assert.equal(projection.projectBuildAIProviderRequest(managementAttentionRequest()).context[0].selection.contract, "project_management_attention_v1");
+  const history = projectRequest(); history.task = "change_interpretation"; history.policy = { ...governance, allowedTask: "change_interpretation" };
+  history.authorizedContext[0].dataset.attention = { summary: { outstandingObligations: 1 } };
+  history.authorizedContext[0].dataset.recentExecution = { counts: { activitiesStarted: 1 } };
+  assert.equal(projection.projectBuildAIProviderRequest(history).context[0].selection.contract, "all_allowed_facts");
+});
+test("Project management attention aliases round trip through authoritative reconstruction and unchanged validation", async () => {
+  const providerRequest = managementAttentionRequest();
+  providerRequest.authorizedContext[0].dataset.timing = { generatedAt: AS_OF, currentState: { asOf: AS_OF, mutableAfterAsOf: true } };
+  const bundle = projection.buildBuildAIProviderProjection(providerRequest);
+  const selected = [...bundle.registry.facts].find(([, reference]) => reference.factPath === "/attention/summary/outstandingObligations");
+  assert.ok(selected);
+  const body = { schemaVersion: "1.0", statements: [{ id: "attention-1", type: "attention", text: "Outstanding obligations require management attention.", supportingFacts: [{ factRefId: selected[0] }], limitationIds: [] }], limitations: [] };
+  const resolved = projection.resolveBuildAIProviderOutput(body, bundle.registry);
+  assert.equal(resolved.ok, true); assert.deepEqual(resolved.output.statements[0].supportingFacts[0], selected[1]);
+  const validator = compile(sources.validation), orchestration = compile(sources.orchestration, { "./config.ts": { BUILD_AI_DEFAULT_TIMEOUT_MS: 15_000 }, "./governance.ts": { DEFAULT_BUILD_AI_GOVERNANCE: { version: "build-ai-governance-v1", allowedTasks: ["management_attention"], permittedStatementTypes: ["interpretation", "attention", "decision_option", "limitation"], forbiddenConclusions: ["root_cause"], requireCoverageQualification: true, requireFactReferences: true, allowAutonomousActions: false, visibilityMode: "shadow" } }, "./provider.ts": providerContract, "./validation.ts": validator, "../intelligence/tools.ts": { BUILD_INTELLIGENCE_TOOLS: [] } });
+  const data = providerRequest.authorizedContext[0].dataset;
+  const tool = { name: "get_build_project_intelligence", async handler() { return { ok: true, tool: this.name, scope: data.scope, dataset: data }; } };
+  const roundTrip = await orchestration.orchestrateBuildAI({ task: "management_attention", projectId: PROJECT }, { provider: { async generate() { return { metadata: { providerId: "offline" }, output: JSON.parse(JSON.stringify(resolved.output)) }; } }, tools: [tool] });
+  assert.equal(roundTrip.status, "interpreted", JSON.stringify(roundTrip.errors));
+  assert.equal(roundTrip.audit.validationOutcome, "accepted");
+});
 test("oversized canonical Project previews still fail closed before provider transport", async () => {
   const oversized = projectRequest();
   oversized.authorizedContext[0].dataset.attention.preview.items = Array.from({ length: 100 }, (_, index) => ({
@@ -161,6 +223,14 @@ test("oversized canonical Project previews still fail closed before provider tra
   const fake = client();
   const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "model", timeoutMs: 15000, maxOutputTokens: 1000 }, fake);
   await assert.rejects(() => adapter.generate(oversized), /projection exceeds its deterministic bound/);
+  assert.equal(fake.calls.length, 0);
+  const oversizedAttention = managementAttentionRequest();
+  oversizedAttention.authorizedContext[0].dataset.attention.preview.items = Array.from({ length: 100 }, () => ({
+    type: "schedule_overdue", condition: "Supported condition", overdue: true, dataQuality: "complete",
+    expectedActor: "activity_owner", expectedNextAction: "Review the deterministic condition.",
+    activityOwner: { assignmentState: "assigned", role: "activity_owner" }, expectedNextActor: { assignmentState: "assigned", role: "assigned_supervisor" },
+  }));
+  await assert.rejects(() => adapter.generate(oversizedAttention), /projection exceeds its deterministic bound/);
   assert.equal(fake.calls.length, 0);
 });
 test("instruction builder keeps injection in separately typed user content", () => {

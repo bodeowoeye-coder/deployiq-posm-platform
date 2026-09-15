@@ -24,9 +24,9 @@ export type BuildAIProjectedToolContext = {
   coverage: readonly BuildAIProjectedCoverage[];
   constraints: { unsupportedConclusions: readonly string[] };
   selection: {
-    contract: "all_allowed_facts" | "project_executive_summary_v1";
+    contract: "all_allowed_facts" | "project_executive_summary_v1" | "project_management_attention_v1";
     sourceCoverage: "preserved";
-    detail: "full_allowed_detail" | "project_rollups_and_canonical_previews";
+    detail: "full_allowed_detail" | "project_rollups_and_canonical_previews" | "project_attention_rollups_and_bounded_preview";
   };
 };
 export type BuildAIReferenceRegistry = {
@@ -127,14 +127,54 @@ function collectProjectExecutiveSummary(
   ], toolCallId, provenanceKeys, facts);
 }
 
+function collectProjectManagementAttention(
+  dataset: BuildAIProviderToolContext["dataset"],
+  toolCallId: string,
+  provenanceKeys: readonly string[],
+  facts: PendingFact[],
+) {
+  collectKeys(dataset.currentState, "/currentState", [
+    "activitiesAccepted", "activitiesCompleted", "activitiesExpectedComplete",
+    "currentOverdue", "managementAttention", "openExceptions",
+  ], toolCallId, provenanceKeys, facts);
+
+  collectKeys(dataset.attention?.summary, "/attention/summary", [
+    "outstandingObligations", "overdueObligations", "activitiesAffected", "workPackagesAffected",
+    "explicitOwnersAffected", "unassignedObligations", "categoryCounts", "owners",
+  ], toolCallId, provenanceKeys, facts);
+
+  const preview = dataset.attention?.preview;
+  collectKeys(preview, "/attention/preview", ["total", "returned", "truncated"], toolCallId, provenanceKeys, facts);
+  if (preview && typeof preview === "object" && !Array.isArray(preview) && Array.isArray(preview.items)) {
+    preview.items.forEach((item, index) => {
+      const path = `/attention/preview/items/${index}`;
+      collectKeys(item, path, [
+        "type", "condition", "overdue", "dataQuality", "expectedActor", "expectedNextAction",
+      ], toolCallId, provenanceKeys, facts);
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const record = item as Record<string, unknown>;
+        collectKeys(record.activityOwner, `${path}/activityOwner`, ["assignmentState", "role"], toolCallId, provenanceKeys, facts);
+        collectKeys(record.expectedNextActor, `${path}/expectedNextActor`, ["assignmentState", "role"], toolCallId, provenanceKeys, facts);
+      }
+    });
+  }
+
+  collectKeys(dataset.schedule, "/schedule", ["currentlyOverdue"], toolCallId, provenanceKeys, facts);
+  collectKeys(dataset.exceptions?.summary, "/exceptions/summary", ["active", "open", "overdue"], toolCallId, provenanceKeys, facts);
+  collect(dataset.coverage, "/coverage", toolCallId, provenanceKeys, facts);
+}
+
 function projectToolContext(context: BuildAIProviderToolContext, task: BuildAIProviderRequest["task"], factOffset: number, coverageOffset: number): { context: BuildAIProjectedToolContext; facts: Array<[string, BuildAIFactReference]>; coverage: Array<[string, BuildAICoverageReference]> } {
   const dataset = context.dataset;
   const availableKeys = [...new Set(dataset.provenance.groups.map((group) => group.key))];
   const provenanceKeys = availableKeys.slice(0, 8);
   const pendingFacts: PendingFact[] = [];
   const isProjectExecutiveSummary = task === "executive_summary" && dataset.scope.kind === "project";
+  const isProjectManagementAttention = task === "management_attention" && dataset.scope.kind === "project";
   if (isProjectExecutiveSummary) {
     collectProjectExecutiveSummary(dataset, context.toolCallId, provenanceKeys, pendingFacts);
+  } else if (isProjectManagementAttention) {
+    collectProjectManagementAttention(dataset, context.toolCallId, provenanceKeys, pendingFacts);
   } else {
     for (const root of INCLUDED_ROOTS) {
       if (root in dataset) collect(dataset[root], `/${root}`, context.toolCallId, provenanceKeys, pendingFacts);
@@ -157,6 +197,8 @@ function projectToolContext(context: BuildAIProviderToolContext, task: BuildAIPr
     constraints: { unsupportedConclusions: dataset.constraints.unsupportedConclusions },
     selection: isProjectExecutiveSummary
       ? { contract: "project_executive_summary_v1", sourceCoverage: "preserved", detail: "project_rollups_and_canonical_previews" }
+      : isProjectManagementAttention
+        ? { contract: "project_management_attention_v1", sourceCoverage: "preserved", detail: "project_attention_rollups_and_bounded_preview" }
       : { contract: "all_allowed_facts", sourceCoverage: "preserved", detail: "full_allowed_detail" },
   }, facts, coverage };
 }
