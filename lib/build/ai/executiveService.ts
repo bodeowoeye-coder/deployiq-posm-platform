@@ -13,6 +13,7 @@ import {
   type BuildExecutiveInterpretationV1,
   type BuildExecutiveSourceTask,
 } from "./executiveInterpretation.ts";
+import { buildBuildExecutiveExplainability, type BuildExecutiveExplainabilityV1 } from "./explainability.ts";
 
 export const BUILD_EXECUTIVE_PRIMARY_SECTIONS = [
   "executive_position",
@@ -27,7 +28,7 @@ export type BuildExecutiveServiceRequest = {
   history?: BuildAIHistoryRequest;
 };
 export type BuildExecutiveServiceResult =
-  | { ok: true; interpretation: BuildExecutiveInterpretationV1 }
+  | { ok: true; interpretation: BuildExecutiveInterpretationV1; explainability: BuildExecutiveExplainabilityV1 }
   | { ok: false; status: "invalid_request" | "composition_unavailable" };
 
 type Orchestrator = (request: BuildAIOrchestrationRequest) => Promise<BuildAIOrchestrationResult>;
@@ -92,19 +93,21 @@ export function createBuildExecutiveService(dependencies: ServiceDependencies) {
     if (!request) return { ok: false, status: "invalid_request" };
 
     const selected = new Set(request.sections.map((section) => SECTION_TASK[section]));
-    const pending = SOURCE_TASKS.map(async (task): Promise<BuildExecutiveInterpretationSource> => {
-      if (!selected.has(task)) return source(task, "not_requested");
-      if (task === "change_interpretation" && !request.history) return source(task, "invalid_request");
+    const pending = SOURCE_TASKS.map(async (task): Promise<{ source: BuildExecutiveInterpretationSource; result: BuildAIOrchestrationResult | null }> => {
+      if (!selected.has(task)) return { source: source(task, "not_requested"), result: null };
+      if (task === "change_interpretation" && !request.history) return { source: source(task, "invalid_request"), result: null };
       try {
         const result = await dependencies.orchestrate(taskRequest(request, task));
-        return source(task, result.status, result.status === "interpreted" ? result.interpretation : null);
+        return { source: source(task, result.status, result.status === "interpreted" ? result.interpretation : null), result };
       } catch {
-        return source(task, "deterministic_intelligence_unavailable");
+        return { source: source(task, "deterministic_intelligence_unavailable"), result: null };
       }
     });
-    const sources = await Promise.all(pending);
+    const settled = await Promise.all(pending); const sources = settled.map((item) => item.source);
     const composed = composeBuildExecutiveInterpretation({ scope: { kind: "project", projectId: request.projectId }, sources });
-    return composed.ok ? { ok: true, interpretation: composed.interpretation } : { ok: false, status: "composition_unavailable" };
+    if (!composed.ok) return { ok: false, status: "composition_unavailable" };
+    const explainability = buildBuildExecutiveExplainability({ interpretation: composed.interpretation, sources: settled.filter((item) => item.result).map((item) => ({ task: item.source.task, result: item.result })) });
+    return explainability.ok ? { ok: true, interpretation: composed.interpretation, explainability: explainability.explainability } : { ok: false, status: "composition_unavailable" };
   };
 }
 

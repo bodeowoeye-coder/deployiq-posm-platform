@@ -6,6 +6,7 @@ import ts from "typescript";
 
 const serviceSource = readFileSync(new URL("../lib/build/ai/executiveService.ts", import.meta.url), "utf8");
 const compositionSource = readFileSync(new URL("../lib/build/ai/executiveInterpretation.ts", import.meta.url), "utf8");
+const explainabilitySource = readFileSync(new URL("../lib/build/ai/explainability.ts", import.meta.url), "utf8");
 const compile = (source) => ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 function load(source, imports = {}, sharedContext) {
   const context = sharedContext ?? vm.createContext({ setTimeout });
@@ -15,8 +16,9 @@ function load(source, imports = {}, sharedContext) {
 }
 const loadedComposition = load(compositionSource);
 const composition = loadedComposition.exports;
+const explainability = load(explainabilitySource, {}, loadedComposition.context).exports;
 const orchestrationModule = { orchestrateBuildAI() { throw new Error("Production orchestration must be injected in offline tests."); } };
-const service = load(serviceSource, { "./orchestration.ts": orchestrationModule, "./executiveInterpretation.ts": composition }, loadedComposition.context).exports;
+const service = load(serviceSource, { "./orchestration.ts": orchestrationModule, "./executiveInterpretation.ts": composition, "./explainability.ts": explainability }, loadedComposition.context).exports;
 const realmValue = (value) => { loadedComposition.context.__bridge = JSON.stringify(value); return vm.runInContext("JSON.parse(__bridge)", loadedComposition.context); };
 const PROJECT = "a1000000-0000-4000-8000-000000000002";
 const HISTORY = { from: "2026-08-01", through: "2026-08-31", timezone: "UTC", cadence: "weekly" };
