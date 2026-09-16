@@ -3,7 +3,7 @@ import "server-only";
 import { BUILD_AI_DEFAULT_TIMEOUT_MS } from "./config.ts";
 import { DEFAULT_BUILD_AI_GOVERNANCE } from "./governance.ts";
 import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderFailureCategory, type BuildAIProviderMetadata, type BuildAIProviderRequest, type BuildAIProviderToolContext } from "./provider.ts";
-import type { BuildAIAcceptedToolCall, BuildAIInterpretationV1, BuildAIModelOutputV1, BuildAITask, BuildAIValidationError } from "./types.ts";
+import type { BuildAIAcceptedToolCall, BuildAIInterpretationV1, BuildAIInterpretationV2, BuildAIModelOutputV1, BuildAITask, BuildAIValidationError } from "./types.ts";
 import { validateBuildAIModelOutput } from "./validation.ts";
 import { BUILD_INTELLIGENCE_TOOLS, type BuildIntelligenceTool, type BuildIntelligenceToolName } from "../intelligence/tools.ts";
 
@@ -28,7 +28,7 @@ export type BuildAIOrchestrationAudit = {
   scope: "project" | "work_package" | "activity";
   toolCalls: Array<{ id: string; tool: BuildIntelligenceToolName; datasetSchemaVersion?: string }>;
   governanceVersion: string;
-  outputSchemaVersion: "1.0";
+  outputSchemaVersion: "1.0" | "2.0";
   provider: BuildAIProviderMetadata | null;
   providerFailureCategory: BuildAIProviderFailureCategory | null;
   validationOutcome: "not_run" | "accepted" | "rejected";
@@ -39,7 +39,7 @@ export type BuildAIOrchestrationResult = {
   ok: boolean;
   status: BuildAIOrchestrationStatus;
   toolResults: readonly BuildAIAcceptedToolCall[];
-  interpretation: BuildAIInterpretationV1 | null;
+  interpretation: BuildAIInterpretationV1 | BuildAIInterpretationV2 | null;
   errors?: readonly BuildAIValidationError[];
   audit: BuildAIOrchestrationAudit;
 };
@@ -106,7 +106,7 @@ function providerRequest(task: BuildAITask, question: string | undefined, contex
       unsupportedConclusions: DEFAULT_BUILD_AI_GOVERNANCE.forbiddenConclusions,
       allowAutonomousActions: false, allowModelAuthoredFacts: false, decisionOptionsOnly: true,
     },
-    outputContract: { schemaVersion: "1.0" }, signal,
+    outputContract: { schemaVersion: "2.0" }, signal,
   };
 }
 
@@ -124,13 +124,13 @@ export function composeBuildAIModelOutput(body: unknown, task: BuildAITask, tool
   const keys = Reflect.ownKeys(body);
   if (keys.length !== 3 || keys.some((key) => typeof key !== "string" || !["schemaVersion", "statements", "limitations"].includes(key))) return body;
   const candidate = body as Record<string, unknown>;
-  if (candidate.schemaVersion !== "1.0" || !Array.isArray(candidate.statements) || !Array.isArray(candidate.limitations)) return body;
+  if (!["1.0", "2.0"].includes(String(candidate.schemaVersion)) || !Array.isArray(candidate.statements) || !Array.isArray(candidate.limitations)) return body;
   const primary = toolCalls[0]?.result.dataset;
   if (!primary) return body;
   const prototype = Object.getPrototypeOf(body);
   const record = <T extends Record<string, unknown>>(value: T): T => Object.assign(Object.create(prototype), value) as T;
   return record({
-    schemaVersion: "1.0",
+    schemaVersion: candidate.schemaVersion as "1.0",
     generatedAt: primary.timing.generatedAt,
     scope: primary.scope,
     task,
@@ -153,7 +153,7 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   const clock = dependencies.clock ?? (() => new Date());
   const startedAt = clock().toISOString();
   const request = validateRequest(input);
-  const baseAudit = (task: BuildAITask, scope: BuildAIOrchestrationAudit["scope"]): BuildAIOrchestrationAudit => ({ orchestrationVersion: BUILD_AI_ORCHESTRATION_VERSION, task, scope, toolCalls: [], governanceVersion: DEFAULT_BUILD_AI_GOVERNANCE.version, outputSchemaVersion: "1.0", provider: null, providerFailureCategory: null, validationOutcome: "not_run", startedAt, completedAt: clock().toISOString() });
+  const baseAudit = (task: BuildAITask, scope: BuildAIOrchestrationAudit["scope"]): BuildAIOrchestrationAudit => ({ orchestrationVersion: BUILD_AI_ORCHESTRATION_VERSION, task, scope, toolCalls: [], governanceVersion: DEFAULT_BUILD_AI_GOVERNANCE.version, outputSchemaVersion: "2.0", provider: null, providerFailureCategory: null, validationOutcome: "not_run", startedAt, completedAt: clock().toISOString() });
   if (!request) return { ok: false, status: "invalid_request", toolResults: [], interpretation: null, audit: baseAudit("executive_summary", "project") };
   const routed = route(request), audit = baseAudit(request.task, routed.scope);
   const tool = (dependencies.tools ?? BUILD_INTELLIGENCE_TOOLS).find((candidate) => candidate.name === routed.tool);

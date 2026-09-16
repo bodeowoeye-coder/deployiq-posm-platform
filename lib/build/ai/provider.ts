@@ -35,7 +35,7 @@ export type BuildAIProviderRequest = {
   question: string | null;
   authorizedContext: readonly BuildAIProviderToolContext[];
   policy: BuildAIProviderPolicy;
-  outputContract: { schemaVersion: "1.0" };
+  outputContract: { schemaVersion: "1.0" | "2.0" };
   signal: AbortSignal;
 };
 
@@ -64,6 +64,11 @@ export type BuildAIProviderOutputV1 = {
   schemaVersion: "1.0";
   statements: BuildAIProviderStatementV1[];
   limitations: BuildAIProviderLimitationV1[];
+};
+export type BuildAIProviderOutputV2 = {
+  schemaVersion: "2.0";
+  statements: Array<Omit<BuildAIProviderStatementV1, "text"> & { claim: { relationship: "direct" | "approved_ratio" | "approved_difference" | "approved_sum"; factRefIds: string[] } }>;
+  limitations: Array<Omit<BuildAIProviderLimitationV1, "text">>;
 };
 
 export interface BuildAIProvider {

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { BuildAIFactReference, BuildAIInterpretationV1, BuildAILimitation, BuildAIStatementType, BuildAITask } from "./types.ts";
+import type { BuildAIFactReference, BuildAIInterpretationV1, BuildAIInterpretationV2, BuildAILimitation, BuildAIStatementType, BuildAITask } from "./types.ts";
 import type { BuildAIOrchestrationStatus } from "./orchestration.ts";
 
 export const BUILD_EXECUTIVE_INTERPRETATION_CONTRACT = "deployiq.build.executive_interpretation" as const;
@@ -16,7 +16,7 @@ export type BuildExecutiveInterpretationSource = {
   task: BuildExecutiveSourceTask;
   status: BuildAIOrchestrationStatus | "not_requested";
   deterministicIntelligenceAvailable: boolean;
-  interpretation: BuildAIInterpretationV1 | null;
+  interpretation: BuildAIInterpretationV1 | BuildAIInterpretationV2 | null;
 };
 
 export type BuildExecutiveComposedStatement = {
@@ -107,8 +107,8 @@ function validLimitation(value: unknown): value is BuildAILimitation {
   return exact(value, ["id", "code", "text", "coverageRefs"]) && identifier(value.id) && limitationCode(value.code) && typeof value.text === "string" && value.text.length > 0 && Array.isArray(value.coverageRefs) && value.coverageRefs.every((reference) => exact(reference, ["toolCallId", "coveragePath"]) && identifier(reference.toolCallId) && typeof reference.coveragePath === "string" && reference.coveragePath.startsWith("/"));
 }
 
-function validInterpretation(value: unknown, sourceTask: BuildExecutiveSourceTask, projectId: string): value is BuildAIInterpretationV1 {
-  if (!exact(value, ["schemaVersion", "generatedAt", "scope", "task", "dataset", "statements", "limitations", "validation"]) || value.schemaVersion !== "1.0" || value.task !== sourceTask) return false;
+function validInterpretation(value: unknown, sourceTask: BuildExecutiveSourceTask, projectId: string): value is BuildAIInterpretationV1 | BuildAIInterpretationV2 {
+  if (!exact(value, ["schemaVersion", "generatedAt", "scope", "task", "dataset", "statements", "limitations", "validation"]) || !["1.0", "2.0"].includes(String(value.schemaVersion)) || value.task !== sourceTask) return false;
   if (!exact(value.scope, ["kind", "projectId"]) || value.scope.kind !== "project" || value.scope.projectId !== projectId) return false;
   if (!exact(value.validation, ["status", "policyVersion"]) || value.validation.status !== "accepted" || typeof value.validation.policyVersion !== "string") return false;
   if (!Array.isArray(value.statements) || !Array.isArray(value.limitations) || !value.limitations.every(validLimitation)) return false;
@@ -116,7 +116,7 @@ function validInterpretation(value: unknown, sourceTask: BuildExecutiveSourceTas
   if (limitationIds.size !== value.limitations.length) return false;
   const statementIds = new Set<string>();
   for (const statement of value.statements) {
-    if (!exact(statement, ["id", "type", "text", "supportingFacts", "limitationIds", "supportState"]) || !identifier(statement.id) || statementIds.has(statement.id) || !statementType(statement.type) || typeof statement.text !== "string" || !supportState(statement.supportState) || !Array.isArray(statement.supportingFacts) || !statement.supportingFacts.every(validFact) || !stringArray(statement.limitationIds) || statement.limitationIds.some((id) => !limitationIds.has(id))) return false;
+    if (!exact(statement, value.schemaVersion === "2.0" ? ["id", "type", "text", "supportingFacts", "limitationIds", "supportState", "claim"] : ["id", "type", "text", "supportingFacts", "limitationIds", "supportState"]) || !identifier(statement.id) || statementIds.has(statement.id) || !statementType(statement.type) || typeof statement.text !== "string" || !supportState(statement.supportState) || !Array.isArray(statement.supportingFacts) || !statement.supportingFacts.every(validFact) || !stringArray(statement.limitationIds) || statement.limitationIds.some((id) => !limitationIds.has(id))) return false;
     if (statement.type !== "limitation" && statement.supportingFacts.length === 0) return false;
     statementIds.add(statement.id);
   }

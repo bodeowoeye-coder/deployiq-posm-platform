@@ -12,6 +12,7 @@ export type BuildAIToolCallReference = { id: string; tool: BuildIntelligenceTool
 export type BuildAIAcceptedToolCall = { id: string; tool: BuildIntelligenceToolName; result: Extract<BuildIntelligenceToolResult, { ok: true }> };
 
 export type BuildAIModelStatement = { id: string; type: BuildAIStatementType; text: string; supportingFacts: BuildAIFactReference[]; limitationIds: string[] };
+export type BuildAIModelStatementV2 = BuildAIModelStatement & { claim: { relationship: "direct" | "approved_ratio" | "approved_difference" | "approved_sum"; factRefs: BuildAIFactReference[] } };
 export type BuildAILimitation = { id: string; code: BuildAILimitationCode; text: string; coverageRefs: BuildAICoverageReference[] };
 
 export type BuildAIModelOutputV1 = {
@@ -23,9 +24,18 @@ export type BuildAIModelOutputV1 = {
   statements: BuildAIModelStatement[];
   limitations: BuildAILimitation[];
 };
+/** v2 preserves the authoritative envelope and adds a validated relationship per statement. */
+export type BuildAIModelOutputV2 = Omit<BuildAIModelOutputV1, "schemaVersion" | "statements"> & {
+  schemaVersion: "2.0";
+  statements: BuildAIModelStatementV2[];
+};
 
 export type BuildAIInterpretationV1 = Omit<BuildAIModelOutputV1, "statements"> & {
   statements: Array<BuildAIModelStatement & { supportState: BuildAIStatementSupport }>;
+  validation: { status: "accepted"; policyVersion: string };
+};
+export type BuildAIInterpretationV2 = Omit<BuildAIModelOutputV2, "statements"> & {
+  statements: Array<BuildAIModelStatementV2 & { supportState: BuildAIStatementSupport }>;
   validation: { status: "accepted"; policyVersion: string };
 };
 
@@ -37,7 +47,7 @@ export type BuildAIValidationErrorCode =
   | "autonomous_action_not_allowed" | "subjective_severity_not_allowed" | "numeric_confidence_not_allowed" | "limit_exceeded";
 
 export type BuildAIValidationError = { code: BuildAIValidationErrorCode; path: string; message: string };
-export type BuildAIValidationResult = { ok: true; interpretation: BuildAIInterpretationV1 } | { ok: false; errors: BuildAIValidationError[] };
+export type BuildAIValidationResult = { ok: true; interpretation: BuildAIInterpretationV1 | BuildAIInterpretationV2 } | { ok: false; errors: BuildAIValidationError[] };
 
 export type BuildAIDeterministicFallback = {
   status: Exclude<BuildAIInterpretationAvailability, "accepted">;

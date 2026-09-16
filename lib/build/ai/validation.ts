@@ -4,9 +4,10 @@ import type { BuildIntelligenceDatasetV1 } from "../intelligence/types.ts";
 import type { BuildAIGovernanceV1 } from "./governance.ts";
 import type {
   BuildAIAcceptedToolCall, BuildAICoverageReference, BuildAIFactReference, BuildAIInterpretationV1,
-  BuildAILimitation, BuildAIModelOutputV1, BuildAIModelStatement, BuildAIStatementSupport,
+  BuildAILimitation, BuildAIModelOutputV1, BuildAIModelOutputV2, BuildAIInterpretationV2, BuildAIModelStatement, BuildAIStatementSupport,
   BuildAIToolCallReference, BuildAIValidationError, BuildAIValidationErrorCode, BuildAIValidationResult,
 } from "./types.ts";
+import { renderBuildAISemanticClaim, renderBuildAILimitation } from "./semanticSupport.ts";
 
 export const BUILD_AI_MAX_STATEMENTS = 12;
 export const BUILD_AI_MAX_LIMITATIONS = 8;
@@ -17,6 +18,7 @@ const POINTER = /^(?:\/(?:[A-Za-z][A-Za-z0-9_]*|0|[1-9]\d*))+$/;
 const DANGEROUS_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
 const MODEL_KEYS = ["schemaVersion", "generatedAt", "scope", "task", "dataset", "statements", "limitations"];
 const STATEMENT_KEYS = ["id", "type", "text", "supportingFacts", "limitationIds"];
+const STATEMENT_KEYS_V2 = [...STATEMENT_KEYS, "claim"];
 const FACT_KEYS = ["toolCallId", "factPath", "provenanceKeys"];
 const LIMITATION_KEYS = ["id", "code", "text", "coverageRefs"];
 const COVERAGE_KEYS = ["toolCallId", "coveragePath"];
@@ -149,10 +151,11 @@ export function validateBuildAIModelOutput(input: { output: unknown; toolCalls: 
   if (violation) return { ok: false, errors: [violation] };
   if (!exact(input.output, MODEL_KEYS)) return { ok: false, errors: [error("invalid_shape", "$", "Build AI output shape is invalid.")] };
   const output = input.output;
-  if (output.schemaVersion !== "1.0" || !instant(output.generatedAt) || !validScope(output.scope) || !exact(output.dataset, ["schemaVersion", "toolCalls"]) || !Array.isArray(output.statements) || !Array.isArray(output.limitations)) {
+  if (!["1.0", "2.0"].includes(String(output.schemaVersion)) || output.schemaVersion === "1.0" && input.governance.version !== "build-ai-governance-v1" || output.schemaVersion === "2.0" && input.governance.version !== "build-ai-governance-v2" || !instant(output.generatedAt) || !validScope(output.scope) || !exact(output.dataset, ["schemaVersion", "toolCalls"]) || !Array.isArray(output.statements) || !Array.isArray(output.limitations)) {
     return { ok: false, errors: [error("invalid_shape", "$", "Build AI output shape is invalid.")] };
   }
   const datasetContract = output.dataset;
+  const version2 = output.schemaVersion === "2.0";
   if (typeof datasetContract.schemaVersion !== "string" || !Array.isArray(datasetContract.toolCalls)) return { ok: false, errors: [error("invalid_shape", "$.dataset", "Build AI dataset references are invalid.")] };
   if (!input.governance.allowedTasks.includes(output.task as never)) errors.push(error("unsupported_task", "$.task", "The Build AI task is not permitted."));
   const sources = new Map(input.toolCalls.map((call) => [call.id, call]));
@@ -171,7 +174,7 @@ export function validateBuildAIModelOutput(input: { output: unknown; toolCalls: 
   const limitations = new Map<string, BuildAILimitation>();
   output.limitations.forEach((candidate, index) => {
     const path = `$.limitations.${index}`;
-    if (!exact(candidate, LIMITATION_KEYS) || typeof candidate.id !== "string" || !identifier(candidate.id) || limitations.has(candidate.id) || typeof candidate.code !== "string" || !LIMITATION_CODES.has(candidate.code) || !text(candidate.text) || !Array.isArray(candidate.coverageRefs) || candidate.coverageRefs.some((ref) => !validateCoverageRef(ref, sources, declared))) {
+    if (!exact(candidate, LIMITATION_KEYS) || typeof candidate.id !== "string" || !identifier(candidate.id) || limitations.has(candidate.id) || typeof candidate.code !== "string" || !LIMITATION_CODES.has(candidate.code) || !text(candidate.text) || version2 && candidate.text !== renderBuildAILimitation(candidate.code as BuildAILimitation["code"]) || !Array.isArray(candidate.coverageRefs) || candidate.coverageRefs.some((ref) => !validateCoverageRef(ref, sources, declared))) {
       errors.push(error("invalid_shape", path, "The Build AI limitation is invalid."));
     } else limitations.set(candidate.id, candidate as BuildAILimitation);
   });
@@ -181,7 +184,7 @@ export function validateBuildAIModelOutput(input: { output: unknown; toolCalls: 
   const validatedStatements: Array<BuildAIModelStatement & { supportState: BuildAIStatementSupport }> = [];
   output.statements.forEach((candidate, index) => {
     const path = `$.statements.${index}`;
-    if (!exact(candidate, STATEMENT_KEYS) || typeof candidate.id !== "string" || !identifier(candidate.id) || statementIds.has(candidate.id) || !text(candidate.text) || !Array.isArray(candidate.supportingFacts) || !Array.isArray(candidate.limitationIds) || candidate.limitationIds.some((id) => typeof id !== "string" || !identifier(id) || !limitations.has(id))) {
+    if (!exact(candidate, version2 ? STATEMENT_KEYS_V2 : STATEMENT_KEYS) || typeof candidate.id !== "string" || !identifier(candidate.id) || statementIds.has(candidate.id) || !text(candidate.text) || !Array.isArray(candidate.supportingFacts) || !Array.isArray(candidate.limitationIds) || candidate.limitationIds.some((id) => typeof id !== "string" || !identifier(id) || !limitations.has(id))) {
       errors.push(error("invalid_shape", path, "The Build AI statement is invalid.")); return;
     }
     statementIds.add(candidate.id);
@@ -191,6 +194,17 @@ export function validateBuildAIModelOutput(input: { output: unknown; toolCalls: 
     if (candidate.supportingFacts.length > BUILD_AI_MAX_FACTS_PER_STATEMENT) errors.push(error("limit_exceeded", `${path}.supportingFacts`, "Too many deterministic facts support this statement."));
     if (candidate.type !== "limitation" && input.governance.requireFactReferences && candidate.supportingFacts.length === 0) errors.push(error("invalid_fact_reference", `${path}.supportingFacts`, "This statement requires deterministic fact support."));
     const validFacts = candidate.supportingFacts.filter((fact, factIndex) => validateFact(fact, sources, declared, `${path}.supportingFacts.${factIndex}`, errors));
+    if (version2) {
+      if (!exact(candidate.claim, ["relationship", "factRefs"]) || !Array.isArray(candidate.claim.factRefs) || !same(candidate.claim.factRefs, candidate.supportingFacts) || validFacts.length !== candidate.supportingFacts.length) errors.push(error("unsupported_conclusion", `${path}.claim`, "The factual relationship is not supported."));
+      else {
+        const facts = validFacts.map((fact) => {
+          const dataset = sources.get(fact.toolCallId)!.result.dataset;
+          return { reference: fact, value: resolvePath(dataset, fact.factPath).value, scope: dataset.scope };
+        });
+        const rendered = renderBuildAISemanticClaim(candidate.claim.relationship, facts, String(candidate.type));
+        if (!rendered || candidate.text !== rendered) errors.push(error("unsupported_conclusion", `${path}.claim`, "The factual relationship or wording is not supported."));
+      }
+    }
     let coverageLimited = false;
     for (const fact of validFacts) {
       const source = sources.get(fact.toolCallId)!;
@@ -206,6 +220,7 @@ export function validateBuildAIModelOutput(input: { output: unknown; toolCalls: 
     validatedStatements.push({ ...(candidate as BuildAIModelStatement), supportState: coverageLimited ? "coverage_limited" : "fully_supported" });
   });
   if (errors.length) return { ok: false, errors };
-  const interpretation: BuildAIInterpretationV1 = { ...(output as BuildAIModelOutputV1), statements: validatedStatements, validation: { status: "accepted", policyVersion: input.governance.version } };
-  return { ok: true, interpretation };
+  const validation = { status: "accepted" as const, policyVersion: input.governance.version };
+  if (version2) return { ok: true, interpretation: { ...(output as BuildAIModelOutputV2), statements: validatedStatements as BuildAIInterpretationV2["statements"], validation } };
+  return { ok: true, interpretation: { ...(output as BuildAIModelOutputV1), statements: validatedStatements, validation } };
 }

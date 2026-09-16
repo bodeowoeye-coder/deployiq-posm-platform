@@ -7,6 +7,7 @@ import ts from "typescript";
 const orchestrationSource = readFileSync(new URL("../lib/build/ai/orchestration.ts", import.meta.url), "utf8");
 const providerSource = readFileSync(new URL("../lib/build/ai/provider.ts", import.meta.url), "utf8");
 const validationSource = readFileSync(new URL("../lib/build/ai/validation.ts", import.meta.url), "utf8");
+const semanticSource = readFileSync(new URL("../lib/build/ai/semanticSupport.ts", import.meta.url), "utf8");
 const PROJECT = "a1000000-0000-4000-8000-000000000002";
 const WORK_PACKAGE = "b1000000-0000-4000-8000-000000000002";
 const ACTIVITY = "c1000000-0000-4000-8000-000000000002";
@@ -26,17 +27,35 @@ function compile(source, requires) {
   return context.module.exports;
 }
 
-const validator = compile(validationSource, {});
+const semantic = compile(semanticSource, {});
+const validator = compile(validationSource, { "./semanticSupport.ts": semantic });
 const providerContract = compile(providerSource, {});
-function runtime() {
+function runtime(selectedGovernance = governance) {
   return compile(orchestrationSource, {
     "./config.ts": { BUILD_AI_DEFAULT_TIMEOUT_MS: 15_000 },
-    "./governance.ts": { DEFAULT_BUILD_AI_GOVERNANCE: governance },
+    "./governance.ts": { DEFAULT_BUILD_AI_GOVERNANCE: selectedGovernance },
     "./provider.ts": providerContract,
     "./validation.ts": validator,
     "../intelligence/tools.ts": { BUILD_INTELLIGENCE_TOOLS: [] },
   });
 }
+
+test("v2 orchestration rejects old prose and accepts a server-rendered direct claim with one bounded tool call", async () => {
+  const project = tool("get_build_project_intelligence");
+  const v2 = { ...governance, version: "build-ai-governance-v2" };
+  const ai = provider((request) => ({ metadata: { providerId: "fake" }, output: {
+    schemaVersion: "2.0", statements: [{ id: "s1", type: "interpretation", text: "Currently overdue activities: 3.", claim: { relationship: "direct", factRefs: [{ toolCallId: request.authorizedContext[0].toolCallId, factPath: "/schedule/currentlyOverdue", provenanceKeys: ["schedule"] }] }, supportingFacts: [{ toolCallId: request.authorizedContext[0].toolCallId, factPath: "/schedule/currentlyOverdue", provenanceKeys: ["schedule"] }], limitationIds: [] }], limitations: [],
+  } }));
+  const result = await runtime(v2).orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project] });
+  assert.equal(result.status, "interpreted", JSON.stringify(result));
+  assert.equal(result.interpretation.schemaVersion, "2.0");
+  assert.equal(result.audit.outputSchemaVersion, "2.0");
+  assert.equal(ai.calls[0].outputContract.schemaVersion, "2.0");
+  assert.equal(ai.calls.length, 1); assert.equal(project.calls.length, 1);
+  const old = provider((request) => ({ metadata: { providerId: "fake" }, output: validOutput(request) }));
+  const rejected = await runtime(v2).orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: old, tools: [project] });
+  assert.equal(rejected.status, "interpretation_unavailable");
+});
 
 function controlledTimer() {
   const scheduled = [], cleared = []; let now = 0;

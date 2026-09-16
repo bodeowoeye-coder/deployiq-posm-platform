@@ -14,6 +14,22 @@ export function buildBuildAIOpenAIOutputSchema(projection: BuildAIProviderProjec
   const coverageRefIds = projection.context.flatMap((context) => context.coverage.map((coverage) => coverage.coverageRefId));
   const factAlias = { type: "string", enum: factRefIds } as const;
   const coverageAlias = { type: "string", enum: coverageRefIds } as const;
+  if (projection.outputContract.schemaVersion === "2.0") return {
+    type: "object", additionalProperties: false,
+    properties: {
+      schemaVersion: { type: "string", const: "2.0" },
+      statements: { type: "array", maxItems: 12, items: { type: "object", additionalProperties: false, properties: {
+        id: identifier, type: { type: "string", enum: ["interpretation", "attention", "decision_option", "limitation"] },
+        claim: { type: "object", additionalProperties: false, properties: { relationship: { type: "string", enum: ["direct", "approved_ratio", "approved_difference", "approved_sum"] }, factRefIds: { type: "array", maxItems: 8, items: factAlias } }, required: ["relationship", "factRefIds"] },
+        supportingFacts: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, properties: { factRefId: factAlias }, required: ["factRefId"] } },
+        limitationIds: { type: "array", maxItems: 8, items: identifier },
+      }, required: ["id", "type", "claim", "supportingFacts", "limitationIds"] } },
+      limitations: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, properties: {
+        id: identifier, code: { type: "string", enum: ["partial_coverage", "data_unavailable", "history_unavailable", "interpretation_unavailable", "unsupported_conclusion", "governance_not_configured"] },
+        coverageRefs: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, properties: { coverageRefId: coverageAlias }, required: ["coverageRefId"] } },
+      }, required: ["id", "code", "coverageRefs"] } },
+    }, required: ["schemaVersion", "statements", "limitations"],
+  } as const;
   return {
   type: "object", additionalProperties: false,
   properties: {
@@ -50,7 +66,7 @@ export class OpenAIBuildAIProvider implements BuildAIProvider {
         model: this.config.model,
         instructions: JSON.stringify({ systemPolicyId: instructions.systemPolicyId, systemPolicy: instructions.systemPolicy }),
         input: JSON.stringify({ taskInstruction: instructions.taskInstruction, userContent: instructions.userContent, deterministicContext: instructions.deterministicContext }),
-        text: { format: { type: "json_schema", name: BUILD_AI_OPENAI_OUTPUT_SCHEMA_NAME, strict: true, schema: buildBuildAIOpenAIOutputSchema(projected) } },
+        text: { format: { type: "json_schema", name: request.outputContract.schemaVersion === "2.0" ? "deployiq_build_ai_model_output_v2" : BUILD_AI_OPENAI_OUTPUT_SCHEMA_NAME, strict: true, schema: buildBuildAIOpenAIOutputSchema(projected) } },
         reasoning: { effort: "none" },
         max_output_tokens: this.config.maxOutputTokens,
         store: false,

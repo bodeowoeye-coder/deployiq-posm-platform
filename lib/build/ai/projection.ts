@@ -1,7 +1,8 @@
 import "server-only";
 
-import type { BuildAIProviderOutputV1, BuildAIProviderRequest, BuildAIProviderToolContext } from "./provider.ts";
+import type { BuildAIProviderOutputV1, BuildAIProviderOutputV2, BuildAIProviderRequest, BuildAIProviderToolContext } from "./provider.ts";
 import type { BuildAICoverageReference, BuildAIFactReference, BuildAILimitation, BuildAIModelStatement } from "./types.ts";
+import { buildAIFactSemantics, renderBuildAISemanticClaim, renderBuildAILimitation, type BuildAIFactSemantics } from "./semanticSupport.ts";
 
 export const BUILD_AI_MAX_PROJECTED_FACTS = 180;
 const INCLUDED_ROOTS = ["currentState", "progress", "plannedPosition", "schedule", "attention", "quality", "dependencies", "exceptions", "recentExecution", "coverage", "activities", "history"] as const;
@@ -32,6 +33,8 @@ export type BuildAIProjectedToolContext = {
 export type BuildAIReferenceRegistry = {
   facts: ReadonlyMap<string, BuildAIFactReference>;
   coverage: ReadonlyMap<string, BuildAICoverageReference>;
+  semantics?: ReadonlyMap<string, BuildAIFactSemantics>;
+  values?: ReadonlyMap<string, { value: string | number | boolean | null; scope: BuildAIProviderToolContext["dataset"]["scope"] }>;
 };
 export type BuildAIProviderProjectionBundle = { projection: BuildAIProviderProjection; registry: BuildAIReferenceRegistry };
 
@@ -230,21 +233,26 @@ export function buildBuildAIProviderProjection(request: BuildAIProviderRequest):
     context: projected.map((item) => item.context),
     policy: request.policy,
     outputContract: request.outputContract,
-  }, registry: { facts: new Map(projected.flatMap((item) => item.facts)), coverage: new Map(projected.flatMap((item) => item.coverage)) } };
+  }, registry: {
+    facts: new Map(projected.flatMap((item) => item.facts)), coverage: new Map(projected.flatMap((item) => item.coverage)),
+    semantics: new Map(projected.flatMap((item, index) => item.facts.map(([id, reference]) => [id, buildAIFactSemantics(reference.factPath, request.authorizedContext[index].dataset.scope)] as const))),
+    values: new Map(projected.flatMap((item, index) => item.context.facts.map((fact) => [fact.factRefId, { value: fact.value, scope: request.authorizedContext[index].dataset.scope }] as const))),
+  } };
 }
 
 export function projectBuildAIProviderRequest(request: BuildAIProviderRequest): BuildAIProviderProjection {
   return buildBuildAIProviderProjection(request).projection;
 }
 
-export function resolveBuildAIProviderOutput(output: unknown, registry: BuildAIReferenceRegistry): { ok: true; output: { schemaVersion: "1.0"; statements: BuildAIModelStatement[]; limitations: BuildAILimitation[] } } | { ok: false } {
+export function resolveBuildAIProviderOutput(output: unknown, registry: BuildAIReferenceRegistry): { ok: true; output: { schemaVersion: "1.0" | "2.0"; statements: BuildAIModelStatement[]; limitations: BuildAILimitation[] } } | { ok: false } {
   if (!output || typeof output !== "object" || Array.isArray(output)) return { ok: false };
-  const body = output as Partial<BuildAIProviderOutputV1>;
+  const body = output as Partial<BuildAIProviderOutputV1 | BuildAIProviderOutputV2>;
   const exact = (value: unknown, keys: readonly string[]) => Boolean(value && typeof value === "object" && !Array.isArray(value) && Reflect.ownKeys(value).every((key) => typeof key === "string") && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key)));
-  if (!exact(body, ["schemaVersion", "statements", "limitations"]) || body.schemaVersion !== "1.0" || !Array.isArray(body.statements) || !Array.isArray(body.limitations)) return { ok: false };
+  if (!exact(body, ["schemaVersion", "statements", "limitations"]) || !["1.0", "2.0"].includes(String(body.schemaVersion)) || !Array.isArray(body.statements) || !Array.isArray(body.limitations)) return { ok: false };
+  const version2 = body.schemaVersion === "2.0";
   const statements: BuildAIModelStatement[] = [];
   for (const statement of body.statements) {
-    if (!exact(statement, ["id", "type", "text", "supportingFacts", "limitationIds"]) || !Array.isArray(statement.supportingFacts) || !Array.isArray(statement.limitationIds)) return { ok: false };
+    if (!exact(statement, version2 ? ["id", "type", "claim", "supportingFacts", "limitationIds"] : ["id", "type", "text", "supportingFacts", "limitationIds"]) || !Array.isArray(statement.supportingFacts) || !Array.isArray(statement.limitationIds)) return { ok: false };
     const supportingFacts: BuildAIFactReference[] = [];
     const seen = new Set<string>();
     for (const selected of statement.supportingFacts) {
@@ -252,11 +260,22 @@ export function resolveBuildAIProviderOutput(output: unknown, registry: BuildAIR
       const reference = registry.facts.get(selected.factRefId); if (!reference) return { ok: false };
       seen.add(selected.factRefId); supportingFacts.push({ ...reference, provenanceKeys: [...reference.provenanceKeys] });
     }
-    statements.push({ id: statement.id, type: statement.type, text: statement.text, supportingFacts, limitationIds: statement.limitationIds });
+    if (version2) {
+      const candidate = statement as unknown as BuildAIProviderOutputV2["statements"][number];
+      if (!exact(candidate.claim, ["relationship", "factRefIds"]) || !Array.isArray(candidate.claim.factRefIds) || candidate.claim.factRefIds.length !== candidate.supportingFacts.length || candidate.claim.factRefIds.some((id, index) => id !== candidate.supportingFacts[index].factRefId) || !registry.values) return { ok: false };
+      const facts = candidate.supportingFacts.map((selected, index) => {
+        const value = registry.values!.get(selected.factRefId);
+        return value ? { reference: supportingFacts[index], value: value.value, scope: value.scope } : null;
+      });
+      if (facts.some((fact) => !fact)) return { ok: false };
+      const text = renderBuildAISemanticClaim(candidate.claim.relationship, facts as NonNullable<typeof facts[number]>[], candidate.type);
+      if (!text) return { ok: false };
+      statements.push({ id: candidate.id, type: candidate.type, text, supportingFacts, limitationIds: candidate.limitationIds, claim: { relationship: candidate.claim.relationship, factRefs: supportingFacts.map((fact) => ({ ...fact, provenanceKeys: [...fact.provenanceKeys] })) } } as BuildAIModelStatement);
+    } else statements.push({ id: statement.id, type: statement.type, text: (statement as BuildAIProviderOutputV1["statements"][number]).text, supportingFacts, limitationIds: statement.limitationIds });
   }
   const limitations: BuildAILimitation[] = [];
   for (const limitation of body.limitations) {
-    if (!exact(limitation, ["id", "code", "text", "coverageRefs"]) || !Array.isArray(limitation.coverageRefs)) return { ok: false };
+    if (!exact(limitation, version2 ? ["id", "code", "coverageRefs"] : ["id", "code", "text", "coverageRefs"]) || !Array.isArray(limitation.coverageRefs)) return { ok: false };
     const coverageRefs: BuildAICoverageReference[] = [];
     const seen = new Set<string>();
     for (const selected of limitation.coverageRefs) {
@@ -264,7 +283,7 @@ export function resolveBuildAIProviderOutput(output: unknown, registry: BuildAIR
       const reference = registry.coverage.get(selected.coverageRefId); if (!reference) return { ok: false };
       seen.add(selected.coverageRefId); coverageRefs.push({ ...reference });
     }
-    limitations.push({ id: limitation.id, code: limitation.code, text: limitation.text, coverageRefs });
+    limitations.push({ id: limitation.id, code: limitation.code, text: version2 ? renderBuildAILimitation(limitation.code) : (limitation as BuildAIProviderOutputV1["limitations"][number]).text, coverageRefs });
   }
-  return { ok: true, output: { schemaVersion: "1.0", statements, limitations } };
+  return { ok: true, output: { schemaVersion: body.schemaVersion as "1.0" | "2.0", statements, limitations } };
 }

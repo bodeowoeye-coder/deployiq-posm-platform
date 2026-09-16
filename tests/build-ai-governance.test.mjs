@@ -7,6 +7,12 @@ import ts from "typescript";
 const typesSource = readFileSync(new URL("../lib/build/ai/types.ts", import.meta.url), "utf8");
 const governanceSource = readFileSync(new URL("../lib/build/ai/governance.ts", import.meta.url), "utf8");
 const validationSource = readFileSync(new URL("../lib/build/ai/validation.ts", import.meta.url), "utf8");
+const semanticSource = readFileSync(new URL("../lib/build/ai/semanticSupport.ts", import.meta.url), "utf8");
+const semanticJavascript = ts.transpileModule(semanticSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const semanticContext = vm.createContext({ exports: {}, module: { exports: {} }, require(specifier) { if (specifier === "server-only") return {}; throw new Error(`Unexpected import ${specifier}`); } });
+semanticContext.exports = semanticContext.module.exports;
+new vm.Script(semanticJavascript).runInContext(semanticContext);
+const semantic = semanticContext.module.exports;
 const canonicalConstraints = readFileSync(new URL("../lib/build/intelligence/constraints.ts", import.meta.url), "utf8");
 const PROJECT = "a1000000-0000-4000-8000-000000000002";
 const AS_OF = "2026-09-09T12:00:00.000Z";
@@ -21,7 +27,7 @@ const governance = {
 
 function loadValidator() {
   const javascript = ts.transpileModule(validationSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const context = vm.createContext({ exports: {}, module: { exports: {} }, require(specifier) { if (specifier === "server-only") return {}; throw new Error(`Unexpected import ${specifier}`); } });
+  const context = vm.createContext({ exports: {}, module: { exports: {} }, require(specifier) { if (specifier === "server-only") return {}; if (specifier === "./semanticSupport.ts") return semantic; throw new Error(`Unexpected import ${specifier}`); } });
   context.exports = context.module.exports;
   new vm.Script(javascript, { filename: "validation.ts" }).runInContext(context);
   return {

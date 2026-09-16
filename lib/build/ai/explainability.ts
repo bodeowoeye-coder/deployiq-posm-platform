@@ -74,6 +74,11 @@ for (const prefix of ["/plannedPosition/durationExpected", "/plannedPosition/dur
 }
 add("/schedule", "schedule_performance", "count", "scheduled currentlyOverdue completedOnTime completedLate workPackagesOverdue blockedOverdue changesRequiredOverdue dataIncomplete");
 add("/attention/summary", "management_attention", "count", "outstandingObligations overdueObligations activitiesAffected workPackagesAffected explicitOwnersAffected unassignedObligations");
+for (const [field, descriptorLabel] of Object.entries({
+  executionBlocks: "Execution Blocks", reviewsPending: "Reviews Pending", activeExceptions: "Active Exceptions",
+  overdueExceptions: "Overdue Exceptions", correctiveActionsRequired: "Corrective Actions Required",
+  assignmentsMissing: "Assignments Missing", scheduleOverdue: "Schedule Overdue",
+})) EXACT_PATHS[`/attention/summary/categoryCounts/${field}`] = { conceptId: "management_attention", label: descriptorLabel, type: "count" };
 add("/attention/preview", "management_attention", "count", "total returned");
 add("/attention/preview", "management_attention", "boolean", "truncated");
 add("/quality", "quality_acceptance", "count", "activitiesRequiringCorrection currentChangesRequired");

@@ -76,6 +76,30 @@ test("known roots and leaves cannot be recombined into unauthorized descriptors"
   }
 });
 
+test("only seven reviewed Management Attention category counts receive exact descriptors", () => {
+  const candidate = input();
+  const dataset = candidate.sources[1].result.toolResults[0].result.dataset;
+  dataset.attention.summary.categoryCounts = {
+    executionBlocks: 1, reviewsPending: 2, activeExceptions: 3, overdueExceptions: 4,
+    correctiveActionsRequired: 5, assignmentsMissing: 6, scheduleOverdue: 7, futureCategory: 8,
+  };
+  const labels = {
+    executionBlocks: "Execution Blocks", reviewsPending: "Reviews Pending", activeExceptions: "Active Exceptions",
+    overdueExceptions: "Overdue Exceptions", correctiveActionsRequired: "Corrective Actions Required",
+    assignmentsMissing: "Assignments Missing", scheduleOverdue: "Schedule Overdue",
+  };
+  for (const field of [...Object.keys(labels), "futureCategory"]) candidate.interpretation.sections[5].evidence.push({ id: `category:${field}`, sourceTask: "management_attention", authoritativeReference: reference(`/attention/summary/categoryCounts/${field}`) });
+  const result = contract.buildBuildExecutiveExplainability(candidate);
+  assert.equal(result.ok, true);
+  for (const [field, expectedLabel] of Object.entries(labels)) {
+    const item = result.explainability.evidence.find((entry) => entry.id === `category:${field}`);
+    assert.deepEqual(json({ availability: item.availability, conceptId: item.conceptId, label: item.label, type: item.value?.type }), { availability: "available", conceptId: "management_attention", label: expectedLabel, type: "count" });
+  }
+  const unknown = result.explainability.evidence.find((entry) => entry.id === "category:futureCategory");
+  assert.equal(unknown.availability, "descriptor_unavailable");
+  assert.equal(unknown.value, null);
+});
+
 test("preview patterns authorize only accepted fields at bounded positions", () => {
   const candidate = input();
   const dataset = candidate.sources[1].result.toolResults[0].result.dataset;

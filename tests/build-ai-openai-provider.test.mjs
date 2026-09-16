@@ -7,17 +7,18 @@ import ts from "typescript";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const sources = {
   config: read("../lib/build/ai/config.ts"), projection: read("../lib/build/ai/projection.ts"), prompt: read("../lib/build/ai/prompt.ts"),
-  openai: read("../lib/build/ai/providers/openai.ts"), provider: read("../lib/build/ai/provider.ts"), orchestration: read("../lib/build/ai/orchestration.ts"), validation: read("../lib/build/ai/validation.ts"),
+  openai: read("../lib/build/ai/providers/openai.ts"), provider: read("../lib/build/ai/provider.ts"), orchestration: read("../lib/build/ai/orchestration.ts"), validation: read("../lib/build/ai/validation.ts"), semantic: read("../lib/build/ai/semanticSupport.ts"),
 };
 function compile(source, requires = {}, extras = {}) {
   const javascript = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   const context = vm.createContext({ exports: {}, module: { exports: {} }, process: { env: {} }, AbortController, setTimeout, clearTimeout, Date, Promise, Object, Reflect, JSON, Error, ...extras,
-    require(specifier) { if (specifier === "server-only") return {}; if (specifier in requires) return requires[specifier]; throw new Error(`Unexpected import ${specifier}`); } });
+    require(specifier) { if (specifier === "server-only") return {}; if (specifier === "./semanticSupport.ts" && typeof semantic !== "undefined") return semantic; if (specifier in requires) return requires[specifier]; throw new Error(`Unexpected import ${specifier}`); } });
   context.exports = context.module.exports; new vm.Script(javascript, { filename: "compiled.ts" }).runInContext(context); return context.module.exports;
 }
 const config = compile(sources.config);
 const providerContract = compile(sources.provider);
-const projection = compile(sources.projection);
+const semantic = compile(sources.semantic);
+const projection = compile(sources.projection, { "./semanticSupport.ts": semantic });
 const prompt = compile(sources.prompt);
 class APIConnectionTimeoutError extends Error {}
 class ForbiddenOpenAI { constructor() { throw new Error("OpenAI construction was not injected"); } }
@@ -41,6 +42,29 @@ function dataset() {
   };
 }
 function request(question = null) { return { task: "executive_summary", question, authorizedContext: [{ toolCallId: "tool-call-1", tool: "get_build_activity_intelligence", dataset: dataset() }], policy: governance, outputContract: { schemaVersion: "1.0" }, signal: new AbortController().signal }; }
+
+test("v2 provider contract selects only relationships and facts; server renders factual wording", async () => {
+  const requested = { ...request(), outputContract: { schemaVersion: "2.0" } };
+  const bundle = projection.buildBuildAIProviderProjection(requested);
+  const selected = bundle.projection.context[0].facts.find((item) => item.label === "currentlyOverdue");
+  assert.ok(selected);
+  const body = { schemaVersion: "2.0", statements: [{ id: "s1", type: "attention", claim: { relationship: "direct", factRefIds: [selected.factRefId] }, supportingFacts: [{ factRefId: selected.factRefId }], limitationIds: [] }], limitations: [] };
+  const resolved = projection.resolveBuildAIProviderOutput(body, bundle.registry);
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.output.schemaVersion, "2.0");
+  assert.match(resolved.output.statements[0].text, /Currently overdue activities: 3/);
+  assert.equal(projection.resolveBuildAIProviderOutput({ ...body, statements: [{ ...body.statements[0], text: "Unsupported" }] }, bundle.registry).ok, false);
+  assert.equal(projection.resolveBuildAIProviderOutput({ ...body, statements: [{ ...body.statements[0], claim: { relationship: "direct", grain: "model-authored" } }] }, bundle.registry).ok, false);
+  assert.equal(projection.resolveBuildAIProviderOutput({ ...body, statements: [{ ...body.statements[0], claim: { relationship: "direct", factRefIds: [] } }] }, bundle.registry).ok, false);
+  assert.equal(openai.buildBuildAIOpenAIOutputSchema(bundle.projection).properties.schemaVersion.const, "2.0");
+  const fake = { responses: { calls: [], async create(payload) { this.calls.push(payload); return { status: "completed", model: "fixture", output_text: JSON.stringify(body) }; } } };
+  const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "fixture", timeoutMs: 15000, maxOutputTokens: 1000 }, fake);
+  const generated = await adapter.generate(requested);
+  assert.equal(generated.output.schemaVersion, "2.0");
+  assert.match(generated.output.statements[0].text, /Currently overdue activities: 3/);
+  assert.equal(fake.responses.calls.length, 1);
+  assert.equal(fake.responses.calls[0].text.format.name, "deployiq_build_ai_model_output_v2");
+});
 function projectDataset() {
   const value = dataset();
   value.scope = { kind: "project", projectId: PROJECT };
