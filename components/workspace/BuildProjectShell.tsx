@@ -11,6 +11,7 @@ export const BUILD_PROJECT_NAVIGATION = [
   { key: "documents", label: "Documents", segment: "documents" },
   { key: "reports", label: "Reports", segment: "reports" },
   { key: "analytics", label: "Analytics", segment: "analytics" },
+  { key: "executive-intelligence", label: "Executive Intelligence", segment: "executive-intelligence" },
   { key: "settings", label: "Settings", segment: "settings" },
 ] as const;
 

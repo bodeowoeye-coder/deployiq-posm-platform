@@ -12,6 +12,9 @@ import { composeBuildExecutionHistoryReport, parseExecutionHistoryQuery } from "
 import { composeBuildManagementReport } from "@/lib/build/reporting/managementReport";
 import { composeBuildWorkPackageReport } from "@/lib/build/reporting/workPackageReport";
 import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } from "@/lib/build/projects/workspaceOverview";
+import { ExecutiveIntelligenceShell } from "@/components/workspace/ExecutiveIntelligenceShell";
+import { requireCustomerWorkspace } from "@/lib/workspace/customerAdmin";
+import { getCustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +27,7 @@ const BUILD_PROJECT_SECTIONS = new Set<BuildProjectSection>([
   "documents",
   "reports",
   "analytics",
+  "executive-intelligence",
   "settings",
 ]);
 
@@ -80,6 +84,14 @@ async function BuildProjectSectionContent({
     return <BuildExceptionRegister projectId={overview.project.id} management={management} filters={filters}/>;
   }
 
+  if (section === "executive-intelligence") {
+    // Future explicit executive-intelligence capability belongs here; never infer access from a job title.
+    const workspace = await requireCustomerWorkspace();
+    const scope = await getCustomerWorkspaceProjectScope(workspace, overview.project.id);
+    if (!scope.selectedProject || overview.project.client_id !== workspace.clientId) notFound();
+    return <ExecutiveIntelligenceShell key={`${workspace.userId}:${workspace.clientId}:${overview.project.id}`} projectId={overview.project.id} today={new Date().toISOString().slice(0, 10)} />;
+  }
+
   if (section === "reports") {
     if (selectedWorkPackageId && !overview.workPackages.some((item) => item.id === selectedWorkPackageId)) notFound();
     if (filters.view && filters.view !== "history") notFound();
@@ -105,7 +117,7 @@ async function BuildProjectSectionContent({
     return <BuildManagementReport report={report}/>;
   }
 
-  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities" | "exceptions" | "reports">, { title: string; description: string }> = {
+  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities" | "exceptions" | "reports" | "executive-intelligence">, { title: string; description: string }> = {
     resources: {
       title: "Resources",
       description: `${overview.counts.resources} eligible resource definition${overview.counts.resources === 1 ? " is" : "s are"} available to this tenant. Project resource planning arrives in a later Build phase.`,
