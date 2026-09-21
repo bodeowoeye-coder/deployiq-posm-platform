@@ -4,6 +4,9 @@ import type { BuildExecutiveEvidenceDescriptor } from "./explainability.ts";
 
 export type ExecutiveEvidence = Pick<BuildExecutiveEvidenceDescriptor, "id" | "label" | "source" | "availability" | "value" | "timing" | "authoritativeReference"> & { href: null };
 export type ExecutiveStatement = { id: string; text: string; supportState: "fully_supported" | "coverage_limited"; evidenceIds: string[]; limitationIds: string[] };
+export type ExecutiveStatementGroup = ExecutiveStatement & { sourceIds: string[]; itemCount: number };
+export type ExecutiveFact = { label: string; value: string | number | boolean | null; evidenceId: string };
+export type ExecutiveAttentionItemGroup = { condition: string; expectedNextAction: string; itemCount: number; evidenceIds: string[] };
 export type ExecutiveSection = { id: BuildExecutiveSectionId; availability: BuildExecutiveSectionAvailability; statements: ExecutiveStatement[] };
 export type ExecutiveIntelligenceViewModel = {
   availability: "available" | "partial" | "unavailable";
@@ -11,10 +14,13 @@ export type ExecutiveIntelligenceViewModel = {
   executivePosition: ExecutiveSection;
   managementAttention: ExecutiveSection;
   materialChanges: ExecutiveSection;
-  decisionConsiderations: { availability: BuildExecutiveSectionAvailability; authority: "non_binding"; items: ExecutiveStatement[] };
+  decisionConsiderations: { availability: BuildExecutiveSectionAvailability; authority: "non_binding"; items: ExecutiveStatementGroup[] };
   coverage: { availability: BuildExecutiveSectionAvailability; limitations: Array<{ id: string; text: string; code: string }>; measures: Array<{ label: string; represented: number; eligible: number; noun: string }> };
   evidence: ExecutiveEvidence[];
   attentionGroups: Array<{ label: string; count: number; evidenceId: string; href: null }>;
+  attentionItems: ExecutiveAttentionItemGroup[];
+  executiveFacts: ExecutiveFact[];
+  materialFacts: ExecutiveFact[];
 };
 
 const SECTION_IDS = ["executive_position", "current_management_attention", "material_execution_changes", "decision_considerations", "data_coverage_and_limitations", "supporting_deterministic_facts"] as const;
@@ -26,6 +32,38 @@ const coveragePaths = [
   { path: "/coverage/review", label: "Review Coverage", noun: "review-required Activities" },
 ] as const;
 const factKey = (task: string, fact: { toolCallId: string; factPath: string; provenanceKeys: string[] }) => `${task}:${fact.toolCallId}:${fact.factPath}:${fact.provenanceKeys.join(",")}`;
+const executiveFactPaths = new Set(["/currentState/activitiesCompleted", "/currentState/activitiesAccepted", "/currentState/currentOverdue", "/currentState/openExceptions"]);
+const materialFactPaths = new Set(["/history/summary/activitiesStarted", "/history/summary/activitiesCompleted", "/history/summary/activitiesAccepted", "/history/summary/submissions", "/history/summary/blockedEvents", "/history/summary/resumedEvents"]);
+
+export function groupExecutiveStatements(items: ExecutiveStatement[]): ExecutiveStatementGroup[] {
+  const groups = new Map<string, ExecutiveStatementGroup>();
+  for (const item of items) {
+    const key = JSON.stringify([item.text, item.supportState, [...item.limitationIds].sort()]);
+    const current = groups.get(key);
+    if (!current) { groups.set(key, { ...item, sourceIds: [item.id], itemCount: 1, evidenceIds: [...new Set(item.evidenceIds)] }); continue; }
+    current.sourceIds.push(item.id); current.itemCount += 1;
+    current.evidenceIds = [...new Set([...current.evidenceIds, ...item.evidenceIds])];
+  }
+  return [...groups.values()];
+}
+
+export function groupExecutiveAttentionItems(evidence: ExecutiveEvidence[]): ExecutiveAttentionItemGroup[] {
+  const items = new Map<string, { condition?: ExecutiveEvidence; action?: ExecutiveEvidence }>();
+  for (const item of evidence) {
+    const match = item.authoritativeReference.factPath.match(/^\/attention\/preview\/items\/(\d+)\/(condition|expectedNextAction)$/);
+    if (!match || item.availability !== "available" || item.value?.type !== "text" || typeof item.value.raw !== "string") continue;
+    const current = items.get(match[1]) ?? {}; current[match[2] === "condition" ? "condition" : "action"] = item; items.set(match[1], current);
+  }
+  const groups = new Map<string, ExecutiveAttentionItemGroup>();
+  for (const item of items.values()) {
+    if (!item.condition || !item.action) continue;
+    const key = JSON.stringify([item.condition.value!.raw, item.action.value!.raw]);
+    const current = groups.get(key); const ids = [item.condition.id, item.action.id];
+    if (!current) groups.set(key, { condition: String(item.condition.value!.raw), expectedNextAction: String(item.action.value!.raw), itemCount: 1, evidenceIds: ids });
+    else { current.itemCount += 1; current.evidenceIds = [...new Set([...current.evidenceIds, ...ids])]; }
+  }
+  return [...groups.values()];
+}
 
 export function composeExecutiveIntelligenceViewModel(result: BuildExecutiveServiceResult, projectId: string): ExecutiveIntelligenceViewModel | null {
   if (!result.ok || result.interpretation.contract !== "deployiq.build.executive_interpretation" || result.interpretation.schemaVersion !== "1.0" || result.explainability.contract !== "deployiq.build.executive_explainability" || result.explainability.schemaVersion !== "1.0" || result.interpretation.scope.projectId !== projectId || result.explainability.scope.projectId !== projectId) return null;
@@ -38,6 +76,7 @@ export function composeExecutiveIntelligenceViewModel(result: BuildExecutiveServ
   const timing: ExecutiveIntelligenceViewModel["timing"] = {};
   for (const item of evidence) if (!timing[item.source.task] && item.timing.asOf && item.timing.generatedAt) timing[item.source.task] = item.timing;
   const attentionGroups = evidence.filter((item) => item.source.task === "management_attention" && item.availability === "available" && item.authoritativeReference.factPath.startsWith("/attention/summary/categoryCounts/") && attentionPaths.has(item.authoritativeReference.factPath.split("/").at(-1) ?? "") && item.value?.type === "count" && typeof item.value.raw === "number" && item.value.raw > 0).map((item) => ({ label: item.label, count: item.value!.raw as number, evidenceId: item.id, href: null as null }));
+  const facts = (paths: Set<string>, task: BuildExecutiveSourceTask) => evidence.filter((item) => item.source.task === task && item.availability === "available" && paths.has(item.authoritativeReference.factPath) && item.value).map((item) => ({ label: item.label, value: item.value!.raw, evidenceId: item.id }));
   const measures = coveragePaths.flatMap(({ path, label, noun }) => {
     const numerator = evidence.find((item) => item.availability === "available" && item.authoritativeReference.factPath === `${path}/numerator` && typeof item.value?.raw === "number");
     const denominator = evidence.find((item) => item.availability === "available" && item.source.task === numerator?.source.task && item.authoritativeReference.factPath === `${path}/denominator` && typeof item.value?.raw === "number");
@@ -47,9 +86,12 @@ export function composeExecutiveIntelligenceViewModel(result: BuildExecutiveServ
     availability: result.interpretation.availability,
     timing,
     executivePosition: section("executive_position"), managementAttention: section("current_management_attention"), materialChanges: section("material_execution_changes"),
-    decisionConsiderations: { availability: sections.get("decision_considerations")!.availability, authority: "non_binding", items: result.explainability.decisionConsiderations.map((item) => ({ id: item.id, text: item.text, supportState: item.supportState, evidenceIds: [...item.evidenceIds], limitationIds: [...item.limitationIds] })) },
+    decisionConsiderations: { availability: sections.get("decision_considerations")!.availability, authority: "non_binding", items: groupExecutiveStatements(result.explainability.decisionConsiderations.map((item) => ({ id: item.id, text: item.text, supportState: item.supportState, evidenceIds: [...item.evidenceIds], limitationIds: [...item.limitationIds] }))) },
     coverage: { availability: sections.get("data_coverage_and_limitations")!.availability, limitations: result.explainability.limitations.map((item) => ({ id: item.id, text: item.text, code: item.code })), measures },
     evidence,
     attentionGroups,
+    attentionItems: groupExecutiveAttentionItems(evidence),
+    executiveFacts: facts(executiveFactPaths, "executive_summary"),
+    materialFacts: facts(materialFactPaths, "change_interpretation"),
   };
 }

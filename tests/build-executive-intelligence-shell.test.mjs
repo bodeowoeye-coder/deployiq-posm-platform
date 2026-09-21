@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
-import { composeExecutiveIntelligenceViewModel } from "../lib/build/ai/executivePresentation.ts";
+import { composeExecutiveIntelligenceViewModel, groupExecutiveAttentionItems, groupExecutiveStatements } from "../lib/build/ai/executivePresentation.ts";
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
@@ -11,6 +11,7 @@ const routeSource = read("app/api/workspace/build/executive-intelligence/[id]/ro
 const pageSource = read("app/workspace/admin/projects/[id]/[section]/page.tsx");
 const shellSource = read("components/workspace/ExecutiveIntelligenceShell.tsx");
 const navigationSource = read("components/workspace/BuildProjectShell.tsx");
+const fixtureSource = read("lib/build/ai/executivePresentationFixture.ts");
 const projectId = "a1000000-0000-4000-8000-000000000002";
 const clientId = "b1000000-0000-4000-8000-000000000002";
 const history = { from: "2026-09-01", through: "2026-09-07", timezone: "UTC", cadence: "daily" };
@@ -96,8 +97,72 @@ test("presentation preserves partial sections, non-binding decisions, qualificat
   assert.equal(composeExecutiveIntelligenceViewModel(result, "other-project"), null);
 });
 
+test("presentation groups only exact repeated statements and retains all evidence", () => {
+  const base = { text: "Review the overdue work package.", supportState: "supported", limitationIds: [] };
+  const grouped = groupExecutiveStatements([
+    { id: "one", ...base, evidenceIds: ["fact-1"] },
+    { id: "two", ...base, evidenceIds: ["fact-2"] },
+    { id: "three", ...base, evidenceIds: ["fact-2", "fact-3"] },
+    { id: "different", ...base, text: "Review a blocked activity.", evidenceIds: ["fact-4"] },
+    { id: "limited", ...base, supportState: "coverage_limited", evidenceIds: ["fact-5"] },
+  ]);
+  assert.equal(grouped.length, 3);
+  assert.equal(grouped[0].itemCount, 3);
+  assert.deepEqual(grouped[0].sourceIds, ["one", "two", "three"]);
+  assert.deepEqual(grouped[0].evidenceIds, ["fact-1", "fact-2", "fact-3"]);
+  assert.equal(grouped[1].itemCount, 1);
+  assert.equal(grouped[2].supportState, "coverage_limited");
+});
+
+test("management condition/action grouping is exact and losslessly retains evidence", () => {
+  const descriptor = (id, index, field, raw) => ({
+    id, label: field, source: { task: "management_attention", label: "Management Attention" },
+    availability: "available", value: { type: "text", raw }, timing: { asOf: "2026-09-20T10:00:00.000Z", generatedAt: "2026-09-20T10:01:00.000Z" },
+    authoritativeReference: { toolCallId: "tool-1", factPath: `/attention/preview/items/${index}/${field}`, provenanceKeys: ["project"] }, href: null,
+  });
+  const grouped = groupExecutiveAttentionItems([
+    descriptor("condition-0", 0, "condition", "Activity overdue to complete"),
+    descriptor("action-0", 0, "expectedNextAction", "Complete work or submit for review as configured"),
+    descriptor("condition-1", 1, "condition", "Activity overdue to complete"),
+    descriptor("action-1", 1, "expectedNextAction", "Complete work or submit for review as configured"),
+    descriptor("condition-2", 2, "condition", "Activity blocked"),
+    descriptor("action-2", 2, "expectedNextAction", "Resolve the blocking dependency"),
+  ]);
+  assert.equal(grouped.length, 2);
+  assert.equal(grouped[0].itemCount, 2);
+  assert.deepEqual(grouped[0].evidenceIds, ["condition-0", "action-0", "condition-1", "action-1"]);
+  assert.equal(grouped[1].itemCount, 1);
+});
+
+test("executive presentation hierarchy is explicit, progressive and responsive", () => {
+  const position = shellSource.indexOf("Executive Position");
+  const attention = shellSource.indexOf("Management Attention");
+  const decisions = shellSource.indexOf("Decision Considerations");
+  const changes = shellSource.indexOf("Material Changes");
+  const coverage = shellSource.indexOf("Data Coverage &amp; Limitations");
+  const evidence = shellSource.indexOf("Supporting Evidence");
+  assert.ok(position < attention && attention < decisions && decisions < changes && changes < coverage && coverage < evidence);
+  assert.match(shellSource, /<details/);
+  assert.match(shellSource, /Non-binding/);
+  assert.match(shellSource, /As Of/);
+  assert.match(shellSource, /Generated At/);
+  assert.match(shellSource, /History Period/);
+  assert.match(shellSource, /disabled=\{pending \|\| !from \|\| !through\}/);
+  assert.doesNotMatch(shellSource, /Numerator|Denominator|Raw path|href=\{item\.href\}/);
+});
+
+test("populated presentation fixture is disposable-local and server gated", () => {
+  assert.match(fixtureSource, /import "server-only"/);
+  assert.match(fixtureSource, /NODE_ENV !== "development"/);
+  assert.match(fixtureSource, /DEPLOYIQ_BUILD_EXECUTIVE_FIXTURE !== "1"/);
+  assert.match(fixtureSource, /http:\/\/127\.0\.0\.1:54321/);
+  assert.match(fixtureSource, new RegExp(projectId));
+  assert.doesNotMatch(fixtureSource, /OPENAI_API_KEY|createConfiguredBuildAIProvider|fetch\(/);
+  assert.match(pageSource, /initialView=\{getLocalExecutivePresentationFixture\(overview\.project\.id\)\}/);
+});
+
 test("no persistence, schema or fourth task is added by the shell", () => {
-  const combined = [routeSource, pageSource, shellSource, read("lib/build/ai/executivePresentation.ts")].join("\n");
+  const combined = [routeSource, pageSource, shellSource, fixtureSource, read("lib/build/ai/executivePresentation.ts")].join("\n");
   assert.doesNotMatch(combined, /\.insert\(|\.upsert\(|\.update\(|\.delete\(|CREATE TABLE|CREATE POLICY/);
   assert.doesNotMatch(routeSource, /model:|prompt:|provider: .*request|temperature/);
   assert.match(routeSource, /createBuildExecutiveServiceFromOrchestration/);

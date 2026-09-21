@@ -15,6 +15,7 @@ import { getBuildProjectWorkspaceOverview, type BuildProjectWorkspaceOverview } 
 import { ExecutiveIntelligenceShell } from "@/components/workspace/ExecutiveIntelligenceShell";
 import { requireCustomerWorkspace } from "@/lib/workspace/customerAdmin";
 import { getCustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
+import { getLocalExecutivePresentationFixture } from "@/lib/build/ai/executivePresentationFixture";
 
 export const dynamic = "force-dynamic";
 
@@ -89,7 +90,7 @@ async function BuildProjectSectionContent({
     const workspace = await requireCustomerWorkspace();
     const scope = await getCustomerWorkspaceProjectScope(workspace, overview.project.id);
     if (!scope.selectedProject || overview.project.client_id !== workspace.clientId) notFound();
-    return <ExecutiveIntelligenceShell key={`${workspace.userId}:${workspace.clientId}:${overview.project.id}`} projectId={overview.project.id} today={new Date().toISOString().slice(0, 10)} />;
+    return <ExecutiveIntelligenceShell key={`${workspace.userId}:${workspace.clientId}:${overview.project.id}`} projectId={overview.project.id} today={new Date().toISOString().slice(0, 10)} initialView={getLocalExecutivePresentationFixture(overview.project.id)} />;
   }
 
   if (section === "reports") {
