@@ -47,6 +47,49 @@ export function groupExecutiveStatements(items: ExecutiveStatement[]): Executive
   return [...groups.values()];
 }
 
+export function materialChangesEmptyMessage(section: ExecutiveSection | null) {
+  if (!section) return "Generate intelligence to prepare this briefing.";
+  if (section.availability !== "available") return "Material Changes interpretation is unavailable for this briefing.";
+  return "No Material Changes statements are available for this briefing.";
+}
+
+export function formatExecutiveCoverage(measure: { represented: number; eligible: number; noun: string }) {
+  const noun = measure.eligible === 1 ? measure.noun.replace(/Activities$/, "Activity") : measure.noun;
+  return `${measure.represented} of ${measure.eligible} ${noun} represented`;
+}
+
+export function groupExecutiveDecisionActions(items: ExecutiveStatementGroup[], evidence: ExecutiveEvidence[]): ExecutiveStatementGroup[] {
+  const byId = new Map(evidence.map((item) => [item.id, item]));
+  const expanded: ExecutiveStatementGroup[] = [];
+  for (const item of items) {
+    const match = item.itemCount === 1 && /^Management may review (.+)\. This is non-binding\.$/.exec(item.text);
+    const parts = match ? match[1].split("; ") : [];
+    if (!parts.length || parts.length !== item.evidenceIds.length || parts.some((part, index) => {
+      const descriptor = byId.get(item.evidenceIds[index]);
+      return !part.startsWith("Expected Next Action: ") || descriptor?.availability !== "available"
+        || descriptor.value?.type !== "text" || descriptor.value.raw !== part.slice("Expected Next Action: ".length)
+        || !/^\/attention\/preview\/items\/\d+\/expectedNextAction$/.test(descriptor.authoritativeReference.factPath);
+    })) {
+      expanded.push(item);
+      continue;
+    }
+    for (let index = 0; index < parts.length; index++) {
+      const action = parts[index].slice("Expected Next Action: ".length);
+      expanded.push({ ...item, id: `${item.id}:action:${index}`, text: `Management may review ${action}. This is non-binding.`, itemCount: 1, evidenceIds: [item.evidenceIds[index]], sourceIds: [...item.sourceIds] });
+    }
+  }
+  const grouped = new Map<string, ExecutiveStatementGroup>();
+  for (const item of expanded) {
+    const key = JSON.stringify([item.text, item.supportState, [...item.limitationIds].sort()]);
+    const current = grouped.get(key);
+    if (!current) { grouped.set(key, { ...item }); continue; }
+    current.itemCount += item.itemCount;
+    current.evidenceIds = [...new Set([...current.evidenceIds, ...item.evidenceIds])];
+    current.sourceIds = [...new Set([...current.sourceIds, ...item.sourceIds])];
+  }
+  return [...grouped.values()];
+}
+
 export function groupExecutiveAttentionItems(evidence: ExecutiveEvidence[]): ExecutiveAttentionItemGroup[] {
   const items = new Map<string, { condition?: ExecutiveEvidence; action?: ExecutiveEvidence }>();
   for (const item of evidence) {

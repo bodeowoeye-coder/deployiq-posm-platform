@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatExecutiveCoverage, groupExecutiveDecisionActions, materialChangesEmptyMessage } from "@/lib/build/ai/executivePresentation";
 import type { ExecutiveFact, ExecutiveIntelligenceViewModel, ExecutiveSection, ExecutiveStatement } from "@/lib/build/ai/executivePresentation";
 
 const messages: Record<string, string> = {
@@ -106,19 +107,19 @@ export function ExecutiveIntelligenceShell({ projectId, today = new Date().toISO
 
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="flex flex-wrap items-center gap-2"><h3 className="font-bold">Decision Considerations</h3><span className="rounded-full bg-orange-50 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-800">Non-binding</span></div>
-      {view?.decisionConsiderations.items.length ? <ul className="mt-3 space-y-3">{view.decisionConsiderations.items.map((item) => <li key={item.id} className="rounded-lg bg-slate-50 p-3 text-sm text-slate-800"><p>{item.text}</p>{item.itemCount > 1 ? <p className="mt-1 text-xs font-bold text-slate-600">Applies to {item.itemCount} exact matching items</p> : null}<p className="mt-1 text-xs text-slate-500">{item.evidenceIds.length} supporting fact{item.evidenceIds.length === 1 ? "" : "s"}</p></li>)}</ul> : <EmptyBriefing />}
+      {view?.decisionConsiderations.items.length ? <ul className="mt-3 space-y-3">{groupExecutiveDecisionActions(view.decisionConsiderations.items, view.evidence).map((item) => <li key={item.id} className="rounded-lg bg-slate-50 p-3 text-sm text-slate-800"><p>{item.text}</p>{item.itemCount > 1 ? <p className="mt-1 text-xs font-bold text-slate-600">Applies to {item.itemCount} exact matching actions</p> : null}<p className="mt-1 text-xs text-slate-500">{item.evidenceIds.length} supporting fact{item.evidenceIds.length === 1 ? "" : "s"}</p></li>)}</ul> : <EmptyBriefing />}
     </section>
 
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">Material Changes</h3>{view ? <Availability value={view.materialChanges.availability} /> : null}</div>
       {historyTiming?.historyPeriod ? <p className="mt-2 text-xs text-slate-600">{historyTiming.historyPeriod.from} through {historyTiming.historyPeriod.through} · {historyTiming.historyPeriod.timezone} · {historyTiming.historyPeriod.cadence}</p> : null}
-      {view?.materialChanges.statements.length ? <div className="mt-3"><StatementList items={view.materialChanges.statements} /></div> : <EmptyBriefing />}
+      {view?.materialChanges.statements.length ? <div className="mt-3"><StatementList items={view.materialChanges.statements} /></div> : <p className="mt-2 text-sm text-slate-600">{materialChangesEmptyMessage(view?.materialChanges ?? null)}</p>}
       {view ? <Facts items={view.materialFacts} /> : null}
     </section>
 
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <h3 className="font-bold">Data Coverage &amp; Limitations</h3>
-      {view?.coverage.measures.length ? <ul className="mt-3 space-y-2 text-sm text-slate-700">{view.coverage.measures.map((item, index) => <li key={`${item.label}:${item.noun}:${index}`} className="rounded-lg bg-slate-50 p-3"><strong>{item.represented} of {item.eligible}</strong> eligible {item.noun} represented</li>)}</ul> : null}
+      {view?.coverage.measures.length ? <ul className="mt-3 space-y-2 text-sm text-slate-700">{view.coverage.measures.map((item, index) => <li key={`${item.label}:${item.noun}:${index}`} className="rounded-lg bg-slate-50 p-3">{formatExecutiveCoverage(item)}</li>)}</ul> : null}
       {view?.coverage.limitations.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-700">{view.coverage.limitations.map((item) => <li key={item.id}>{item.text}</li>)}</ul> : <p className="mt-2 text-sm text-slate-600">{view ? "No additional limitations reported." : "Generate intelligence to review data coverage."}</p>}
     </section>
 

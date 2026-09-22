@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
-import { composeExecutiveIntelligenceViewModel, groupExecutiveAttentionItems, groupExecutiveStatements } from "../lib/build/ai/executivePresentation.ts";
+import { composeExecutiveIntelligenceViewModel, formatExecutiveCoverage, groupExecutiveAttentionItems, groupExecutiveDecisionActions, groupExecutiveStatements, materialChangesEmptyMessage } from "../lib/build/ai/executivePresentation.ts";
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
@@ -165,6 +165,44 @@ test("presentation groups only exact repeated statements and retains all evidenc
   assert.equal(grouped[2].supportState, "coverage_limited");
 });
 
+test("generated-unavailable Material Changes never displays the pre-generation prompt", () => {
+  assert.equal(materialChangesEmptyMessage(null), "Generate intelligence to prepare this briefing.");
+  assert.equal(materialChangesEmptyMessage({ id: "material_execution_changes", availability: "interpretation_unavailable", statements: [] }), "Material Changes interpretation is unavailable for this briefing.");
+  assert.equal(materialChangesEmptyMessage({ id: "material_execution_changes", availability: "no_data", statements: [] }), "Material Changes interpretation is unavailable for this briefing.");
+  assert.match(shellSource, /materialChangesEmptyMessage\(view\?\.materialChanges \?\? null\)/);
+  assert.doesNotMatch(shellSource, /view\?\.materialChanges\.statements\.length[^\n]*: <EmptyBriefing \/>/);
+});
+
+test("coverage copy preserves exact counts without duplicated eligible or incorrect singular", () => {
+  assert.equal(formatExecutiveCoverage({ represented: 3, eligible: 3, noun: "eligible Activities" }), "3 of 3 eligible Activities represented");
+  assert.equal(formatExecutiveCoverage({ represented: 1, eligible: 2, noun: "review-required Activities" }), "1 of 2 review-required Activities represented");
+  assert.equal(formatExecutiveCoverage({ represented: 1, eligible: 1, noun: "eligible Activities" }), "1 of 1 eligible Activity represented");
+  assert.equal(formatExecutiveCoverage({ represented: 0, eligible: 2, noun: "eligible Activities" }), "0 of 2 eligible Activities represented");
+  assert.match(shellSource, /formatExecutiveCoverage\(item\)/);
+});
+
+test("exact repeated governed actions group with count and lossless evidence while distinct actions remain separate", () => {
+  const action = (id, index, raw) => ({ id, availability: "available", value: { type: "text", raw }, authoritativeReference: { factPath: `/attention/preview/items/${index}/expectedNextAction` } });
+  const evidence = [action("start-1", 0, "Start Activity"), action("start-2", 1, "Start Activity"), action("resolve", 2, "Resolve block and resume Activity")];
+  const item = { id: "decision-1", text: "Management may review Expected Next Action: Start Activity; Expected Next Action: Start Activity; Expected Next Action: Resolve block and resume Activity. This is non-binding.", supportState: "coverage_limited", limitationIds: ["limit-1"], evidenceIds: ["start-1", "start-2", "resolve"], sourceIds: ["decision-1"], itemCount: 1 };
+  const grouped = groupExecutiveDecisionActions([item], evidence);
+  assert.equal(grouped.length, 2);
+  assert.equal(grouped[0].text, "Management may review Start Activity. This is non-binding.");
+  assert.equal(grouped[0].itemCount, 2);
+  assert.deepEqual(grouped[0].evidenceIds, ["start-1", "start-2"]);
+  assert.deepEqual(grouped[0].limitationIds, ["limit-1"]);
+  assert.equal(grouped[1].text, "Management may review Resolve block and resume Activity. This is non-binding.");
+  assert.equal(grouped[1].itemCount, 1);
+  assert.deepEqual(grouped.flatMap((entry) => entry.evidenceIds), item.evidenceIds);
+  assert.match(shellSource, /groupExecutiveDecisionActions\(view\.decisionConsiderations\.items, view\.evidence\)/);
+  assert.match(shellSource, /Non-binding/);
+});
+
+test("decision action grouping fails closed when evidence does not prove the exact wording", () => {
+  const item = { id: "decision-1", text: "Management may review Expected Next Action: Start Activity. This is non-binding.", supportState: "fully_supported", limitationIds: [], evidenceIds: ["other-fact"], sourceIds: ["decision-1"], itemCount: 1 };
+  assert.deepEqual(groupExecutiveDecisionActions([item], []), [item]);
+});
+
 test("management condition/action grouping is exact and losslessly retains evidence", () => {
   const descriptor = (id, index, field, raw) => ({
     id, label: field, source: { task: "management_attention", label: "Management Attention" },
@@ -210,6 +248,9 @@ test("populated presentation fixture is disposable-local and server gated", () =
   assert.match(fixtureSource, new RegExp(projectId));
   assert.doesNotMatch(fixtureSource, /OPENAI_API_KEY|createConfiguredBuildAIProvider|fetch\(/);
   assert.match(pageSource, /initialView=\{getLocalExecutivePresentationFixture\(overview\.project\.id\)\}/);
+  assert.match(fixtureSource, /materialChanges: \{ id: "material_execution_changes", availability: "interpretation_unavailable", statements: \[\] \}/);
+  assert.match(fixtureSource, /noun: "eligible Activities"/);
+  assert.match(fixtureSource, /Expected Next Action: Start Activity; Expected Next Action: Start Activity/);
 });
 
 test("no persistence, schema or fourth task is added by the shell", () => {
