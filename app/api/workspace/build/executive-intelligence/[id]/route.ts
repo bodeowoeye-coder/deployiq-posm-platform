@@ -20,6 +20,28 @@ function validDate(value: unknown): value is string {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+function hasSameRequestOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  const host = request.headers.get("host");
+  if (!origin || !host) return false;
+  try {
+    const requestUrl = new URL(request.url);
+    if (requestUrl.protocol !== "http:" && requestUrl.protocol !== "https:") return false;
+    const suppliedOrigin = new URL(origin);
+    const effectiveOrigin = new URL(`${requestUrl.protocol}//${host}`);
+    // Host is the HTTP request authority. Do not trust forwarded-host headers or
+    // Next's rewritten request URL hostname as the browser-visible authority.
+    return origin === suppliedOrigin.origin
+      && (suppliedOrigin.protocol === "http:" || suppliedOrigin.protocol === "https:")
+      && effectiveOrigin.host === host.toLowerCase()
+      && !effectiveOrigin.username
+      && !effectiveOrigin.password
+      && suppliedOrigin.origin === effectiveOrigin.origin;
+  } catch {
+    return false;
+  }
+}
+
 function parseHistory(body: unknown) {
   if (!body || typeof body !== "object" || Object.getPrototypeOf(body) !== Object.prototype || Reflect.ownKeys(body).length !== 1 || !Object.hasOwn(body, "history")) return null;
   const history = (body as { history: unknown }).history;
@@ -35,8 +57,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
   try {
     if (!UUID.test(params.id)) return NextResponse.json({ error: "Invalid Build project." }, { status: 400, headers: noStore });
     if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return NextResponse.json({ error: "Invalid intelligence request." }, { status: 415, headers: noStore });
-    const origin = request.headers.get("origin");
-    if (origin && origin !== new URL(request.url).origin) return NextResponse.json({ error: "Invalid request origin." }, { status: 403, headers: noStore });
+    if (!hasSameRequestOrigin(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403, headers: noStore });
     const workspace = await requireCustomerWorkspace();
     const scope = await getCustomerWorkspaceProjectScope(workspace, params.id);
     if (!scope.selectedProject || !isBuildProjectType(scope.selectedProject.project_type)) return NextResponse.json({ error: "Build project not found." }, { status: 404, headers: noStore });

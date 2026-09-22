@@ -16,10 +16,10 @@ const projectId = "a1000000-0000-4000-8000-000000000002";
 const clientId = "b1000000-0000-4000-8000-000000000002";
 const history = { from: "2026-09-01", through: "2026-09-07", timezone: "UTC", cadence: "daily" };
 
-function routeHarness({ authorized = true, providerReady = true } = {}) {
+function routeHarness({ authorized = true, providerReady = true, projectClientId = clientId } = {}) {
   const calls = { auth: 0, scope: 0, canonical: 0, providerFactory: 0, executive: 0 };
   const serviceResult = { ok: false, status: "composition_unavailable" };
-  const project = { id: projectId, client_id: clientId, project_type: "Construction" };
+  const project = { id: projectId, client_id: projectClientId, project_type: "Construction" };
   const imports = {
     "next/server": { NextResponse: { json: (body, options = {}) => ({ body, status: options.status ?? 200, headers: options.headers }) } },
     "@/lib/accessControl": { AccessControlError: class AccessControlError extends Error { constructor(message, status = 403) { super(message); this.status = status; } } },
@@ -35,9 +35,60 @@ function routeHarness({ authorized = true, providerReady = true } = {}) {
   const code = ts.transpileModule(routeSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const context = vm.createContext({ module, exports: module.exports, require: (name) => { if (!(name in imports)) throw Error(`Unexpected ${name}`); return imports[name]; }, Date, Object, Reflect, JSON, Number, Set, URL });
   new vm.Script(code).runInContext(context);
-  const request = (body) => ({ url: "http://localhost:3000/api/workspace/build/executive-intelligence/fixture", headers: { get: (name) => name === "content-type" ? "application/json" : name === "origin" ? "http://localhost:3000" : null }, text: async () => JSON.stringify(body) });
+  const request = (body, { requestUrl = "http://localhost:3000/api/workspace/build/executive-intelligence/fixture", origin = "http://localhost:3000", host = "localhost:3000" } = {}) => ({
+    url: requestUrl,
+    headers: { get: (name) => name === "content-type" ? "application/json" : name === "origin" ? origin : name === "host" ? host : null },
+    text: async () => JSON.stringify(body),
+  });
   return { POST: module.exports.POST, request, calls };
 }
+
+test("origin gate uses the browser-visible Host when Next represents loopback as localhost", async () => {
+  const harness = routeHarness({ providerReady: false });
+  const response = await harness.POST(harness.request({ history }, {
+    requestUrl: "http://localhost:3000/api/workspace/build/executive-intelligence/fixture",
+    origin: "http://127.0.0.1:3000",
+    host: "127.0.0.1:3000",
+  }), { params: { id: projectId } });
+  assert.equal(response.status, 503);
+  assert.equal(harness.calls.auth, 1);
+  assert.equal(harness.calls.canonical, 1);
+  assert.equal(harness.calls.providerFactory, 1);
+  assert.equal(harness.calls.executive, 0);
+});
+
+test("foreign, different-scheme, different-port, missing and malformed origins fail before authority or provider", async () => {
+  const cases = [
+    { origin: "https://foreign.example", host: "localhost:3000" },
+    { origin: "https://localhost:3000", host: "localhost:3000" },
+    { origin: "http://localhost:3001", host: "localhost:3000" },
+    { origin: null, host: "localhost:3000" },
+    { origin: "not-an-origin", host: "localhost:3000" },
+    { origin: "http://localhost:3000/path", host: "localhost:3000" },
+    { origin: "http://localhost:3000", host: null },
+    { origin: "http://localhost:3000", host: "localhost:3000@foreign.example" },
+  ];
+  for (const options of cases) {
+    const harness = routeHarness();
+    const response = await harness.POST(harness.request({ history }, options), { params: { id: projectId } });
+    assert.equal(response.status, 403);
+    assert.equal(response.body.error, "Invalid request origin.");
+    assert.equal(harness.calls.auth, 0);
+    assert.equal(harness.calls.providerFactory, 0);
+  }
+});
+
+test("valid origin still enforces canonical authorization and request validation before provider", async () => {
+  const denied = routeHarness({ authorized: false });
+  assert.equal((await denied.POST(denied.request({ history }), { params: { id: projectId } })).status, 403);
+  assert.equal(denied.calls.providerFactory, 0);
+  const crossTenant = routeHarness({ projectClientId: "c1000000-0000-4000-8000-000000000003" });
+  assert.equal((await crossTenant.POST(crossTenant.request({ history }), { params: { id: projectId } })).status, 404);
+  assert.equal(crossTenant.calls.providerFactory, 0);
+  const invalid = routeHarness();
+  assert.equal((await invalid.POST(invalid.request({ history: { ...history, timezone: "Africa/Lagos" } }), { params: { id: projectId } })).status, 400);
+  assert.equal(invalid.calls.providerFactory, 0);
+});
 
 test("page GET is canonical and does not invoke the AI boundary", () => {
   assert.match(pageSource, /getBuildProjectWorkspaceOverview\(params\.id\)/);
