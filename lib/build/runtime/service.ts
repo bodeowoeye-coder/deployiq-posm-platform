@@ -8,6 +8,7 @@ import { deriveDependencyIntelligence } from "@/lib/build/management/dependencyI
 import { buildDependencyDrilldown } from "@/lib/build/management/dependencyDrilldown";
 import { deriveManagementAttention } from "@/lib/build/management/managementAttention";
 import { selectActivityAttentionItems } from "@/lib/build/management/activityAttention";
+import { reconcileBuildNotificationsAfterMutation } from "@/lib/build/notifications/postMutation";
 import type { BuildEvidenceUploadAuthorization, BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimeEvidence, BuildRuntimeEvidenceType, BuildRuntimePerson, BuildWorkPlan, BuildWorkPlanSchedulePreview } from "@/lib/build/runtime/types";
 
 export const BUILD_EVIDENCE_BUCKET = "build-runtime-evidence" as const;
@@ -489,6 +490,9 @@ export async function applyRuntimeActivityAction(params: { request?: Request; pr
     throw new AccessControlError(key ? messages[key] : "The Activity action could not be completed.", key ? 400 : 500);
   }
   if (text(data) !== params.activityId) throw new AccessControlError("The Activity update could not be verified.", 500);
+  if (params.action === "block" || params.action === "resume") {
+    await reconcileBuildNotificationsAfterMutation({ projectId: access.project.id, boundary: "activity_action" });
+  }
   return getRuntimeActivityExecution(params);
 }
 
@@ -521,6 +525,7 @@ export async function submitRuntimeActivityForReview(params: { request?: Request
     throw new AccessControlError(key ? messages[key] : "The Activity could not be submitted for review.", key ? 400 : 500);
   }
   if (text(data) !== params.activityId) throw new AccessControlError("Review submission could not be verified.", 500);
+  await reconcileBuildNotificationsAfterMutation({ projectId: access.project.id, boundary: "review_submission" });
   return getRuntimeActivityExecution(params);
 }
 
@@ -543,6 +548,7 @@ export async function recordRuntimeInspection(params: { request?: Request; proje
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text(data))) {
     throw new AccessControlError("The Inspection decision could not be verified.", 500);
   }
+  await reconcileBuildNotificationsAfterMutation({ projectId: access.project.id, boundary: "inspection_decision" });
   return getRuntimeActivityExecution(params);
 }
 
@@ -554,6 +560,7 @@ export async function resumeRuntimeActivityCorrections(params: { request?: Reque
   if (error) throw new AccessControlError(error.message.includes("BUILD_ACTIVITY_REVIEW_STATE_INVALID")
     ? "This Activity is not awaiting corrective work." : "Corrective work could not be resumed.", error.message.includes("BUILD_ACTIVITY_REVIEW_STATE_INVALID") ? 400 : 500);
   if (text(data) !== params.activityId) throw new AccessControlError("Corrective work could not be verified.", 500);
+  await reconcileBuildNotificationsAfterMutation({ projectId: access.project.id, boundary: "corrective_work_resumed" });
   return getRuntimeActivityExecution(params);
 }
 
@@ -572,6 +579,7 @@ export async function createRuntimeException(params: { request?: Request; projec
   };
   if (error) { const key = Object.keys(messages).find((candidate) => error.message.includes(candidate)); throw new AccessControlError(key ? messages[key] : "The Exception could not be created.", key ? 400 : 500); }
   if (!/^[0-9a-f-]{36}$/i.test(text(data))) throw new AccessControlError("The Exception could not be verified.", 500);
+  await reconcileBuildNotificationsAfterMutation({ projectId: access.project.id, boundary: "exception_created" });
   return getRuntimeActivityExecution(params);
 }
 
@@ -591,6 +599,7 @@ export async function applyRuntimeExceptionAction(params: { request?: Request; p
   };
   if (error) { const key = Object.keys(messages).find((candidate) => error.message.includes(candidate)); throw new AccessControlError(key ? messages[key] : "The Exception action could not be completed.", key ? 400 : 500); }
   if (text(data) !== params.exceptionId) throw new AccessControlError("The Exception action could not be verified.", 500);
+  await reconcileBuildNotificationsAfterMutation({ projectId: access.project.id, boundary: "exception_action" });
   return getRuntimeActivityExecution(params);
 }
 
