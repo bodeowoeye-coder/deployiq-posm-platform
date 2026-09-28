@@ -8,12 +8,13 @@ const api = () => readFileSync(new URL("../app/api/notifications/route.ts", impo
 const bell = () => readFileSync(new URL("../components/NotificationCenter.tsx", import.meta.url), "utf8");
 const schema = () => readFileSync(new URL("../add_notification_events.sql", import.meta.url), "utf8");
 const notificationService = () => readFileSync(new URL("../lib/notifications.ts", import.meta.url), "utf8");
+const feed = () => readFileSync(new URL("../lib/notifications/feed.ts", import.meta.url), "utf8");
 
 test("workspace notifications use the existing event stream and feature flag", () => {
   assert.match(page(), /WorkspaceNotificationsClient/);
   assert.match(page(), /notificationsEnabled/);
-  assert.match(api(), /from\("notification_events"\)/);
-  assert.match(api(), /query = query\.eq\("client_id", context\.client_id\)/);
+  assert.match(feed(), /from\("notification_events"\)/);
+  assert.match(feed(), /query = query\.eq\("client_id", context\.client_id/);
   assert.match(notificationService(), /workspaceNotificationsEnabled/);
   assert.match(notificationService(), /workspace_settings/);
   assert.match(notificationService(), /workspace_notification_defaults/);
@@ -28,7 +29,7 @@ test("notifications reuse canonical read state and header bell source", () => {
   assert.match(client(), /PATCH/);
   assert.match(client(), /markAllRead: true/);
   assert.match(bell(), /fetch\("\/api\/notifications"/);
-  assert.match(bell(), /read_at/);
+  assert.match(bell(), /readAt/);
 });
 
 test("notifications preserve empty state, filters, and existing module actions", () => {
@@ -38,8 +39,8 @@ test("notifications preserve empty state, filters, and existing module actions",
   for (const label of ["All", "Unread", "Project", "Event type", "Date", "Mark all as read", "Open"]) {
     assert.match(source, new RegExp(label));
   }
-  assert.match(source, /\/workspace\/admin\/submissions/);
-  assert.match(source, /\/workspace\/admin\/projects/);
+  assert.match(source, /destination\.href/);
+  assert.match(source, /Open Activity/);
 });
 
 test("Alerts remain separate from Notifications", () => {

@@ -7,6 +7,8 @@ import {
   requireAdmin
 } from "@/lib/accessControl";
 import { clientNotificationsEnabled, getNotificationAction, notificationsEnabled } from "@/lib/notifications";
+import { getWorkspaceNotificationFeed } from "@/lib/notifications/feed";
+import { updateAuthenticatedBuildNotification } from "@/lib/build/notifications/repository";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
@@ -56,44 +58,18 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const requestedClientId = searchParams.get("clientId")?.trim() || null;
     const requestedProjectId = searchParams.get("projectId")?.trim() || null;
-    const supabase = createAdminSupabase();
-    let query = supabase.from("notification_events").select("*").order("created_at", { ascending: false }).limit(80);
-
     if (context.role === "client") {
       if (!context.client_id) return NextResponse.json({ enabled: true, notifications: [], unreadCount: 0 });
       if (requestedClientId && requestedClientId !== context.client_id) {
         return NextResponse.json({ error: "You do not have access to this client scope." }, { status: 403 });
       }
       assertProjectAccess(context, requestedProjectId);
-      query = query.eq("client_id", context.client_id);
-      if (requestedProjectId) query = query.eq("project_id", requestedProjectId);
     } else {
       assertClientAccess(context, requestedClientId);
       assertProjectAccess(context, requestedProjectId);
-      if (requestedClientId) query = query.eq("client_id", requestedClientId);
-      if (requestedProjectId) query = query.eq("project_id", requestedProjectId);
     }
-
-    const { data, error } = await query;
-    if (error) {
-      console.error("[notifications] list failed", errorPayload(error));
-      return NextResponse.json({ error: "Could not load notifications." }, { status: 500 });
-    }
-
-    const notifications = data ?? [];
-    const projectIds = Array.from(new Set(notifications.map((item) => item.project_id).filter((value): value is string => Boolean(value))));
-    const projectMap = new Map<string, { project_name?: string | null; campaign_name?: string | null }>();
-    if (projectIds.length > 0 && context.role === "client" && context.client_id) {
-      const { data: projects } = await supabase.from("projects").select("id,project_name,campaign_name").eq("client_id", context.client_id).in("id", projectIds);
-      for (const project of projects ?? []) projectMap.set(project.id, project);
-    }
-    const enrichedNotifications = notifications.map((notification) => ({
-      ...notification,
-      project_name: notification.project_id ? projectMap.get(notification.project_id)?.project_name ?? null : null,
-      campaign_name: notification.project_id ? projectMap.get(notification.project_id)?.campaign_name ?? null : null,
-    }));
-    const unreadCount = enrichedNotifications.filter((item) => !item.read_at).length;
-    return NextResponse.json({ enabled: true, notifications: enrichedNotifications, unreadCount });
+    const feed = await getWorkspaceNotificationFeed({ context, requestedClientId, requestedProjectId });
+    return NextResponse.json({ enabled: true, ...feed });
   } catch (error) {
     const { status, payload } = accessControlErrorResponse(error);
     return NextResponse.json(payload, { status });
@@ -199,8 +175,22 @@ export async function PATCH(request: Request) {
   }
 
   const body = await request.json().catch(() => ({}));
+  const source = body.source === "build" ? "build" : "retail";
+  const action = body.action === "acknowledge" || body.action === "mark_read" ? body.action : null;
   const id = typeof body.id === "string" && body.id.trim() ? body.id.trim() : "";
   const markAllRead = body.markAllRead === true;
+  if (source === "build") {
+    if (markAllRead || !id || !action) {
+      return NextResponse.json({ error: "A valid Build notification action is required." }, { status: 400 });
+    }
+    try {
+      const result = await updateAuthenticatedBuildNotification({ id, action });
+      return NextResponse.json(result);
+    } catch (error) {
+      const { status, payload } = accessControlErrorResponse(error);
+      return NextResponse.json(payload, { status });
+    }
+  }
   const supabase = createAdminSupabase();
   const readAt = new Date().toISOString();
 

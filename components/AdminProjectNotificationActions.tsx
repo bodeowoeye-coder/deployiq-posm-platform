@@ -3,7 +3,8 @@
 import { Bell, CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PROJECT_NOTIFICATION_ACTIONS } from "@/lib/notifications";
-import type { NotificationEvent, Project } from "@/lib/types";
+import type { Project } from "@/lib/types";
+import type { WorkspaceNotification } from "@/lib/notifications/presentation";
 
 const phaseLocationOptions = ["Enugu", "Nsukka", "Abakaliki", "Lagos Island"] as const;
 const customPhaseValue = "__other__";
@@ -22,7 +23,7 @@ export function AdminProjectNotificationActions({
   const [customPhaseName, setCustomPhaseName] = useState("");
   const [destination, setDestination] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [timeline, setTimeline] = useState<NotificationEvent[]>([]);
+  const [timeline, setTimeline] = useState<WorkspaceNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [message, setMessage] = useState("");
@@ -34,7 +35,7 @@ export function AdminProjectNotificationActions({
       const response = await fetch(`/api/notifications?projectId=${encodeURIComponent(project.id)}`, { credentials: "include" });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.error || "Could not load timeline.");
-      setTimeline((body?.notifications ?? []) as NotificationEvent[]);
+      setTimeline(((body?.notifications ?? []) as WorkspaceNotification[]).filter((item) => item.source === "retail"));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not load timeline.");
     } finally {
@@ -156,11 +157,11 @@ export function AdminProjectNotificationActions({
             <div className="min-w-0">
               <p className="font-semibold text-slate-900">{event.title}</p>
               <p className="text-xs leading-5 text-slate-500">
-                {event.message} · {new Date(event.created_at).toLocaleString("en-GB", { timeZone: "Africa/Lagos" })}
+                {event.summary} · {new Date(event.occurredAt).toLocaleString("en-GB", { timeZone: "Africa/Lagos" })}
               </p>
-              {event.phase_name || event.destination || event.quantity !== null ? (
+              {event.retailDetails && (event.retailDetails.phaseName || event.retailDetails.destination || event.retailDetails.quantity !== null) ? (
                 <p className="mt-1 text-[11px] font-semibold text-slate-500">
-                  {[event.phase_name ? `Phase: ${event.phase_name}` : "", event.destination ? `Destination: ${event.destination}` : "", event.quantity !== null ? `Quantity: ${event.quantity}` : ""]
+                  {[event.retailDetails?.phaseName ? `Phase: ${event.retailDetails.phaseName}` : "", event.retailDetails?.destination ? `Destination: ${event.retailDetails.destination}` : "", event.retailDetails?.quantity !== null && event.retailDetails?.quantity !== undefined ? `Quantity: ${event.retailDetails.quantity}` : ""]
                     .filter(Boolean)
                     .join(" · ")}
                 </p>
