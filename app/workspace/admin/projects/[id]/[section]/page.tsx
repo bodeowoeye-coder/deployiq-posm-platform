@@ -16,6 +16,7 @@ import { ExecutiveIntelligenceShell } from "@/components/workspace/ExecutiveInte
 import { requireCustomerWorkspace } from "@/lib/workspace/customerAdmin";
 import { getCustomerWorkspaceProjectScope } from "@/lib/workspace/projectScope";
 import { getLocalExecutivePresentationFixture } from "@/lib/build/ai/executivePresentationFixture";
+import { BuildNotificationSettings } from "@/components/workspace/BuildNotificationSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -118,7 +119,11 @@ async function BuildProjectSectionContent({
     return <BuildManagementReport report={report}/>;
   }
 
-  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities" | "exceptions" | "reports" | "executive-intelligence">, { title: string; description: string }> = {
+  if (section === "settings") {
+    return <BuildNotificationSettings projectId={overview.project.id} />;
+  }
+
+  const foundationCopy: Record<Exclude<BuildProjectSection, "overview" | "sites" | "work-packages" | "activities" | "exceptions" | "reports" | "executive-intelligence" | "settings">, { title: string; description: string }> = {
     resources: {
       title: "Resources",
       description: `${overview.counts.resources} eligible resource definition${overview.counts.resources === 1 ? " is" : "s are"} available to this tenant. Project resource planning arrives in a later Build phase.`,
@@ -130,10 +135,6 @@ async function BuildProjectSectionContent({
     analytics: {
       title: "Analytics",
       description: "Build analytics are planned for a later phase. Retail deployment analytics are intentionally not reused.",
-    },
-    settings: {
-      title: "Settings",
-      description: "Build project settings are planned for a later phase. Shared account and user administration remain available from the Customer Workspace.",
     },
   };
   const copy = foundationCopy[section as keyof typeof foundationCopy];
