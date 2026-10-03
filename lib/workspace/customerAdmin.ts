@@ -624,7 +624,7 @@ async function loadCustomerWorkspaceContextOnce(): Promise<CustomerWorkspaceCont
     },
   });
   if (role !== "customer_admin") {
-    throw new CustomerWorkspaceRedirect("/");
+    throw new CustomerWorkspaceRedirect("/workspace/notifications");
   }
 
   if (text(organisation?.status).toLowerCase() !== "active") {

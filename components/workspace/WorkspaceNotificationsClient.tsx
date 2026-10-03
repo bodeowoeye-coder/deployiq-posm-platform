@@ -5,14 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BUILD_NOTIFICATION_LABELS, workspaceNotificationIdentity, type WorkspaceNotification } from "@/lib/notifications/presentation";
 
-type Props = { enabled: boolean; projectId?: string | null; projects: Array<{ id: string; project_name: string; campaign_name?: string | null }> };
+type Props = { enabled: boolean; projectId?: string | null; projects: Array<{ id: string; project_name: string; campaign_name?: string | null }>; routeBase?: string; apiPath?: string; operationalBuildLinks?: boolean };
 
 function categoryLabel(item: WorkspaceNotification) {
   if (item.source === "build") return BUILD_NOTIFICATION_LABELS[item.category as keyof typeof BUILD_NOTIFICATION_LABELS] ?? item.category.replaceAll("_", " ");
   return item.category.replaceAll("_", " ");
 }
 
-export function WorkspaceNotificationsClient({ enabled, projectId, projects: scopedProjects }: Props) {
+export function WorkspaceNotificationsClient({ enabled, projectId, projects: scopedProjects, routeBase = "/workspace/admin/notifications", apiPath = "/api/notifications", operationalBuildLinks = false }: Props) {
   const router = useRouter();
   const [notifications, setNotifications] = useState<WorkspaceNotification[]>([]);
   const [loading, setLoading] = useState(enabled);
@@ -29,7 +29,7 @@ export function WorkspaceNotificationsClient({ enabled, projectId, projects: sco
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/notifications${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`, { credentials: "include", cache: "no-store" });
+      const response = await fetch(`${apiPath}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`, { credentials: "include", cache: "no-store" });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.error || "Could not load notifications.");
       setNotifications((body?.notifications ?? []) as WorkspaceNotification[]);
@@ -65,7 +65,7 @@ export function WorkspaceNotificationsClient({ enabled, projectId, projects: sco
       ? action === "mark_read" ? { ...candidate, readAt: candidate.readAt ?? now } : { ...candidate, acknowledgedAt: candidate.acknowledgedAt ?? now, canAcknowledge: false }
       : candidate));
     try {
-      const response = await fetch("/api/notifications", {
+      const response = await fetch(apiPath, {
         method: "PATCH", credentials: "include", headers: { "content-type": "application/json" },
         body: JSON.stringify({ source: item.source, id: item.id, action })
       });
@@ -81,7 +81,7 @@ export function WorkspaceNotificationsClient({ enabled, projectId, projects: sco
   async function openNotification(item: WorkspaceNotification) {
     if (!item.destination?.available || !item.destination.href) return;
     const authorized = item.readAt ? true : await applyAction(item, "mark_read");
-    if (authorized) router.push(item.destination.href);
+    if (authorized) router.push(operationalBuildLinks && item.source === "build" ? `${routeBase}/${encodeURIComponent(item.id)}` : item.destination.href);
   }
 
   async function markAllRetailRead() {
@@ -90,7 +90,7 @@ export function WorkspaceNotificationsClient({ enabled, projectId, projects: sco
     setActionError("");
     setNotifications((current) => current.map((item) => item.source === "retail" ? { ...item, readAt: item.readAt ?? readAt } : item));
     try {
-      const response = await fetch("/api/notifications", { method: "PATCH", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ source: "retail", markAllRead: true }) });
+      const response = await fetch(apiPath, { method: "PATCH", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ source: "retail", markAllRead: true }) });
       if (!response.ok) throw new Error("Retail notification update failed");
     } catch {
       setNotifications(previous);
@@ -108,7 +108,7 @@ export function WorkspaceNotificationsClient({ enabled, projectId, projects: sco
     </section>
     {partial ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Some updates are temporarily unavailable.</div> : null}
     {actionError ? <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">{actionError}</div> : null}
-    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Filter label="Scope"><select value={scope} onChange={(event) => setScope(event.target.value)} className="control"><option value="all">All</option><option value="unread">Unread</option></select></Filter><Filter label="Project"><select value={project} onChange={(event) => { const value = event.target.value; setProject(value); router.push(`/workspace/admin/notifications${value === "all" ? "" : `?projectId=${encodeURIComponent(value)}`}`); }} className="control"><option value="all">All projects</option>{projects.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Filter><Filter label="Event type"><select value={eventType} onChange={(event) => setEventType(event.target.value)} className="control"><option value="all">All event types</option>{eventTypes.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></Filter><Filter label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="control" /></Filter></div><button type="button" onClick={() => void markAllRetailRead()} disabled={unreadRetailCount === 0} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-800 hover:border-orange-300 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"><CheckCheck size={16} />{hasBuildNotifications ? "Mark all Retail as read" : "Mark all as read"}</button></section>
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Filter label="Scope"><select value={scope} onChange={(event) => setScope(event.target.value)} className="control"><option value="all">All</option><option value="unread">Unread</option></select></Filter><Filter label="Project"><select value={project} onChange={(event) => { const value = event.target.value; setProject(value); router.push(`${routeBase}${value === "all" ? "" : `?projectId=${encodeURIComponent(value)}`}`); }} className="control"><option value="all">All projects</option>{projects.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Filter><Filter label="Event type"><select value={eventType} onChange={(event) => setEventType(event.target.value)} className="control"><option value="all">All event types</option>{eventTypes.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></Filter><Filter label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="control" /></Filter></div>{!operationalBuildLinks ? <button type="button" onClick={() => void markAllRetailRead()} disabled={unreadRetailCount === 0} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-800 hover:border-orange-300 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"><CheckCheck size={16} />{hasBuildNotifications ? "Mark all Retail as read" : "Mark all as read"}</button> : null}</section>
     <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">{filtered.length === 0 ? <EmptyState title="No notifications yet" message="Workspace activity and updates will appear here." /> : <div className="divide-y divide-slate-100">{filtered.map((item) => <article key={workspaceNotificationIdentity(item)} className={`p-5 ${item.readAt ? "bg-white" : "bg-orange-50/40"}`}><div className="flex flex-col items-start justify-between gap-4 sm:flex-row"><div className="min-w-0 max-w-full"><div className="flex flex-wrap items-center gap-2"><h3 className="break-words font-bold text-slate-950">{item.title}</h3>{!item.readAt ? <Badge tone="orange">Unread</Badge> : null}{item.source === "build" ? <Badge>{categoryLabel(item)}</Badge> : null}{item.source === "build" ? <Badge>{item.state === "active" ? "Active" : "Resolved"}</Badge> : null}{item.acknowledgedAt ? <Badge>Acknowledged</Badge> : null}</div><p className="mt-2 whitespace-pre-line break-words text-sm leading-6 text-slate-700">{item.summary}</p><p className="mt-2 break-words text-xs text-slate-500">{item.projectLabel || "Workspace activity"} · {new Date(item.occurredAt).toLocaleString("en-GB", { timeZone: "Africa/Lagos" })}</p>{item.destination && !item.destination.available ? <p className="mt-2 text-xs font-semibold text-slate-500">Destination no longer available.</p> : null}</div><div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto">{item.destination?.available ? <button type="button" onClick={() => void openNotification(item)} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-bold text-orange-700 hover:border-orange-300 hover:bg-orange-50 sm:flex-none"><ExternalLink size={14} />{item.source === "build" && item.category === "exception" ? "Open Exception" : item.source === "build" ? "Open Activity" : "Open"}</button> : null}{!item.readAt ? <button type="button" onClick={() => void applyAction(item, "mark_read")} className="min-h-11 flex-1 rounded-lg border border-slate-200 px-3 text-xs font-bold text-slate-700 hover:border-orange-300 hover:bg-orange-50 sm:flex-none">Mark read</button> : null}{item.source === "build" && item.canAcknowledge ? <button type="button" onClick={() => void applyAction(item, "acknowledge")} className="min-h-11 flex-1 rounded-lg bg-orange-500 px-3 text-xs font-bold text-white hover:bg-orange-600 sm:flex-none">Acknowledge</button> : null}</div></div></article>)}</div>}</section>
   </div>;
 }

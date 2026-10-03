@@ -116,6 +116,18 @@ export async function listAuthenticatedBuildNotifications(options?: { reconcile?
   return { notifications, reconciliationBound: MAX_RECONCILIATION_PROJECTS };
 }
 
+export async function getAuthenticatedBuildNotificationConsumption(id: string) {
+  const context = await getAuthenticatedUserContext();
+  const { rows } = await loadAuthorizedRows(context, { id, reconcile: false });
+  const row = rows[0];
+  if (!row) throw new AccessControlError("Notification is unavailable.", 404);
+  const destination = (await destinations([row], context)).get(text(row.id));
+  if (!destination?.available) throw new AccessControlError("Notification destination is unavailable.", 404);
+  const match = destination.href.match(/^\/workspace\/admin\/projects\/([^/]+)\/activities\/([^?]+)\?view=(execution|inspection|exceptions)$/);
+  if (!match) throw new AccessControlError("Notification destination is unavailable.", 404);
+  return { notificationId: text(row.id), projectId: decodeURIComponent(match[1]), activityId: decodeURIComponent(match[2]), view: match[3] as "execution" | "inspection" | "exceptions" };
+}
+
 export async function updateAuthenticatedBuildNotification(input: { id: string; action: "mark_read" | "acknowledge" }) {
   const context = await getAuthenticatedUserContext();
   const { rows } = await loadAuthorizedRows(context, { id: input.id, reconcile: false });

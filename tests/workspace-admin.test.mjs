@@ -924,7 +924,7 @@ test("workspace admin: route guards preserve Customer Admin context for workspac
   const auth = readFileSync(new URL("../lib/auth.ts", import.meta.url), "utf8");
   assert.match(layout, /requireCustomerWorkspace/);
   assert.match(settingsPage, /resolveCustomerWorkspaceContext/);
-  assert.match(destinations, /if \(!input\.clientId\) return "\/onboarding";[\s\S]*return "\/workspace\/admin"/);
+  assert.match(destinations, /if \(!input\.clientId\) return "\/onboarding";[\s\S]*getOperationalNotificationDestination/);
   assert.doesNotMatch(destinations, /"\/client"/);
   assert.match(auth, /normalized === "\/workspace\/admin" \|\| normalized\.startsWith\("\/workspace\/admin\/"\)/);
 });

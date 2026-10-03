@@ -260,7 +260,7 @@ describe("mandatory password change routing", () => {
     assert.match(destinations, /if \(incompleteDraft\) return "\/onboarding"/);
     assert.match(destinations, /return `\/workspace\/activation\?token=\$\{encodeURIComponent\(activationDraft\.resume_token\)\}`/);
     assert.match(destinations, /if \(!input\.clientId\) return "\/onboarding"/);
-    assert.match(destinations, /return "\/workspace\/admin"/);
+    assert.match(destinations, /getOperationalNotificationDestination/);
     assert.doesNotMatch(sessionRoute, /"\/client"/);
   });
 
@@ -270,7 +270,7 @@ describe("mandatory password change routing", () => {
     const incompleteIndex = destinations.indexOf("getLatestEligibleIncompleteDraftForCustomer", parallelIndex);
     const activationIndex = destinations.indexOf("getLatestActivationDraftForCustomer", parallelIndex);
     const noClientIndex = destinations.indexOf('if (!input.clientId) return "/onboarding"');
-    const adminIndex = destinations.lastIndexOf('return "/workspace/admin"');
+    const adminIndex = destinations.lastIndexOf("getOperationalNotificationDestination");
     assert.ok(parallelIndex > -1);
     assert.ok(incompleteIndex > parallelIndex);
     assert.ok(activationIndex > parallelIndex);
@@ -287,7 +287,7 @@ describe("mandatory password change routing", () => {
     const onboardingService = readFileSync(new URL("../lib/commercial/onboarding/service.ts", import.meta.url), "utf8");
     const incompleteReturn = destinations.indexOf('if (incompleteDraft) return "/onboarding"');
     const activationReturn = destinations.indexOf("return `/workspace/activation?token=${encodeURIComponent(activationDraft.resume_token)}`");
-    const adminReturn = destinations.lastIndexOf('return "/workspace/admin"');
+    const adminReturn = destinations.lastIndexOf("getOperationalNotificationDestination");
     assert.ok(incompleteReturn > -1);
     assert.ok(activationReturn > -1);
     assert.ok(adminReturn > -1);
@@ -314,6 +314,7 @@ describe("mandatory password change routing", () => {
   test("session returnTo compatibility prevents workspace-admin and activation bounce", () => {
     const sessionRoute = readFileSync(new URL("../app/api/auth/session/route.ts", import.meta.url), "utf8");
     assert.match(sessionRoute, /if \(authoritativePath === "\/workspace\/admin"\) return requestedPath === "\/workspace\/admin" \|\| requestedPath\.startsWith\("\/workspace\/admin\/"\)/);
+    assert.match(sessionRoute, /if \(authoritativePath === "\/workspace\/notifications"\) return requestedPath === "\/workspace\/notifications" \|\| requestedPath\.startsWith\("\/workspace\/notifications\/"\)/);
     assert.doesNotMatch(sessionRoute, /authoritativePath === "\/workspace\/activation"[\s\S]*startsWith\("\/workspace\/admin/);
     assert.doesNotMatch(sessionRoute, /authoritativePath === "\/onboarding"[\s\S]*startsWith\("\/workspace\/admin/);
   });
@@ -555,7 +556,8 @@ describe("mandatory password change routing", () => {
     const passwordRoute = readFileSync(new URL("../app/api/auth/password/route.ts", import.meta.url), "utf8");
     const login = readFileSync(new URL("../app/login/page.tsx", import.meta.url), "utf8");
     assert.match(destinations, /if \(role === "client"\) return clientId \? "\/workspace\/admin" : "\/onboarding"/);
-    assert.match(destinations, /if \(!input\.clientId\) return "\/onboarding";[\s\S]*return "\/workspace\/admin"/);
+    assert.match(destinations, /if \(!input\.clientId\) return "\/onboarding";[\s\S]*getOperationalNotificationDestination/);
+    assert.match(destinations, /\?\? "\/workspace\/notifications"/);
     assert.match(destinations, /if \(role === "admin"\) return "\/admin"/);
     assert.match(destinations, /if \(role === "installer"\) return "\/submit"/);
     assert.match(auth, /if \(role === "client"\) return "\/workspace\/admin"/);

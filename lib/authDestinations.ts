@@ -1,5 +1,6 @@
 import type { UserRole } from "@/lib/types";
 import { getLatestActivationDraftForCustomer, getLatestEligibleIncompleteDraftForCustomer } from "@/lib/commercial/onboarding/service";
+import { getOperationalNotificationDestination } from "@/lib/workspace/operationalNotifications";
 
 export function defaultDestinationForRole(role: UserRole, clientId?: string | null) {
   if (role === "admin") return "/admin";
@@ -31,7 +32,7 @@ export async function defaultDestinationForResolvedUser(input: {
   if (incompleteDraft) return "/onboarding";
   if (activationDraft) return `/workspace/activation?token=${encodeURIComponent(activationDraft.resume_token)}`;
   if (!input.clientId) return "/onboarding";
-  return "/workspace/admin";
+  return await getOperationalNotificationDestination({ userId: input.userId, clientId: input.clientId }) ?? "/workspace/notifications";
 }
 
 export function sessionExpiredDestination() {
