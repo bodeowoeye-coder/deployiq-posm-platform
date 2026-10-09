@@ -167,7 +167,7 @@ export const CUSTOMER_WORKSPACE_ROLES: WorkspaceTeamRoleDefinition[] = [
     label: "Supervisor",
     description: "Reviews submissions and coordinates assigned field activity.",
     appRole: "client",
-    technicalRoleKey: "workspace_manager",
+    technicalRoleKey: "supervisor",
     permissions: ["projects.view", "campaigns.view", "submissions.review", "deployment_locations.view", "reports.view", "notifications.view"],
   },
   {
@@ -336,8 +336,34 @@ async function getWorkspaceRoleId(clientId: string, roleKey: WorkspaceTeamRoleKe
     })
     .select("id")
     .single();
-  if (insertError) throw insertError;
-  return String(data.id);
+  if (insertError) {
+    // Concurrent invitation/update requests may both observe a missing role.
+    // The tenant/key uniqueness boundary determines the winner; the loser
+    // resolves the canonical row without altering its permissions.
+    if ((insertError as { code?: string }).code === "23505") {
+      const { data: concurrent, error: concurrentError } = await supabase
+        .from("workspace_roles")
+        .select("id")
+        .eq("client_id", clientId)
+        .eq("role_key", definition.technicalRoleKey)
+        .single();
+      if (concurrentError) throw concurrentError;
+      return String(concurrent.id);
+    }
+    throw insertError;
+  }
+
+  const roleId = String(data.id);
+  if (definition.permissions.length > 0) {
+    const { error: permissionError } = await supabase
+      .from("workspace_role_permissions")
+      .upsert(definition.permissions.map((permission) => ({ role_id: roleId, permission })), {
+        onConflict: "role_id,permission",
+        ignoreDuplicates: true,
+      });
+    if (permissionError) throw permissionError;
+  }
+  return roleId;
 }
 
 async function loadAuthUsersById(userIds: string[]) {

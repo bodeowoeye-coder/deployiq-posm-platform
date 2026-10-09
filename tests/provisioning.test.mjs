@@ -468,6 +468,7 @@ test("retail reference: default roles are declared once", () => {
     "Workspace Administrator",
     "Project Manager",
     "Field Supervisor",
+    "Supervisor",
     "Installer / Field Agent",
     "Client Viewer",
   ]);
@@ -569,7 +570,7 @@ test("retail reference: health checks must pass before completion", () => {
     ownerMembershipExists: true,
     entitlementVerified: true,
     destinationVerified: true,
-    roleCount: 6,
+    roleCount: 7,
     permissionCount: 10,
   });
   assert.equal(health.passed, true);
@@ -592,7 +593,7 @@ test("retail reference: failed health checks block completion", () => {
     ownerMembershipExists: true,
     entitlementVerified: false,
     destinationVerified: true,
-    roleCount: 6,
+    roleCount: 7,
     permissionCount: 10,
   });
   assert.equal(health.passed, false);
@@ -616,7 +617,7 @@ test("retail reference: missing Customer Admin membership blocks completion", ()
     ownerMembershipExists: false,
     entitlementVerified: true,
     destinationVerified: true,
-    roleCount: 6,
+    roleCount: 7,
     permissionCount: 10,
   });
   assert.equal(health.passed, false);
