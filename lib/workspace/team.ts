@@ -1,4 +1,5 @@
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
+import { ensureCanonicalSupervisorRole } from "@/lib/workspace/canonicalSupervisorRole";
 import { deriveProjectRegions } from "@/lib/geography";
 import { writeAuditLog } from "@/lib/userManagement";
 import { provisionInstallerForWorkspaceMember } from "@/lib/workspace/fieldResources";
@@ -312,8 +313,12 @@ async function loadAuthUsersByEmail(email: string) {
   return users;
 }
 
-async function getWorkspaceRoleId(clientId: string, roleKey: WorkspaceTeamRoleKey) {
+async function getWorkspaceRoleId(clientId: string, roleKey: WorkspaceTeamRoleKey, actorUserId: string) {
   const definition = roleDefinition(roleKey);
+  if (definition.technicalRoleKey === "supervisor") {
+    const result = await ensureCanonicalSupervisorRole({ clientId, actorUserId });
+    return result.roleId;
+  }
   const supabase = createAdminSupabase();
   const { data: existing, error } = await supabase
     .from("workspace_roles")
@@ -935,7 +940,7 @@ export async function inviteWorkspaceUser(input: {
   });
 
   const roleStartedAt = nowMs();
-  const roleId = await getWorkspaceRoleId(workspace.clientId, role.key);
+  const roleId = await getWorkspaceRoleId(workspace.clientId, role.key, workspace.userId);
   invitePerformanceLog({
     operation: "invite_user",
     step: "Role lookup",
@@ -1198,7 +1203,7 @@ export async function updateWorkspaceMemberRole(input: { membershipId: string; r
   if (["customer_admin", "workspace_owner"].includes(text(membership.role_key)) && await activeAdminCount(workspace.clientId) <= 1) {
     throw Object.assign(new Error("You cannot remove the last administrator."), { status: 400 });
   }
-  const roleId = await getWorkspaceRoleId(workspace.clientId, role.key);
+  const roleId = await getWorkspaceRoleId(workspace.clientId, role.key, workspace.userId);
   const { error } = await supabase.from("workspace_memberships").update({ role_id: roleId, role_key: role.technicalRoleKey, updated_at: new Date().toISOString() }).eq("id", input.membershipId).eq("client_id", workspace.clientId);
   if (error) throw error;
   await writeAuditLog({ actorUserId: workspace.userId, targetUserId: text(membership.user_id), actionType: "role_changed", newValue: { clientId: workspace.clientId, role: role.label } });
@@ -1222,7 +1227,7 @@ export async function updateWorkspaceRolePermissions(input: { roleKey: Workspace
   const permissions = input.permissions.filter((permission) => allowed.has(permission));
   const supabase = createAdminSupabase();
   const roleStartedAt = nowMs();
-  const roleId = await getWorkspaceRoleId(workspace.clientId, role.key);
+  const roleId = await getWorkspaceRoleId(workspace.clientId, role.key, workspace.userId);
   teamPerformanceLog({
     operation: "permission-save",
     step: "role-lookup",

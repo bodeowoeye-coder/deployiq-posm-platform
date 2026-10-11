@@ -6,6 +6,7 @@ import {
   getRetailWorkspaceManifest,
   retailNavigationForCapabilities,
 } from "./retailManifest.ts";
+import { ensureCanonicalSupervisorRole } from "../../workspace/canonicalSupervisorRole.ts";
 
 type DbClient = ReturnType<typeof createAdminSupabase>;
 
@@ -131,7 +132,9 @@ export async function provisionRetailWorkspaceReference(input: RetailWorkspaceId
     updated_at: now,
   }, { onConflict: "client_id,product_key", select: "id" });
 
-  const roleRows = await optionalUpsert(supabase, "workspace_roles", manifest.roles.map((role) => ({
+  const supervisorRole = await ensureCanonicalSupervisorRole({ clientId: input.clientId, actorUserId: null });
+  const nonSupervisorRoles = manifest.roles.filter((role) => role.key !== "supervisor");
+  const roleRows = await optionalUpsert(supabase, "workspace_roles", nonSupervisorRoles.map((role) => ({
     client_id: input.clientId,
     role_key: role.key,
     label: role.label,
@@ -140,9 +143,10 @@ export async function provisionRetailWorkspaceReference(input: RetailWorkspaceId
     status: "active",
     updated_at: now,
   })), { onConflict: "client_id,role_key", select: "id,role_key" });
+  roleRows.push({ id: supervisorRole.roleId, role_key: "supervisor" });
 
   const roleIdByKey = new Map(roleRows.map((row) => [String(row.role_key), String(row.id)]));
-  const permissionRows = manifest.roles.flatMap((role) => {
+  const permissionRows = nonSupervisorRoles.flatMap((role) => {
     const roleId = roleIdByKey.get(role.key);
     return roleId ? role.permissions.map((permission) => ({ role_id: roleId, permission })) : [];
   });
@@ -233,7 +237,7 @@ export async function provisionRetailWorkspaceReference(input: RetailWorkspaceId
     starterProjectId,
     checklistId: checklistId || null,
     roleIds: [...roleIdByKey.values()],
-    permissionCount: permissionRows.length,
+    permissionCount: permissionRows.length + supervisorRole.permissionCount,
     navigationCount: navigation.length,
     statusCount: Object.values(manifest.statuses).reduce((sum, statuses) => sum + statuses.length, 0),
     reportCount: manifest.starterData.reports.length,
