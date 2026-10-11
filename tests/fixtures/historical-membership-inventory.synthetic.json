@@ -1,0 +1,55 @@
+{
+  "evidenceCutoffAt": "2026-10-11T12:00:00.000Z",
+  "memberships": [
+    {
+      "clientId": "10000000-0000-4000-8000-000000000001",
+      "membershipId": "20000000-0000-4000-8000-000000000001",
+      "userId": "30000000-0000-4000-8000-000000000001",
+      "currentRoleId": "40000000-0000-4000-8000-000000000001",
+      "currentRoleKey": "workspace_manager",
+      "membershipStatus": "active",
+      "membershipCreatedAt": "2026-08-20T09:00:00.000Z",
+      "membershipUpdatedAt": "2026-08-20T09:00:00.000Z",
+      "currentRolePermissions": ["settings.manage", "users.manage"]
+    },
+    {
+      "clientId": "10000000-0000-4000-8000-000000000001",
+      "membershipId": "20000000-0000-4000-8000-000000000002",
+      "userId": "30000000-0000-4000-8000-000000000002",
+      "currentRoleId": "40000000-0000-4000-8000-000000000001",
+      "currentRoleKey": "workspace_manager",
+      "membershipStatus": "active",
+      "membershipCreatedAt": "2026-08-21T09:00:00.000Z",
+      "membershipUpdatedAt": "2026-08-21T09:00:00.000Z",
+      "currentRolePermissions": ["settings.manage", "users.manage"]
+    },
+    {
+      "clientId": "10000000-0000-4000-8000-000000000001",
+      "membershipId": "20000000-0000-4000-8000-000000000003",
+      "userId": "30000000-0000-4000-8000-000000000003",
+      "currentRoleId": "40000000-0000-4000-8000-000000000001",
+      "currentRoleKey": "workspace_manager",
+      "membershipStatus": "active",
+      "membershipCreatedAt": "2026-08-22T09:00:00.000Z",
+      "membershipUpdatedAt": "2026-08-22T09:00:00.000Z",
+      "currentRolePermissions": ["settings.manage", "users.manage"],
+      "operationalSupervisorEvidenceIds": ["activity-supervision-1"]
+    }
+  ],
+  "auditEvents": [
+    {
+      "id": "50000000-0000-4000-8000-000000000001",
+      "targetUserId": "30000000-0000-4000-8000-000000000001",
+      "actionType": "user_invited",
+      "createdAt": "2026-08-20T09:00:01.000Z",
+      "newValue": { "clientId": "10000000-0000-4000-8000-000000000001", "role": "Administrator" }
+    },
+    {
+      "id": "50000000-0000-4000-8000-000000000002",
+      "targetUserId": "30000000-0000-4000-8000-000000000002",
+      "actionType": "invitation_link_generated",
+      "createdAt": "2026-08-21T09:00:01.000Z",
+      "newValue": { "clientId": "10000000-0000-4000-8000-000000000001", "role": "Supervisor" }
+    }
+  ]
+}
