@@ -468,6 +468,7 @@ export function isAllowedReturnTo(role: UserRole, returnTo: string | null | unde
 
   if (normalized === "/admin" || normalized === "/admin/reports" || normalized === "/admin/submissions") return role === "admin";
   if (normalized === "/workspace/admin" || normalized.startsWith("/workspace/admin/")) return role === "client";
+  if (normalized === "/workspace/build" || normalized.startsWith("/workspace/build/")) return role === "client";
   if (normalized === "/workspace/notifications" || normalized.startsWith("/workspace/notifications/")) return role === "client";
   if (normalized === "/submit") return role === "installer";
   if (normalized === "/installer/history") return role === "installer";

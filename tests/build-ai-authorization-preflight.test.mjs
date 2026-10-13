@@ -78,7 +78,7 @@ test("preflight does not create a workspace membership authority gate", () => {
 });
 
 test("canonical resolver retains the complete production authority chain", () => {
-  assert.match(projectServiceSource, /getProjectAccessRegistry/);
+  assert.match(projectServiceSource, /resolveBuildProjectAccessRegistry/);
   assert.match(projectServiceSource, /permissions\.includes\(params\.requiredPermission\)/);
   assert.match(projectServiceSource, /canonicalizeBuildProject/);
   assert.match(projectServiceSource, /assessBuildProjectAuthority/);

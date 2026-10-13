@@ -5,6 +5,7 @@ import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { getPublicSupabaseConfig } from "@/lib/supabaseEnv";
 import { analysePassword, validatePasswordMatch } from "@/lib/acquisition/identity";
 import { createClient } from "@supabase/supabase-js";
+import { defaultDestinationForResolvedUser } from "@/lib/authDestinations";
 
 export const dynamic = "force-dynamic";
 
@@ -28,9 +29,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: matchError }, { status: 400 });
     }
 
-    const redirectTo = isAllowedReturnTo(context.role.role, requestedReturnTo)
+    const authoritativeDestination = await defaultDestinationForResolvedUser({
+      role: context.role.role,
+      userId: context.user.id,
+      clientId: context.role.client_id,
+      email: context.user.email,
+    });
+    const requestedPath = new URL(requestedReturnTo, "http://localhost").pathname;
+    const authoritativePath = new URL(authoritativeDestination, "http://localhost").pathname;
+    const returnToCompatible = authoritativePath === "/workspace/admin"
+      ? requestedPath === "/workspace/admin" || requestedPath.startsWith("/workspace/admin/")
+      : authoritativePath === "/workspace/build"
+        ? requestedPath === "/workspace/build" || requestedPath.startsWith("/workspace/build/")
+        : authoritativePath === "/workspace/notifications"
+          ? requestedPath === "/workspace/notifications" || requestedPath.startsWith("/workspace/notifications/")
+          : requestedPath === authoritativePath;
+    const redirectTo = isAllowedReturnTo(context.role.role, requestedReturnTo) && returnToCompatible
       ? requestedReturnTo
-      : "/onboarding";
+      : authoritativeDestination;
 
     const accountSecurity = await getAuthoritativeAccountSecurityState(context.user.id);
     if (!accountSecurity.passwordChangeRequired) {

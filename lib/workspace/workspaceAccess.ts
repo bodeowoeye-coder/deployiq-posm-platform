@@ -25,17 +25,41 @@ export async function resolveWorkspaceAccess(): Promise<WorkspaceAccessDecision>
     return { allowed: false, reason: "identity_missing" };
   }
 
+  return resolveWorkspaceAccessForIdentity({
+    userId: context.user.id,
+    appRole,
+    clientId,
+    profileStatus: text(context.profile?.status) || null,
+    explicitlyAssignedProjectIds: textArray(context.profile?.assigned_project_ids),
+  });
+}
+
+export async function resolveWorkspaceAccessForIdentity(input: {
+  userId: string;
+  appRole: WorkspaceAccessAppRole;
+  clientId: string | null;
+  profileStatus?: string | null;
+  explicitlyAssignedProjectIds?: string[];
+}): Promise<WorkspaceAccessDecision> {
+  const clientId = input.clientId;
+  const appRole = input.appRole;
+  const userId = text(input.userId);
+  if (!userId || !clientId) return { allowed: false, reason: "identity_missing" };
+
   const supabase = createAdminSupabase();
-  const [clientResult, membershipResult, projectsResult, activitiesResult, installerResult] = await Promise.all([
+  const [profileResult, clientResult, membershipResult, projectsResult, activitiesResult, installerResult] = await Promise.all([
+    input.profileStatus ? Promise.resolve({ data: { status: input.profileStatus, assigned_project_ids: input.explicitlyAssignedProjectIds ?? [] }, error: null })
+      : supabase.from("user_profiles").select("status,assigned_project_ids").eq("user_id", userId).maybeSingle(),
     clientId ? supabase.from("clients").select("id,status").eq("id", clientId).maybeSingle() : Promise.resolve({ data: null, error: null }),
-    clientId ? supabase.from("workspace_memberships").select("user_id,client_id,role_id,role_key,status").eq("client_id", clientId).eq("user_id", context.user.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    clientId ? supabase.from("workspace_memberships").select("user_id,client_id,role_id,role_key,status").eq("client_id", clientId).eq("user_id", userId).maybeSingle() : Promise.resolve({ data: null, error: null }),
     clientId ? supabase.from("projects").select("id,client_id,project_type,archived_at").eq("client_id", clientId) : Promise.resolve({ data: [], error: null }),
-    clientId ? supabase.from("build_runtime_activities").select("project_id,activity_owner_user_id,supervisor_user_id,archived_at").eq("client_id", clientId).or(`activity_owner_user_id.eq.${context.user.id},supervisor_user_id.eq.${context.user.id}`) : Promise.resolve({ data: [], error: null }),
-    appRole === "installer" ? supabase.from("installers").select("assigned_project_ids").eq("user_id", context.user.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    clientId ? supabase.from("build_runtime_activities").select("project_id,activity_owner_user_id,supervisor_user_id,archived_at").eq("client_id", clientId).or(`activity_owner_user_id.eq.${userId},supervisor_user_id.eq.${userId}`) : Promise.resolve({ data: [], error: null }),
+    appRole === "installer" ? supabase.from("installers").select("assigned_project_ids").eq("user_id", userId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
-  if (clientResult.error || membershipResult.error || projectsResult.error || activitiesResult.error || installerResult.error) {
+  if (profileResult.error || clientResult.error || membershipResult.error || projectsResult.error || activitiesResult.error || installerResult.error) {
     return { allowed: false, reason: "authority_unavailable" };
   }
+  const profile = profileResult.data;
   const client = clientResult.data;
   const membership = membershipResult.data;
   const projects = projectsResult.data;
@@ -54,10 +78,10 @@ export async function resolveWorkspaceAccess(): Promise<WorkspaceAccessDecision>
   const permissionRows = permissionResult.data;
 
   return assessWorkspaceAccess({
-    userId: context.user.id,
+    userId,
     appRole: appRole as WorkspaceAccessAppRole,
     authenticatedClientId: clientId,
-    profileStatus: text(context.profile?.status) || null,
+    profileStatus: text(profile?.status) || null,
     clientStatus: text(client?.status) || null,
     membership: membership ? {
       userId: text(membership.user_id),
@@ -77,7 +101,7 @@ export async function resolveWorkspaceAccess(): Promise<WorkspaceAccessDecision>
       projectType: text(project.project_type),
       archivedAt: text(project.archived_at) || null,
     })),
-    explicitlyAssignedProjectIds: textArray(context.profile?.assigned_project_ids),
+    explicitlyAssignedProjectIds: input.explicitlyAssignedProjectIds ?? textArray(profile?.assigned_project_ids),
     installerAssignedProjectIds: textArray(installer?.assigned_project_ids),
     activityAssignments: (activities ?? []).map((activity) => ({
       projectId: text(activity.project_id),

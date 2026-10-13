@@ -9,6 +9,7 @@ import { buildDependencyDrilldown } from "@/lib/build/management/dependencyDrill
 import { deriveManagementAttention } from "@/lib/build/management/managementAttention";
 import { selectActivityAttentionItems } from "@/lib/build/management/activityAttention";
 import { reconcileBuildNotificationsAfterMutation } from "@/lib/build/notifications/postMutation";
+import { classifyRuntimeActivityActionError } from "@/lib/build/runtime/activityActionError";
 import type { BuildEvidenceUploadAuthorization, BuildRuntimeActivity, BuildRuntimeActivityExecution, BuildRuntimeEvidence, BuildRuntimeEvidenceType, BuildRuntimePerson, BuildWorkPlan, BuildWorkPlanSchedulePreview } from "@/lib/build/runtime/types";
 
 export const BUILD_EVIDENCE_BUCKET = "build-runtime-evidence" as const;
@@ -479,15 +480,8 @@ export async function applyRuntimeActivityAction(params: { request?: Request; pr
     p_activity_owner_user_id: params.ownerUserId || null, p_supervisor_user_id: params.supervisorUserId || null, p_note: params.note || null,
   });
   if (error) {
-    const messages: Record<string, string> = {
-      BUILD_ACTIVITY_FS_PREDECESSOR_INCOMPLETE: "Complete the required predecessor Activity before starting this Activity.",
-      BUILD_ACTIVITY_CHECKLIST_INCOMPLETE: "Complete the required checklist before this Activity can be completed.",
-      BUILD_ACTIVITY_BLOCKER_REASON_REQUIRED: "Add a blocker reason before reporting this Activity as blocked.",
-      BUILD_ACTIVITY_INVALID_TRANSITION: "That Activity action is not valid for its current status.",
-      BUILD_ACTIVITY_REVIEW_REQUIRED: "Submit this Activity for review instead of completing it directly.",
-    };
-    const key = Object.keys(messages).find((candidate) => error.message.includes(candidate));
-    throw new AccessControlError(key ? messages[key] : "The Activity action could not be completed.", key ? 400 : 500);
+    const classified = classifyRuntimeActivityActionError(error);
+    throw new AccessControlError(classified.message, classified.status);
   }
   if (text(data) !== params.activityId) throw new AccessControlError("The Activity update could not be verified.", 500);
   if (params.action === "block" || params.action === "resume") {

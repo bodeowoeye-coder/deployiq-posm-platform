@@ -47,6 +47,7 @@ function returnToMatchesAuthoritativeDestination(authoritativeDestination: strin
   const requestedPath = normalizePath(requestedReturnTo);
   if (!authoritativePath || !requestedPath) return false;
   if (authoritativePath === "/workspace/admin") return requestedPath === "/workspace/admin" || requestedPath.startsWith("/workspace/admin/");
+  if (authoritativePath === "/workspace/build") return requestedPath === "/workspace/build" || requestedPath.startsWith("/workspace/build/");
   if (authoritativePath === "/workspace/notifications") return requestedPath === "/workspace/notifications" || requestedPath.startsWith("/workspace/notifications/");
   if (authoritativePath === "/admin") return requestedPath === "/admin" || requestedPath.startsWith("/admin/");
   if (authoritativePath === "/submit") return requestedPath === "/submit" || requestedPath.startsWith("/installer/");

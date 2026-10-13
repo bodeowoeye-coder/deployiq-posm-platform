@@ -22,12 +22,13 @@ const FILE_EVIDENCE_SUCCESS_MESSAGES: Record<Exclude<BuildRuntimeEvidenceType, "
   document: "Document uploaded successfully.",
 };
 
-export function BuildRuntimeActivityExecution({ execution, scope, context, activeView, routeBase }: {
+export function BuildRuntimeActivityExecution({ execution, scope, context, activeView, routeBase, backHref }: {
   execution: BuildRuntimeActivityExecution;
   scope: { projectId: string; siteId: string; workPackageId: string };
   context: { projectName: string; siteName: string; workPackageName: string };
   activeView: BuildActivityView;
   routeBase: string;
+  backHref?: string;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -138,7 +139,7 @@ export function BuildRuntimeActivityExecution({ execution, scope, context, activ
     </nav>
     <section className="rounded-xl border border-orange-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-orange-600">Build Activity</p><h3 className="mt-2 text-2xl font-bold text-slate-950">{activity.name}</h3><p className="mt-1 text-sm text-slate-600">{activity.category_name} · {activity.code}</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-bold capitalize text-orange-800">{activity.status.replaceAll("_", " ")}</span></div>
-      <Link href={`/workspace/admin/projects/${scope.projectId}/activities?workPackage=${scope.workPackageId}`} className="mt-4 inline-flex text-sm font-bold text-orange-700 hover:text-orange-800">← Back to Activities</Link>
+      <Link href={backHref ?? `/workspace/admin/projects/${scope.projectId}/activities?workPackage=${scope.workPackageId}`} className="mt-4 inline-flex text-sm font-bold text-orange-700 hover:text-orange-800">← Back to Activities</Link>
     </section>
     <nav aria-label="Activity navigation" className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-2 shadow-sm"><div className="flex min-w-max gap-1">{NAVIGATION.map((item) => <Link key={item.key} href={item.key === "overview" ? routeBase : `${routeBase}?view=${item.key}`} aria-current={activeView === item.key ? "page" : undefined} className={`rounded-lg px-3 py-2 text-sm font-bold ${activeView === item.key ? "bg-orange-50 text-orange-900" : "text-slate-600 hover:bg-slate-50"}`}>{item.label}</Link>)}</div></nav>
 

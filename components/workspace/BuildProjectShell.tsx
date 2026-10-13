@@ -16,22 +16,29 @@ export const BUILD_PROJECT_NAVIGATION = [
 ] as const;
 
 export type BuildProjectSection = (typeof BUILD_PROJECT_NAVIGATION)[number]["key"];
+export type BuildProjectNavigationItem = { key: string; label: string; segment: string };
 
 export function BuildProjectShell({
   project,
   activeSection,
+  routeBase,
+  projectsHref = "/workspace/admin/projects",
+  navigation = BUILD_PROJECT_NAVIGATION,
   children,
 }: {
   project: CanonicalBuildProject;
-  activeSection: BuildProjectSection;
+  activeSection: BuildProjectSection | string;
+  routeBase?: string;
+  projectsHref?: string;
+  navigation?: ReadonlyArray<BuildProjectNavigationItem>;
   children: React.ReactNode;
 }) {
-  const base = `/workspace/admin/projects/${project.id}`;
+  const base = routeBase ?? `/workspace/admin/projects/${project.id}`;
   const activeLabel = BUILD_PROJECT_NAVIGATION.find((item) => item.key === activeSection)?.label ?? "Overview";
   return (
     <div className="space-y-4">
       <nav aria-label="Build project breadcrumb" className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500">
-        <Link href="/workspace/admin/projects" className="text-orange-700 hover:text-orange-800">Projects</Link>
+        <Link href={projectsHref} className="text-orange-700 hover:text-orange-800">Projects</Link>
         <span aria-hidden="true">›</span><Link href={base} className="text-orange-700 hover:text-orange-800">{project.project_name}</Link>
         {activeSection !== "overview" ? <><span aria-hidden="true">›</span><span>{activeLabel}</span></> : null}
       </nav>
@@ -47,14 +54,14 @@ export function BuildProjectShell({
               <ProjectIdentity label="Client reference" value={project.client_project_reference || "Not set"} mono />
             </dl>
           </div>
-          <Link href="/workspace/admin/projects" className="text-sm font-bold text-orange-600 hover:text-orange-700">Back to Projects</Link>
+          <Link href={projectsHref} className="text-sm font-bold text-orange-600 hover:text-orange-700">Back to Projects</Link>
         </div>
       </section>
 
       <nav className="overflow-x-auto rounded-xl border border-slate-300 bg-white p-2 shadow-sm" aria-label="Build project navigation">
         <p className="px-2 pb-2 text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Build operational navigation</p>
         <div className="flex min-w-max gap-1">
-          {BUILD_PROJECT_NAVIGATION.map((item) => {
+          {navigation.map((item) => {
             const href = item.segment ? `${base}/${item.segment}` : base;
             const active = activeSection === item.key;
             return (

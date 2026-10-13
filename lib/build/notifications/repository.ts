@@ -3,6 +3,8 @@ import { AccessControlError, getAuthenticatedUserContext, type AuthenticatedUser
 import { createAdminSupabase } from "../../supabaseAdmin.ts";
 import { BUILD_NOTIFICATION_LABELS, type WorkspaceNotification } from "../../notifications/presentation.ts";
 import { reconcileAuthenticatedBuildNotifications } from "./service.ts";
+import { resolveWorkspaceAccessForIdentity } from "../../workspace/workspaceAccess.ts";
+import { resolveOperationalBuildDestination } from "../../workspace/operationalBuildAccess.ts";
 
 const BUILD_PROJECT_TYPES = new Set(["Construction", "Real Estate", "Facility Management"]);
 const MAX_RECONCILIATION_PROJECTS = 20;
@@ -11,11 +13,20 @@ const text = (value: unknown) => typeof value === "string" ? value : "";
 
 async function resolveRecipientScope(context: AuthenticatedUserContext) {
   if (context.role !== "client" || !context.client_id) throw new AccessControlError("Unauthorized.", 403);
+  const workspaceAccess = await resolveWorkspaceAccessForIdentity({
+    userId: context.user_id,
+    clientId: context.client_id,
+    appRole: "client",
+  });
+  if (!workspaceAccess.allowed || workspaceAccess.clientId !== context.client_id || workspaceAccess.userId !== context.user_id) {
+    throw new AccessControlError("Unauthorized.", 403);
+  }
+  const projectIds = workspaceAccess.supervisorRoleAmbiguous ? [] : workspaceAccess.authorizedProjectIds;
   const supabase = createAdminSupabase();
   const [{ data: membership, error: membershipError }, { data: projects, error: projectError }] = await Promise.all([
     supabase.from("workspace_memberships").select("user_id").eq("client_id", context.client_id).eq("user_id", context.user_id).eq("status", "active").maybeSingle(),
-    context.allowed_project_ids.length
-      ? supabase.from("projects").select("id,client_id,project_name,project_type,status,archived_at").eq("client_id", context.client_id).in("id", context.allowed_project_ids).is("archived_at", null)
+    projectIds.length
+      ? supabase.from("projects").select("id,client_id,project_name,project_type,status,archived_at").eq("client_id", context.client_id).in("id", projectIds).is("archived_at", null)
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (membershipError || !membership) throw new AccessControlError("Unauthorized.", 403);
@@ -51,8 +62,10 @@ async function loadAuthorizedRows(context: AuthenticatedUserContext, options?: {
   return { rows: (data ?? []) as Row[], scope };
 }
 
-async function destinations(rows: Row[], context: AuthenticatedUserContext) {
+async function destinations(rows: Row[], context: AuthenticatedUserContext, authorizedProjectIds: string[]) {
   const supabase = createAdminSupabase();
+  const workspaceDestination = await resolveOperationalBuildDestination({ userId: context.user_id, clientId: context.client_id! });
+  const base = workspaceDestination === "/workspace/build" ? "/workspace/build/projects" : "/workspace/admin/projects";
   const episodeIds = [...new Set(rows.map((row) => text(row.episode_id)).filter(Boolean))];
   if (!episodeIds.length) return new Map<string, { type: string; href: string; available: boolean }>();
   const { data: episodes, error: episodeError } = await supabase.from("build_notification_episodes").select("id,condition_id").in("id", episodeIds);
@@ -67,12 +80,12 @@ async function destinations(rows: Row[], context: AuthenticatedUserContext) {
   const directActivityIds = [...new Set((conditions ?? []).filter((row) => row.source_entity_type === "runtime_activity").map((row) => text(row.source_entity_id)))];
   const exceptionIds = [...new Set((conditions ?? []).filter((row) => row.source_entity_type === "runtime_exception").map((row) => text(row.source_entity_id)))];
   const { data: exceptions, error: exceptionError } = exceptionIds.length
-    ? await supabase.from("build_runtime_exceptions").select("id,client_id,project_id,runtime_activity_id").eq("client_id", context.client_id!).in("project_id", context.allowed_project_ids).in("id", exceptionIds)
+    ? await supabase.from("build_runtime_exceptions").select("id,client_id,project_id,runtime_activity_id").eq("client_id", context.client_id!).in("project_id", authorizedProjectIds).in("id", exceptionIds)
     : { data: [], error: null };
   if (exceptionError) throw new Error("Could not authorize Build notification destinations");
   const activityIds = [...new Set([...directActivityIds, ...(exceptions ?? []).map((row) => text(row.runtime_activity_id))].filter(Boolean))];
   const { data: activities, error: activityError } = activityIds.length
-    ? await supabase.from("build_runtime_activities").select("id,client_id,project_id").eq("client_id", context.client_id!).in("project_id", context.allowed_project_ids).in("id", activityIds).is("archived_at", null)
+    ? await supabase.from("build_runtime_activities").select("id,client_id,project_id").eq("client_id", context.client_id!).in("project_id", authorizedProjectIds).in("id", activityIds).is("archived_at", null)
     : { data: [], error: null };
   if (activityError) throw new Error("Could not authorize Build notification destinations");
   const activityById = new Map((activities ?? []).map((row) => [text(row.id), row]));
@@ -96,7 +109,7 @@ async function destinations(rows: Row[], context: AuthenticatedUserContext) {
     const expectedType = category === "execution_block" ? "activity_execution" : category === "exception" ? "activity_exceptions" : "activity_inspection";
     if (!activityId || destinationType !== expectedType) { result.set(text(row.id), { type: expectedType, href: "", available: false }); continue; }
     const view = category === "execution_block" ? "execution" : category === "exception" ? "exceptions" : "inspection";
-    result.set(text(row.id), { type: expectedType, href: `/workspace/admin/projects/${encodeURIComponent(projectId)}/activities/${encodeURIComponent(activityId)}?view=${view}`, available: true });
+    result.set(text(row.id), { type: expectedType, href: `${base}/${encodeURIComponent(projectId)}/activities/${encodeURIComponent(activityId)}?view=${view}`, available: true });
   }
   return result;
 }
@@ -104,7 +117,7 @@ async function destinations(rows: Row[], context: AuthenticatedUserContext) {
 export async function listAuthenticatedBuildNotifications(options?: { reconcile?: boolean }) {
   const context = await getAuthenticatedUserContext();
   const { rows, scope } = await loadAuthorizedRows(context, options);
-  const destinationById = await destinations(rows, context);
+  const destinationById = await destinations(rows, context, scope.projectIds);
   const notifications: WorkspaceNotification[] = rows.map((row) => ({
     id: text(row.id), source: "build", category: text(row.category),
     title: text(row.title) || BUILD_NOTIFICATION_LABELS[text(row.category) as keyof typeof BUILD_NOTIFICATION_LABELS] || "Build Update",
@@ -118,12 +131,12 @@ export async function listAuthenticatedBuildNotifications(options?: { reconcile?
 
 export async function getAuthenticatedBuildNotificationConsumption(id: string) {
   const context = await getAuthenticatedUserContext();
-  const { rows } = await loadAuthorizedRows(context, { id, reconcile: false });
+  const { rows, scope } = await loadAuthorizedRows(context, { id, reconcile: false });
   const row = rows[0];
   if (!row) throw new AccessControlError("Notification is unavailable.", 404);
-  const destination = (await destinations([row], context)).get(text(row.id));
+  const destination = (await destinations([row], context, scope.projectIds)).get(text(row.id));
   if (!destination?.available) throw new AccessControlError("Notification destination is unavailable.", 404);
-  const match = destination.href.match(/^\/workspace\/admin\/projects\/([^/]+)\/activities\/([^?]+)\?view=(execution|inspection|exceptions)$/);
+  const match = destination.href.match(/^\/workspace\/(?:admin|build)\/projects\/([^/]+)\/activities\/([^?]+)\?view=(execution|inspection|exceptions)$/);
   if (!match) throw new AccessControlError("Notification destination is unavailable.", 404);
   return { notificationId: text(row.id), projectId: decodeURIComponent(match[1]), activityId: decodeURIComponent(match[2]), view: match[3] as "execution" | "inspection" | "exceptions" };
 }

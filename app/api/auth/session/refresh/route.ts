@@ -13,6 +13,7 @@ function safeWorkspaceReturnTo(value: string | null) {
     const url = new URL(value, "http://localhost");
     const destination = `${url.pathname}${url.search}`;
     return url.pathname === "/workspace/admin" || url.pathname.startsWith("/workspace/admin/")
+      || url.pathname === "/workspace/build" || url.pathname.startsWith("/workspace/build/")
       ? destination
       : "/workspace/admin";
   } catch {
@@ -31,15 +32,24 @@ async function destinationAfterRefresh(input: {
   email?: string | null;
   requestedReturnTo: string;
 }) {
-  if (input.role === "client" && isAllowedReturnTo(input.role, input.requestedReturnTo)) {
-    return input.requestedReturnTo;
-  }
-  return defaultDestinationForResolvedUser({
+  const authoritative = await defaultDestinationForResolvedUser({
     role: input.role,
     userId: input.userId,
     clientId: input.clientId,
     email: input.email,
   });
+  if (input.role !== "client" || !isAllowedReturnTo(input.role, input.requestedReturnTo)) return authoritative;
+  const requestedPath = new URL(input.requestedReturnTo, "http://localhost").pathname;
+  const authoritativePath = new URL(authoritative, "http://localhost").pathname;
+  const compatible = authoritativePath === "/workspace/admin"
+    ? requestedPath === "/workspace/admin" || requestedPath.startsWith("/workspace/admin/")
+    : authoritativePath === "/workspace/build"
+      ? requestedPath === "/workspace/build" || requestedPath.startsWith("/workspace/build/")
+      : authoritativePath === "/workspace/notifications"
+        ? requestedPath === "/workspace/notifications" || requestedPath.startsWith("/workspace/notifications/")
+        : requestedPath === authoritativePath;
+  if (compatible) return input.requestedReturnTo;
+  return authoritative;
 }
 
 export async function GET(request: Request) {

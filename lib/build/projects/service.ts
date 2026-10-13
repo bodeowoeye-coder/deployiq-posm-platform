@@ -1,8 +1,9 @@
 import { AccessControlError, type AuthenticatedUserContext } from "@/lib/accessControl";
-import { getProjectAccessRegistry, type ProjectAccessRegistry } from "@/lib/core/auth";
+import type { ProjectAccessRegistry } from "@/lib/core/auth";
 import type { DeployIQPermission } from "@/lib/core/permissions";
 import { createAdminSupabase } from "@/lib/supabaseAdmin";
 import { assessBuildProjectAuthority, canonicalizeBuildProject, type CanonicalBuildProject } from "@/lib/build/projects/types";
+import { resolveBuildProjectAccessRegistry } from "@/lib/workspace/operationalBuildAccess";
 
 export const CANONICAL_BUILD_PROJECT_FIELDS = [
   "id",
@@ -75,7 +76,7 @@ export async function resolveCanonicalBuildProject(params: {
   const projectId = text(params.projectId);
   if (!projectId) throw new AccessControlError("projectId is required.", 400);
 
-  const registry = await getProjectAccessRegistry(params.request);
+  const registry = await resolveBuildProjectAccessRegistry(params.request);
   if (!registry.permissions.includes(params.requiredPermission)) {
     throw new AccessControlError("You do not have permission to access Build projects.", 403);
   }
