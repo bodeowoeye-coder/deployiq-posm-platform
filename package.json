@@ -24,7 +24,11 @@
     "db:local:bootstrap": "node scripts/bootstrap-disposable-local-database.mjs --rehearsals=1",
     "db:local:rehearse": "node scripts/bootstrap-disposable-local-database.mjs --rehearsals=2",
     "db:local:verify": "node scripts/verify-local-database-baseline.mjs",
-    "db:local:test": "node --test tests/database-baseline-recovery.test.mjs"
+    "db:local:test": "node --test tests/database-baseline-recovery.test.mjs",
+    "e1c:seed-local": "node scripts/seed-e1c-build-uat.mjs",
+    "e1c:rehearse-fixture": "node scripts/run-e1c-local-uat.mjs",
+    "e1c:uat-local": "node scripts/run-e1c-local-uat.mjs --browser",
+    "e1c:test-harness": "node --test tests/e1c-build-uat-harness.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

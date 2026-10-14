@@ -7,6 +7,8 @@ export const BASELINE_BOUNDARY = "20260816020000";
 export const FIRST_FORWARD_MIGRATION = "20260823010000";
 export const E1B_MIGRATION = "20261013010000";
 export const AUTHORIZATION_REPAIR_MIGRATION = "20261014010000";
+export const E1C_FIELD_COORDINATOR_MIGRATION = "20261015010000";
+export const E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION = "20261015020000";
 
 export function migrationFiles(root) {
   const directory = resolve(root, "supabase/migrations");
@@ -33,13 +35,15 @@ export function assertRecoveryFiles(root) {
     `supabase/migrations/${FIRST_FORWARD_MIGRATION}_add_commercial_entitlement_authority_foundation.sql`,
     `supabase/migrations/${E1B_MIGRATION}_add_build_mobile_evidence_sync_foundation.sql`,
     `supabase/migrations/${AUTHORIZATION_REPAIR_MIGRATION}_repair_canonical_session_table_privileges.sql`,
+    `supabase/migrations/${E1C_FIELD_COORDINATOR_MIGRATION}_align_field_coordinator_activity_owner_authority.sql`,
+    `supabase/migrations/${E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION}_repair_customer_workspace_status_lookup_privilege.sql`,
   ];
   for (const relative of required) {
     if (!existsSync(resolve(root, relative))) throw new Error(`recovery_file_missing:${relative}`);
   }
   const forward = forwardMigrations(root);
   if (forward[0]?.version !== FIRST_FORWARD_MIGRATION) throw new Error("unexpected_first_forward_migration");
-  if (forward.at(-1)?.version !== AUTHORIZATION_REPAIR_MIGRATION) throw new Error("unexpected_last_forward_migration");
+  if (forward.at(-1)?.version !== E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION) throw new Error("unexpected_last_forward_migration");
 }
 
 export function run(command, args, { cwd, capture = false, env = process.env } = {}) {
@@ -178,7 +182,7 @@ export function assertCurrentSchema(inventory) {
     if (inventory.table_grants.some((grant) => grant.table === table && ["anon", "PUBLIC"].includes(grant.grantee)))
       throw new Error(`anonymous_session_table_grant:${table}`);
   }
-  for (const table of ["user_roles", "user_profiles", "clients", "onboarding_drafts", "workspace_memberships", "workspace_roles", "workspace_role_permissions", "projects"]) {
+  for (const table of ["user_roles", "user_profiles", "clients", "onboarding_drafts", "workspace_memberships", "workspace_roles", "workspace_role_permissions", "workspace_statuses", "projects"]) {
     if (!hasGrant(table, "service_role", "SELECT")) throw new Error(`service_session_select_missing:${table}`);
   }
   const evidenceBucket = inventory.buckets.find((bucket) => bucket.id === "build-runtime-evidence");
@@ -189,7 +193,9 @@ export function assertCurrentSchema(inventory) {
   if (inventory.migrations[0] !== representedMigrationVersions(resolve(import.meta.dirname, "../..")).at(0))
     throw new Error("migration_history_start_invalid");
   if (!inventory.migrations.includes(E1B_MIGRATION)) throw new Error("e1b_migration_not_applied");
-  if (inventory.migrations.at(-1) !== AUTHORIZATION_REPAIR_MIGRATION) throw new Error("authorization_repair_migration_not_applied");
+  if (!inventory.migrations.includes(AUTHORIZATION_REPAIR_MIGRATION)) throw new Error("authorization_repair_migration_not_applied");
+  if (!inventory.migrations.includes(E1C_FIELD_COORDINATOR_MIGRATION)) throw new Error("e1c_field_coordinator_migration_not_applied");
+  if (inventory.migrations.at(-1) !== E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION) throw new Error("e1c_workspace_status_privilege_migration_not_applied");
 }
 
 export function assertCanonicalLocalData(databaseUrl) {

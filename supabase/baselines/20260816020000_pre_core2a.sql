@@ -2305,3 +2305,6 @@ grant all privileges on table
   public.projects,
   public.installers
 to service_role;
+
+grant select on table public.workspace_statuses to service_role;
+revoke all privileges on table public.workspace_statuses from anon;

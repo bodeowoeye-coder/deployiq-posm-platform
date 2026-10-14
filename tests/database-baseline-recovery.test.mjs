@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   BASELINE_BOUNDARY,
   AUTHORIZATION_REPAIR_MIGRATION,
+  E1C_FIELD_COORDINATOR_MIGRATION,
+  E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION,
   E1B_MIGRATION,
   FIRST_FORWARD_MIGRATION,
   assertRecoveryFiles,
@@ -20,7 +22,8 @@ test("canonical baseline boundary and forward migration order are stable", () =>
   assert.doesNotThrow(() => assertRecoveryFiles(root));
   assert.equal(BASELINE_BOUNDARY, "20260816020000");
   assert.equal(forwardMigrations(root)[0].version, FIRST_FORWARD_MIGRATION);
-  assert.equal(forwardMigrations(root).at(-1).version, AUTHORIZATION_REPAIR_MIGRATION);
+  assert.ok(forwardMigrations(root).some(({ version }) => version === E1C_FIELD_COORDINATOR_MIGRATION));
+  assert.equal(forwardMigrations(root).at(-1).version, E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION);
   assert.ok(representedMigrationVersions(root).includes("20260625000000"));
 });
 

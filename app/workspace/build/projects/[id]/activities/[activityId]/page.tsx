@@ -19,8 +19,11 @@ export default async function OperationalBuildActivityPage({ params, searchParam
   if (!workPackage || !site || workPackage.siteId !== site.id) notFound();
   const execution = await getRuntimeActivityExecution({ projectId: params.id, siteId: site.id, workPackageId: workPackage.id, activityId: params.activityId });
   const routeBase = `/workspace/build/projects/${params.id}/activities/${params.activityId}`;
+  const assignedOwner = execution.activity.activity_owner_user_id === access.userId;
   const assignedSupervisor = execution.activity.supervisor_user_id === access.userId;
-  const canUseExecution = access.roleKey === "project_manager" || (access.roleKey === "supervisor" && assignedSupervisor);
+  const canUseExecution = access.roleKey === "project_manager"
+    || (access.roleKey === "supervisor" && assignedSupervisor)
+    || (access.roleKey === "field_coordinator" && assignedOwner);
   if (!canUseExecution) return <ReadOnlyActivity execution={execution} routeBase={routeBase}/>;
   return <BuildRuntimeActivityExecution execution={execution} scope={{ projectId: params.id, siteId: site.id, workPackageId: workPackage.id }} context={{ projectName: overview.project.project_name, siteName: site.name, workPackageName: workPackage.name }} activeView={view} routeBase={routeBase} backHref={`/workspace/build/projects/${params.id}/activities?workPackage=${workPackage.id}`} mobileIdentity={{ userId: access.userId, clientId: access.clientId }}/>;
 }
