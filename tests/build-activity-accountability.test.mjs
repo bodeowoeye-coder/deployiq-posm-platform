@@ -8,6 +8,7 @@ const service = read("lib/build/runtime/service.ts");
 const types = read("lib/build/runtime/types.ts");
 const ui = read("components/workspace/BuildRuntimeActivityExecution.tsx");
 const route = read("app/workspace/admin/projects/[id]/activities/[activityId]/page.tsx");
+const operationalRoute = read("app/workspace/build/projects/[id]/activities/[activityId]/page.tsx");
 const attention = read("lib/build/management/managementAttention.ts");
 const item = (key, overrides = {}) => ({ key, type: "review_pending", projectId: "project", siteId: "site", workPackageId: "package", workPlanId: "plan", activityId: "activity",
   ownerUserId: "owner", ownerDisplayName: "Activity Owner", ownerKind: "activity_owner", expectedActor: "assigned_supervisor_or_management", expectedActorUserId: "supervisor", expectedActorDisplayName: "Supervisor",
@@ -93,7 +94,8 @@ test("completed and approved exclusion and zero state continue to come from A.5.
 test("tenant ancestry, archived filtering and execution gates remain server authoritative", () => {
   assert.match(service, /const plan = await getWorkPlan\(params\)/); assert.match(service, /plan\?\.activities\.find/);
   assert.match(service, /\.is\("archived_at", null\)/); assert.match(route, /getRuntimeActivityProjectScope/);
-  assert.doesNotMatch(ui, /clientId/); assert.match(service, /assertRuntimeExecutor/);
+  assert.match(operationalRoute, /mobileIdentity=\{\{ userId: access\.userId, clientId: access\.clientId \}\}/);
+  assert.doesNotMatch(ui, /searchParams.*clientId|body\.clientId|localStorage.*clientId/); assert.match(service, /assertRuntimeExecutor/);
 });
 
 test("presentation is responsive, compact and free from scoring blame prediction or AI language", () => {

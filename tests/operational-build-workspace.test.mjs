@@ -123,10 +123,13 @@ test("Build notifications preserve recipient and ancestry authority while using 
   assert.match(repository, /\(\?:admin\|build\)/);
 });
 
-test("responsive support is shell-only and introduces no Build Mobile engine", () => {
+test("responsive support reuses the existing Build engine and adds only a bounded evidence coordinator", () => {
   const shell = source("components/workspace/OperationalBuildWorkspaceShell.tsx");
+  const coordinator = source("components/workspace/BuildMobileEvidenceOutbox.tsx");
   assert.match(shell, /overflow-x-auto/);
   assert.match(shell, /lg:grid-cols/);
   assert.match(shell, /min-h-11/);
-  assert.doesNotMatch(shell, /BuildMobile|mobile execution engine/i);
+  assert.match(shell, /BuildEvidenceSyncCoordinator/);
+  assert.match(coordinator, /runtime-activities/);
+  assert.doesNotMatch(coordinator, /apply_build_runtime_activity_action|record_build_runtime_inspection|apply_build_runtime_exception_action/);
 });

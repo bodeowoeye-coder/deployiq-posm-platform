@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 const value = (input: unknown) => typeof input === "string" ? input.trim() : "";
 const evidenceType = (input: unknown) => value(input) as BuildRuntimeEvidenceType;
 const numberOrNull = (input: unknown) => typeof input === "number" && Number.isFinite(input) ? input : null;
+const boundedCode = (status: number) => status === 401 ? "authentication_required" : status === 403 ? "forbidden" : status === 404 ? "not_found" : status === 409 ? "state_changed" : status >= 500 ? "evidence_delivery_failed" : "validation_failed";
 
 export async function POST(request: NextRequest, { params }: { params: { activityId: string } }) {
   try {
@@ -16,18 +17,21 @@ export async function POST(request: NextRequest, { params }: { params: { activit
       workPackageId: value(body.workPackageId), checklistItemId: value(body.checklistItemId) || null, exceptionId: value(body.exceptionId) || null };
     if (body.action === "authorize") {
       const authorization = await authorizeRuntimeEvidenceUpload({ ...common, evidenceType: evidenceType(body.evidenceType),
-        originalFilename: value(body.originalFilename), mimeType: value(body.mimeType), fileSizeBytes: Number(body.fileSizeBytes) });
-      return NextResponse.json({ authorization });
+        originalFilename: value(body.originalFilename), mimeType: value(body.mimeType), fileSizeBytes: Number(body.fileSizeBytes), operationId: value(body.operationId) || null });
+      return "evidenceId" in authorization ? NextResponse.json({ evidenceId: authorization.evidenceId }) : NextResponse.json({ authorization });
     }
     if (body.action === "finalize" || body.action === "note") {
       const id = await finalizeRuntimeEvidence({ ...common, authorizationId: value(body.authorizationId) || null,
         evidenceType: body.action === "note" ? "note" : evidenceType(body.evidenceType), description: value(body.description) || null,
-        note: value(body.note) || null, latitude: numberOrNull(body.latitude), longitude: numberOrNull(body.longitude) });
+        note: value(body.note) || null, latitude: numberOrNull(body.latitude), longitude: numberOrNull(body.longitude), operationId: value(body.operationId) || null,
+        deviceCapturedAt: value(body.deviceCapturedAt) || null, deviceTimezoneOffsetMinutes: numberOrNull(body.deviceTimezoneOffsetMinutes),
+        gpsAccuracyMetres: numberOrNull(body.gpsAccuracyMetres), gpsCapturedAt: value(body.gpsCapturedAt) || null,
+        gpsSource: value(body.gpsSource) || null, locationStatus: value(body.locationStatus) || null });
       return NextResponse.json({ id });
     }
     return NextResponse.json({ error: "Evidence action is invalid." }, { status: 400 });
   } catch (error) {
     const status = error instanceof AccessControlError ? error.status : 500;
-    return NextResponse.json({ error: status >= 500 ? "The Evidence request could not be completed." : error instanceof Error ? error.message : "The Evidence request could not be completed." }, { status });
+    return NextResponse.json({ code: boundedCode(status), error: status >= 500 ? "The Evidence request could not be completed." : error instanceof Error ? error.message : "The Evidence request could not be completed." }, { status });
   }
 }

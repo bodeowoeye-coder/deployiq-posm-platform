@@ -205,6 +205,12 @@ export async function getRuntimeActivityExecution(params: { request?: Request; p
       fileSizeBytes: item.file_size_bytes == null ? null : Number(item.file_size_bytes), note: text(item.note) || null,
       description: text(item.description) || null, latitude: item.latitude == null ? null : Number(item.latitude),
       longitude: item.longitude == null ? null : Number(item.longitude), uploadedBy: text(item.uploaded_by),
+      deviceCapturedAt: text(item.device_captured_at) || null,
+      deviceTimezoneOffsetMinutes: item.device_timezone_offset_minutes == null ? null : Number(item.device_timezone_offset_minutes),
+      gpsAccuracyMetres: item.gps_accuracy_metres == null ? null : Number(item.gps_accuracy_metres),
+      gpsCapturedAt: text(item.gps_captured_at) || null,
+      gpsSource: text(item.gps_source) || null,
+      locationStatus: text(item.location_status) || null,
       uploaderName: allPeople.get(text(item.uploaded_by))?.name ?? "Workspace member", createdAt: text(item.created_at),
       signedUrl: signed?.data?.signedUrl ?? null,
     };
@@ -352,7 +358,7 @@ async function verifyStoredEvidence(path: string, mimeType: string, expectedSize
   }
 }
 
-export async function authorizeRuntimeEvidenceUpload(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; exceptionId?: string | null; evidenceType: BuildRuntimeEvidenceType; originalFilename: string; mimeType: string; fileSizeBytes: number }): Promise<BuildEvidenceUploadAuthorization> {
+export async function authorizeRuntimeEvidenceUpload(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; exceptionId?: string | null; evidenceType: BuildRuntimeEvidenceType; originalFilename: string; mimeType: string; fileSizeBytes: number; operationId?: string | null }): Promise<BuildEvidenceUploadAuthorization | { evidenceId: string }> {
   const exception = await assertRuntimeExceptionScope(params);
   const resolved = exception ? { access: exception.access, plan: await loadWorkPlanByScope({ clientId: exception.access.project.client_id, projectId: exception.access.project.id, siteId: exception.access.site.id, workPackageId: exception.access.workPackage!.id }) } : await assertRuntimeExecutor(params);
   if (!resolved.plan) throw new AccessControlError("Work Plan is unavailable.", 404);
@@ -360,6 +366,32 @@ export async function authorizeRuntimeEvidenceUpload(params: { request?: Request
   validateFileEvidence(params.evidenceType, params.mimeType, params.fileSizeBytes);
   if (exception && text(params.checklistItemId)) throw new AccessControlError("Corrective evidence cannot be linked to a Checklist item.", 400);
   const checklistItemId = await assertRuntimeChecklistScope({ activityId: params.activityId, workPlanId: text(resolved.plan.id), checklistItemId: params.checklistItemId });
+  const operationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text(params.operationId)) ? text(params.operationId) : null;
+  if (operationId) {
+    const existingEvidence = await createAdminSupabase().from("build_runtime_evidence").select("id")
+      .eq("client_id", resolved.access.project.client_id).eq("uploaded_by", resolved.access.authContext.user_id)
+      .eq("mobile_operation_id", operationId).maybeSingle();
+    if (existingEvidence.data?.id) return { evidenceId: text(existingEvidence.data.id) };
+    const existingUpload = await createAdminSupabase().from("build_runtime_evidence_uploads").select("*")
+      .eq("client_id", resolved.access.project.client_id).eq("authorized_by", resolved.access.authContext.user_id)
+      .eq("mobile_operation_id", operationId).is("rejected_at", null).maybeSingle();
+    if (existingUpload.data && !existingUpload.data.finalized_at && new Date(text(existingUpload.data.expires_at)).getTime() > Date.now()
+      && text(existingUpload.data.project_id) === resolved.access.project.id
+      && text(existingUpload.data.site_id) === resolved.access.site.id
+      && text(existingUpload.data.work_package_id) === resolved.access.workPackage!.id
+      && text(existingUpload.data.runtime_activity_id) === params.activityId
+      && text(existingUpload.data.runtime_checklist_item_id) === (checklistItemId ?? "")
+      && text(existingUpload.data.runtime_exception_id) === (exception?.id ?? "")
+      && text(existingUpload.data.evidence_type) === params.evidenceType
+      && text(existingUpload.data.expected_mime_type) === params.mimeType
+      && Number(existingUpload.data.expected_file_size_bytes) === params.fileSizeBytes) {
+      const signed = await createAdminSupabase().storage.from(BUILD_EVIDENCE_BUCKET).createSignedUploadUrl(text(existingUpload.data.storage_path), { upsert: false });
+      if (!signed.error) return { authorizationId: text(existingUpload.data.id), bucket: BUILD_EVIDENCE_BUCKET, path: signed.data.path, token: signed.data.token };
+    }
+    if (existingUpload.data && !existingUpload.data.finalized_at) {
+      await createAdminSupabase().from("build_runtime_evidence_uploads").update({ rejected_at: new Date().toISOString() }).eq("id", existingUpload.data.id);
+    }
+  }
   const id = crypto.randomUUID();
   const path = `${resolved.access.project.client_id}/${resolved.access.project.id}/${params.activityId}/${id}`;
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -377,7 +409,8 @@ export async function authorizeRuntimeEvidenceUpload(params: { request?: Request
     runtime_exception_id: exception?.id ?? null,
     evidence_type: params.evidenceType, storage_bucket: BUILD_EVIDENCE_BUCKET, storage_path: path,
     original_filename: safeFilename(params.originalFilename), expected_mime_type: params.mimeType,
-    expected_file_size_bytes: params.fileSizeBytes, authorized_by: resolved.access.authContext.user_id, expires_at: expiresAt });
+    expected_file_size_bytes: params.fileSizeBytes, authorized_by: resolved.access.authContext.user_id, expires_at: expiresAt,
+    mobile_operation_id: operationId });
   if (error) throw new AccessControlError("Evidence upload could not be authorized.", 500);
   const signed = await supabase.storage.from(BUILD_EVIDENCE_BUCKET).createSignedUploadUrl(path, { upsert: false });
   if (signed.error) {
@@ -387,7 +420,7 @@ export async function authorizeRuntimeEvidenceUpload(params: { request?: Request
   return { authorizationId: id, bucket: BUILD_EVIDENCE_BUCKET, path: signed.data.path, token: signed.data.token };
 }
 
-export async function finalizeRuntimeEvidence(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; exceptionId?: string | null; authorizationId?: string | null; evidenceType: BuildRuntimeEvidenceType; description?: string | null; note?: string | null; latitude?: number | null; longitude?: number | null }) {
+export async function finalizeRuntimeEvidence(params: { request?: Request; projectId: string; siteId: string; workPackageId: string; activityId: string; checklistItemId?: string | null; exceptionId?: string | null; authorizationId?: string | null; evidenceType: BuildRuntimeEvidenceType; description?: string | null; note?: string | null; latitude?: number | null; longitude?: number | null; operationId?: string | null; deviceCapturedAt?: string | null; deviceTimezoneOffsetMinutes?: number | null; gpsAccuracyMetres?: number | null; gpsCapturedAt?: string | null; gpsSource?: string | null; locationStatus?: string | null }) {
   const exception = await assertRuntimeExceptionScope(params);
   const resolved = exception ? { access: exception.access, plan: await loadWorkPlanByScope({ clientId: exception.access.project.client_id, projectId: exception.access.project.id, siteId: exception.access.site.id, workPackageId: exception.access.workPackage!.id }) } : await assertRuntimeExecutor(params);
   if (!resolved.plan) throw new AccessControlError("Work Plan is unavailable.", 404);
@@ -396,6 +429,13 @@ export async function finalizeRuntimeEvidence(params: { request?: Request; proje
   const checklistItemId = await assertRuntimeChecklistScope({ activityId: params.activityId, workPlanId: text(resolved.plan.id), checklistItemId: params.checklistItemId });
   const description = text(params.description).slice(0, 2000) || null;
   const note = text(params.note);
+  const operationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text(params.operationId)) ? text(params.operationId) : null;
+  if (operationId) {
+    const existing = await createAdminSupabase().from("build_runtime_evidence").select("id")
+      .eq("client_id", resolved.access.project.client_id).eq("uploaded_by", resolved.access.authContext.user_id)
+      .eq("mobile_operation_id", operationId).maybeSingle();
+    if (existing.data?.id) return text(existing.data.id);
+  }
   if (params.evidenceType === "note") {
     if (!note || note.length > BUILD_EVIDENCE_NOTE_LIMIT) throw new AccessControlError("Evidence notes must contain between 1 and 4000 characters.", 400);
   } else {
@@ -403,7 +443,8 @@ export async function finalizeRuntimeEvidence(params: { request?: Request; proje
       .eq("id", text(params.authorizationId)).eq("authorized_by", resolved.access.authContext.user_id).maybeSingle();
     if (!authorization || text(authorization.evidence_type) !== params.evidenceType || text(authorization.runtime_activity_id) !== params.activityId
       || text(authorization.runtime_exception_id) !== (exception?.id ?? "")
-      || text(authorization.runtime_checklist_item_id) !== (checklistItemId ?? "")) throw new AccessControlError("Evidence upload authorization is invalid.", 403);
+      || text(authorization.runtime_checklist_item_id) !== (checklistItemId ?? "")
+      || text(authorization.mobile_operation_id) !== (operationId ?? "")) throw new AccessControlError("Evidence upload authorization is invalid.", 403);
     try { await verifyStoredEvidence(text(authorization.storage_path), text(authorization.expected_mime_type), Number(authorization.expected_file_size_bytes)); }
     catch (error) {
       await createAdminSupabase().storage.from(BUILD_EVIDENCE_BUCKET).remove([text(authorization.storage_path)]);
@@ -427,6 +468,20 @@ export async function finalizeRuntimeEvidence(params: { request?: Request; proje
   const evidenceId = text(data);
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(evidenceId)) {
     throw new AccessControlError("Evidence finalization could not be verified.", 500);
+  }
+  if (operationId) {
+    const deviceCapturedAt = text(params.deviceCapturedAt);
+    const gpsCapturedAt = text(params.gpsCapturedAt);
+    const { error: metadataError } = await createAdminSupabase().from("build_runtime_evidence").update({
+      mobile_operation_id: operationId,
+      device_captured_at: Number.isFinite(Date.parse(deviceCapturedAt)) ? new Date(deviceCapturedAt).toISOString() : null,
+      device_timezone_offset_minutes: Number.isInteger(params.deviceTimezoneOffsetMinutes) && Math.abs(params.deviceTimezoneOffsetMinutes!) <= 840 ? params.deviceTimezoneOffsetMinutes : null,
+      gps_accuracy_metres: typeof params.gpsAccuracyMetres === "number" && params.gpsAccuracyMetres >= 0 && params.gpsAccuracyMetres <= 100000 ? params.gpsAccuracyMetres : null,
+      gps_captured_at: Number.isFinite(Date.parse(gpsCapturedAt)) ? new Date(gpsCapturedAt).toISOString() : null,
+      gps_source: ["device_geolocation", "unavailable"].includes(text(params.gpsSource)) ? text(params.gpsSource) : null,
+      location_status: ["granted", "denied", "prompt", "unavailable", "error"].includes(text(params.locationStatus)) ? text(params.locationStatus) : null,
+    }).eq("id", evidenceId).eq("client_id", resolved.access.project.client_id).eq("uploaded_by", resolved.access.authContext.user_id);
+    if (metadataError) throw new AccessControlError("Evidence metadata could not be confirmed.", 500);
   }
   return evidenceId;
 }

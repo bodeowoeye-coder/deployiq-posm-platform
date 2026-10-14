@@ -103,6 +103,12 @@ export type BuildRuntimeEvidence = {
   description: string | null;
   latitude: number | null;
   longitude: number | null;
+  deviceCapturedAt: string | null;
+  deviceTimezoneOffsetMinutes: number | null;
+  gpsAccuracyMetres: number | null;
+  gpsCapturedAt: string | null;
+  gpsSource: string | null;
+  locationStatus: string | null;
   uploadedBy: string;
   uploaderName: string;
   createdAt: string;

@@ -29,7 +29,7 @@ test("dedicated Activity view preserves ancestry and return path", () => {
   for (const value of ["projectName", "siteName", "workPackageName", "Back to Activities"]) assert.match(activity, new RegExp(value));
 });
 test("Activity navigation has the accepted long-term sections", () => {
-  for (const label of ["Overview", "Responsibility", "Execution", "Checklist", "Evidence", "Inspection", "Resources", "Activity History"]) assert.match(activity, new RegExp(`label: "${label}"`));
+  for (const label of ["Summary", "Responsibility", "Actions", "Checklist", "Evidence", "Inspection", "Resources", "Activity History"]) assert.match(activity, new RegExp(`label: "${label}"`));
 });
 test("Overview is a read-only operational summary", () => {
   for (const label of ["Activity Name", "Activity Code", "Category", "Current Status", "Planned Duration", "Actual Start", "Actual Completion", "Dependencies", "Checklist Requirements", "Resource Requirements", "Activity Owner", "Supervisor"]) assert.match(activity, new RegExp(`label="${label}"`));

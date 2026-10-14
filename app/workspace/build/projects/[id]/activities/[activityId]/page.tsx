@@ -22,7 +22,7 @@ export default async function OperationalBuildActivityPage({ params, searchParam
   const assignedSupervisor = execution.activity.supervisor_user_id === access.userId;
   const canUseExecution = access.roleKey === "project_manager" || (access.roleKey === "supervisor" && assignedSupervisor);
   if (!canUseExecution) return <ReadOnlyActivity execution={execution} routeBase={routeBase}/>;
-  return <BuildRuntimeActivityExecution execution={execution} scope={{ projectId: params.id, siteId: site.id, workPackageId: workPackage.id }} context={{ projectName: overview.project.project_name, siteName: site.name, workPackageName: workPackage.name }} activeView={view} routeBase={routeBase} backHref={`/workspace/build/projects/${params.id}/activities?workPackage=${workPackage.id}`}/>;
+  return <BuildRuntimeActivityExecution execution={execution} scope={{ projectId: params.id, siteId: site.id, workPackageId: workPackage.id }} context={{ projectName: overview.project.project_name, siteName: site.name, workPackageName: workPackage.name }} activeView={view} routeBase={routeBase} backHref={`/workspace/build/projects/${params.id}/activities?workPackage=${workPackage.id}`} mobileIdentity={{ userId: access.userId, clientId: access.clientId }}/>;
 }
 
 function ReadOnlyActivity({ execution, routeBase }: { execution: Awaited<ReturnType<typeof getRuntimeActivityExecution>>; routeBase: string }) {

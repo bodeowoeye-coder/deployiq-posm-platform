@@ -2283,3 +2283,25 @@ revoke all on function public.claim_acquisition_provisioning_job(uuid, uuid) fro
 revoke all on function public.claim_acquisition_provisioning_job(uuid, uuid) from anon;
 revoke all on function public.claim_acquisition_provisioning_job(uuid, uuid) from authenticated;
 grant execute on function public.claim_acquisition_provisioning_job(uuid, uuid) to service_role;
+
+-- Browser session resolution reads only the authenticated user's own role,
+-- profile and tenant row through the RLS policies above. This block remains at
+-- the canonical boundary end so every server session table already exists.
+revoke all privileges on table public.user_roles, public.user_profiles, public.clients from anon;
+revoke all privileges on table public.user_roles, public.user_profiles, public.clients from authenticated;
+grant select on table public.user_roles, public.user_profiles, public.clients to authenticated;
+
+grant all privileges on table
+  public.user_roles,
+  public.user_profiles,
+  public.clients,
+  public.onboarding_drafts,
+  public.provisioning_jobs,
+  public.workspace_memberships,
+  public.workspace_roles,
+  public.workspace_role_permissions,
+  public.workspace_settings,
+  public.product_entitlements,
+  public.projects,
+  public.installers
+to service_role;
