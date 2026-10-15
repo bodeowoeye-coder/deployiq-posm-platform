@@ -74,8 +74,8 @@ async function findOrCreateUser(admin, email, fullName, password) {
   return (await must(await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { full_name: fullName }, app_metadata: { password_change_required: false, first_login_completed: true } }), "create_user")).user;
 }
 
-export async function seedE1CBuildFixture({ env = process.env, outputPath } = {}) {
-  const { apiUrl } = assertE1CLocalTarget(env);
+export async function seedE1CBuildFixture({ env = process.env, outputPath, assertTarget = assertE1CLocalTarget } = {}) {
+  const { apiUrl } = assertTarget(env);
   const serviceKey = required(env, "SUPABASE_SERVICE_ROLE_KEY");
   const password = required(env, "E1C_UAT_PASSWORD");
   if (password.length < 12) throw new Error("e1c_password_too_short");

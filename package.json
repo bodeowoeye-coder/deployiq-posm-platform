@@ -28,7 +28,10 @@
     "e1c:seed-local": "node scripts/seed-e1c-build-uat.mjs",
     "e1c:rehearse-fixture": "node scripts/run-e1c-local-uat.mjs",
     "e1c:uat-local": "node scripts/run-e1c-local-uat.mjs --browser",
-    "e1c:test-harness": "node --test tests/e1c-build-uat-harness.test.mjs"
+    "e1c:test-harness": "node --test tests/e1c-build-uat-harness.test.mjs",
+    "e1d:uat:seed": "node --env-file=.env.uat.local scripts/seed-e1d-uat-fixtures.mjs",
+    "e1d:uat:verify": "node --env-file=.env.uat.local scripts/verify-e1d-uat.mjs",
+    "e1d:uat:test": "node --test tests/e1d-uat-infrastructure.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

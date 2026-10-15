@@ -5,6 +5,8 @@ node_modules
 .npm-cache
 .env.local
 .env.staging.local
+.env.uat.local
+.e1d-uat-manifest.json
 .env
 dist
 coverage
