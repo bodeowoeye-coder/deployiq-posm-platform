@@ -6,6 +6,8 @@ import {
   AUTHORIZATION_REPAIR_MIGRATION,
   E1C_FIELD_COORDINATOR_MIGRATION,
   E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION,
+  E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION,
+  E1D_PLATFORM_PRIVILEGE_MIGRATION,
   E1B_MIGRATION,
   FIRST_FORWARD_MIGRATION,
   assertRecoveryFiles,
@@ -23,7 +25,9 @@ test("canonical baseline boundary and forward migration order are stable", () =>
   assert.equal(BASELINE_BOUNDARY, "20260816020000");
   assert.equal(forwardMigrations(root)[0].version, FIRST_FORWARD_MIGRATION);
   assert.ok(forwardMigrations(root).some(({ version }) => version === E1C_FIELD_COORDINATOR_MIGRATION));
-  assert.equal(forwardMigrations(root).at(-1).version, E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION);
+  assert.ok(forwardMigrations(root).some(({ version }) => version === E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION));
+  assert.ok(forwardMigrations(root).some(({ version }) => version === E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION));
+  assert.equal(forwardMigrations(root).at(-1).version, E1D_PLATFORM_PRIVILEGE_MIGRATION);
   assert.ok(representedMigrationVersions(root).includes("20260625000000"));
 });
 
@@ -35,6 +39,18 @@ test("canonical session grants preserve RLS and least-privilege browser access",
   assert.match(baseline, /grant select on table public\.user_roles, public\.user_profiles, public\.clients to authenticated/);
   for (const token of ["session_table_rls_missing", "authenticated_session_select_missing", "authenticated_session_grant_excessive", "anonymous_session_table_grant", "service_session_select_missing"])
     assert.match(verify, new RegExp(token));
+});
+
+test("workspace authorization tables remain server-authoritative", () => {
+  for (const token of ["browser_workspace_authority_grant", "E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION", "e1d_workspace_authorization_privilege_migration_not_applied", "assertWorkspaceAuthorizationPrivileges", "browser_workspace_authority_privilege", "service_workspace_authority_privilege_missing"])
+    assert.match(verify, new RegExp(token));
+  assert.match(bootstrap, /assertWorkspaceAuthorizationPrivileges\(databaseUrl\)/);
+});
+
+test("legacy application tables deny browser roles while session reads remain bounded", () => {
+  for (const token of ["browser_server_authoritative_grant", "service_server_authoritative_select_missing", "E1D_PLATFORM_PRIVILEGE_MIGRATION", "e1d_platform_privilege_migration_not_applied", "assertPlatformLegacyPrivileges", "session_browser_privileges_invalid"])
+    assert.match(verify, new RegExp(token));
+  assert.match(bootstrap, /assertPlatformLegacyPrivileges\(databaseUrl\)/);
 });
 
 test("bootstrap starts from an isolated empty migration directory before repair", () => {

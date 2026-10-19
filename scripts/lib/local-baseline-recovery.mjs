@@ -9,6 +9,20 @@ export const E1B_MIGRATION = "20261013010000";
 export const AUTHORIZATION_REPAIR_MIGRATION = "20261014010000";
 export const E1C_FIELD_COORDINATOR_MIGRATION = "20261015010000";
 export const E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION = "20261015020000";
+export const E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION = "20261016010000";
+export const E1D_PLATFORM_PRIVILEGE_MIGRATION = "20261016020000";
+export const DIRECT_AUTHENTICATED_SESSION_TABLES = Object.freeze(["user_roles", "user_profiles", "clients"]);
+export const SERVER_AUTHORITATIVE_LEGACY_TABLES = Object.freeze([
+  "agencies", "alert_events", "audit_logs", "brands", "client_profiles", "client_projects",
+  "commercial_pricing_snapshots", "commercial_pricing_templates", "commercial_pricing_tiers",
+  "deployment_locations", "deployment_progress", "deployment_stages", "installer_performance", "installers",
+  "notification_events", "onboarding_drafts", "product_entitlements", "project_targets", "projects",
+  "provisioning_events", "provisioning_jobs", "submission_status_history", "submissions",
+  "workspace_activation_notifications", "workspace_branding", "workspace_campaign_locations", "workspace_campaigns",
+  "workspace_directory_import_batches", "workspace_field_assignments", "workspace_navigation",
+  "workspace_notification_defaults", "workspace_onboarding_checklist_items", "workspace_onboarding_checklists",
+  "workspace_report_configs", "workspace_settings", "workspace_statuses", "workspace_support_sessions",
+]);
 
 export function migrationFiles(root) {
   const directory = resolve(root, "supabase/migrations");
@@ -37,13 +51,15 @@ export function assertRecoveryFiles(root) {
     `supabase/migrations/${AUTHORIZATION_REPAIR_MIGRATION}_repair_canonical_session_table_privileges.sql`,
     `supabase/migrations/${E1C_FIELD_COORDINATOR_MIGRATION}_align_field_coordinator_activity_owner_authority.sql`,
     `supabase/migrations/${E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION}_repair_customer_workspace_status_lookup_privilege.sql`,
+    `supabase/migrations/${E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION}_repair_workspace_authorization_table_privileges.sql`,
+    `supabase/migrations/${E1D_PLATFORM_PRIVILEGE_MIGRATION}_repair_legacy_browser_table_privileges.sql`,
   ];
   for (const relative of required) {
     if (!existsSync(resolve(root, relative))) throw new Error(`recovery_file_missing:${relative}`);
   }
   const forward = forwardMigrations(root);
   if (forward[0]?.version !== FIRST_FORWARD_MIGRATION) throw new Error("unexpected_first_forward_migration");
-  if (forward.at(-1)?.version !== E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION) throw new Error("unexpected_last_forward_migration");
+  if (forward.at(-1)?.version !== E1D_PLATFORM_PRIVILEGE_MIGRATION) throw new Error("unexpected_last_forward_migration");
 }
 
 export function run(command, args, { cwd, capture = false, env = process.env } = {}) {
@@ -185,6 +201,15 @@ export function assertCurrentSchema(inventory) {
   for (const table of ["user_roles", "user_profiles", "clients", "onboarding_drafts", "workspace_memberships", "workspace_roles", "workspace_role_permissions", "workspace_statuses", "projects"]) {
     if (!hasGrant(table, "service_role", "SELECT")) throw new Error(`service_session_select_missing:${table}`);
   }
+  for (const table of ["workspace_memberships", "workspace_roles", "workspace_role_permissions"]) {
+    if (inventory.table_grants.some((grant) => grant.table === table && ["anon", "authenticated", "PUBLIC"].includes(grant.grantee)))
+      throw new Error(`browser_workspace_authority_grant:${table}`);
+  }
+  for (const table of SERVER_AUTHORITATIVE_LEGACY_TABLES) {
+    if (inventory.table_grants.some((grant) => grant.table === table && ["anon", "authenticated", "PUBLIC"].includes(grant.grantee)))
+      throw new Error(`browser_server_authoritative_grant:${table}`);
+    if (!hasGrant(table, "service_role", "SELECT")) throw new Error(`service_server_authoritative_select_missing:${table}`);
+  }
   const evidenceBucket = inventory.buckets.find((bucket) => bucket.id === "build-runtime-evidence");
   if (!evidenceBucket || evidenceBucket.public !== false || Number(evidenceBucket.file_size_limit) !== 52428800)
     throw new Error("build_evidence_bucket_invalid");
@@ -195,7 +220,9 @@ export function assertCurrentSchema(inventory) {
   if (!inventory.migrations.includes(E1B_MIGRATION)) throw new Error("e1b_migration_not_applied");
   if (!inventory.migrations.includes(AUTHORIZATION_REPAIR_MIGRATION)) throw new Error("authorization_repair_migration_not_applied");
   if (!inventory.migrations.includes(E1C_FIELD_COORDINATOR_MIGRATION)) throw new Error("e1c_field_coordinator_migration_not_applied");
-  if (inventory.migrations.at(-1) !== E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION) throw new Error("e1c_workspace_status_privilege_migration_not_applied");
+  if (!inventory.migrations.includes(E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION)) throw new Error("e1c_workspace_status_privilege_migration_not_applied");
+  if (!inventory.migrations.includes(E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION)) throw new Error("e1d_workspace_authorization_privilege_migration_not_applied");
+  if (inventory.migrations.at(-1) !== E1D_PLATFORM_PRIVILEGE_MIGRATION) throw new Error("e1d_platform_privilege_migration_not_applied");
 }
 
 export function assertCanonicalLocalData(databaseUrl) {
@@ -238,6 +265,39 @@ $block$;
 rollback;`);
   const residue = Number(psql(databaseUrl, "select count(*) from public.clients where id in ('71000000-0000-4000-8000-000000000001','71000000-0000-4000-8000-000000000002');"));
   if (residue !== 0) throw new Error("tenant_isolation_probe_residue");
+}
+
+export function assertWorkspaceAuthorizationPrivileges(databaseUrl) {
+  const privileges = JSON.parse(psql(databaseUrl, String.raw`
+select jsonb_object_agg(role_name || ':' || table_name, jsonb_build_object(
+  'select', has_table_privilege(role_name, 'public.' || table_name, 'SELECT'),
+  'insert', has_table_privilege(role_name, 'public.' || table_name, 'INSERT'),
+  'update', has_table_privilege(role_name, 'public.' || table_name, 'UPDATE'),
+  'delete', has_table_privilege(role_name, 'public.' || table_name, 'DELETE'),
+  'truncate', has_table_privilege(role_name, 'public.' || table_name, 'TRUNCATE'),
+  'references', has_table_privilege(role_name, 'public.' || table_name, 'REFERENCES'),
+  'trigger', has_table_privilege(role_name, 'public.' || table_name, 'TRIGGER')
+))::text
+from unnest(array['anon','authenticated','service_role']) role_name
+cross join unnest(array['workspace_memberships','workspace_roles','workspace_role_permissions']) table_name;`));
+  for (const table of ["workspace_memberships", "workspace_roles", "workspace_role_permissions"]) {
+    for (const role of ["anon", "authenticated"]) {
+      if (Object.values(privileges[`${role}:${table}`]).some(Boolean))
+        throw new Error(`browser_workspace_authority_privilege:${role}:${table}`);
+    }
+    if (!Object.values(privileges[`service_role:${table}`]).every(Boolean))
+      throw new Error(`service_workspace_authority_privilege_missing:${table}`);
+  }
+}
+
+export function assertPlatformLegacyPrivileges(databaseUrl) {
+  const serverOnly = SERVER_AUTHORITATIVE_LEGACY_TABLES.map((table) => `'${table}'`).join(",");
+  const unsafe = Number(psql(databaseUrl, `select count(*) from information_schema.table_privileges where table_schema='public' and table_name in (${serverOnly}) and grantee in ('anon','authenticated','PUBLIC');`));
+  if (unsafe !== 0) throw new Error(`browser_server_authoritative_privileges:${unsafe}`);
+  for (const table of DIRECT_AUTHENTICATED_SESSION_TABLES) {
+    const grants = psql(databaseUrl, `select grantee || ':' || privilege_type from information_schema.table_privileges where table_schema='public' and table_name='${table}' and grantee in ('anon','authenticated','PUBLIC') order by grantee,privilege_type;`);
+    if (grants !== "authenticated:SELECT") throw new Error(`session_browser_privileges_invalid:${table}`);
+  }
 }
 
 export function fingerprintInventory(inventory) {

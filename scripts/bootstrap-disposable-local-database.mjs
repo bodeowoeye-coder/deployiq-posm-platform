@@ -12,6 +12,8 @@ import {
   assertCurrentSchema,
   assertRecoveryFiles,
   assertTenantIsolationEnforced,
+  assertWorkspaceAuthorizationPrivileges,
+  assertPlatformLegacyPrivileges,
   baselineDigest,
   fingerprintInventory,
   forwardMigrations,
@@ -91,6 +93,8 @@ for (let index = 1; index <= rehearsals; index += 1) {
     assertCurrentSchema(inventory);
     assertCanonicalLocalData(databaseUrl);
     assertTenantIsolationEnforced(databaseUrl);
+    assertWorkspaceAuthorizationPrivileges(databaseUrl);
+    assertPlatformLegacyPrivileges(databaseUrl);
     const fingerprint = fingerprintInventory(inventory);
     fingerprints.push(fingerprint);
     console.log(`Rehearsal ${index}: ${forwardMigrations(root).length} forward migrations applied.`);
