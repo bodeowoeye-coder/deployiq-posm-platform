@@ -33,7 +33,7 @@ function interpretation(task, { decision = false, limitation = false } = {}) {
   return { schemaVersion: "1.0", generatedAt: "2026-09-15T10:00:00.000Z", scope: { kind: "project", projectId: PROJECT }, task, dataset: { schemaVersion: "1.0", toolCalls: [] }, statements, limitations, validation: { status: "accepted", policyVersion: "build-ai-governance-v1" } };
 }
 function result(task, status = "interpreted", options) {
-  return { ok: status === "interpreted", status, toolResults: status === "deterministic_intelligence_unavailable" ? [] : [{}], interpretation: status === "interpreted" ? interpretation(task, options) : null, audit: {} };
+  return { ok: status === "interpreted", status, toolResults: status === "deterministic_intelligence_unavailable" ? [] : [{}], interpretation: status === "interpreted" ? interpretation(task, options) : null, audit: { provider: status === "interpreted" ? { providerId: "openai", modelId: "gpt-test" } : null, providerFailureCategory: null, validationOutcome: status === "interpreted" ? "accepted" : "not_run", startedAt: "2026-09-15T10:00:00.000Z", completedAt: "2026-09-15T10:00:00.125Z" } };
 }
 function harness(outcomes = {}, delays = {}) {
   const calls = []; let active = 0, maximumActive = 0;
@@ -89,6 +89,48 @@ test("governed task failures are isolated without retry replacement or cross-tas
     assert.equal(output.ok, true); assert.equal(h.calls.length, 2); assert.equal(output.interpretation.availability, "partial"); assert.equal(output.interpretation.sections[1].availability, status); assert.equal(output.interpretation.sections[1].statements.length, 0);
   }
   const all = harness(Object.fromEntries(["executive_summary", "management_attention"].map((task) => [task, result(task, "ai_unavailable")]))); const unavailable = await all.execute({ projectId: PROJECT, sections: primary.slice(0, 2) }); assert.equal(unavailable.interpretation.availability, "unavailable");
+});
+
+test("bounded diagnostics distinguish successful provider and validation failure outcomes", async () => {
+  const failed = (task, providerFailureCategory, validationOutcome = "not_run") => ({
+    ...result(task, "interpretation_unavailable"),
+    audit: { provider: null, providerFailureCategory, validationOutcome, startedAt: "2026-09-15T10:00:00.000Z", completedAt: "2026-09-15T10:00:00.250Z" },
+  });
+  const cases = [
+    ["provider_timeout", "provider_timeout"],
+    ["provider_refusal", "provider_rejection"],
+    ["invalid_provider_response", "malformed_structured_output"],
+    ["invalid_provider_reference", "invalid_fact_references"],
+  ];
+  for (const [category, outcome] of cases) {
+    const h = harness({ executive_summary: failed("executive_summary", category) });
+    const output = await h.execute({ projectId: PROJECT, sections: primary.slice(0, 2) });
+    const diagnostic = output.diagnostics.find((item) => item.task === "executive_summary");
+    assert.deepEqual(json(diagnostic), { task: "executive_summary", status: "interpretation_unavailable", outcome, effectiveModel: null, providerFailureCategory: category, providerFailureDetail: null, validationOutcome: "not_run", validationErrorCodes: [], durationMs: 250 });
+    assert.equal(output.diagnostics.find((item) => item.task === "management_attention").outcome, "successful");
+  }
+  const governanceResult = failed("executive_summary", null, "rejected");
+  governanceResult.errors = [
+    { code: "coverage_limitation_required", path: "private.path", message: "private detail" },
+    { code: "unsupported_conclusion", path: "private.path", message: "private detail" },
+    { code: "coverage_limitation_required", path: "private.path", message: "private detail" },
+  ];
+  governanceResult.audit.validationErrorCodes = ["coverage_limitation_required", "unsupported_conclusion"];
+  const governance = harness({ executive_summary: governanceResult });
+  const output = await governance.execute({ projectId: PROJECT, sections: primary.slice(0, 2) });
+  const governanceDiagnostic = output.diagnostics.find((item) => item.task === "executive_summary");
+  assert.equal(governanceDiagnostic.outcome, "governance_validation_rejection");
+  assert.deepEqual(json(governanceDiagnostic.validationErrorCodes), ["coverage_limitation_required", "unsupported_conclusion"]);
+  assert.doesNotMatch(JSON.stringify(governanceDiagnostic), /private\.path|private detail/);
+});
+
+test("diagnostics remain bounded and never contain datasets prompts credentials or raw errors", async () => {
+  const h = harness({ management_attention: new Error("private provider body and token") });
+  const output = await h.execute({ projectId: PROJECT, sections: primary.slice(0, 2) });
+  const serialized = JSON.stringify(output.diagnostics);
+  assert.equal(output.diagnostics.length, 3);
+  assert.equal(output.diagnostics.find((item) => item.task === "management_attention").outcome, "unexpected_failure");
+  for (const forbidden of ["private provider body", "token", "dataset", "prompt", "credential", "statement"]) assert.equal(serialized.includes(forbidden), false);
 });
 
 test("unexpected task exceptions are contained independently and never retried", async () => {

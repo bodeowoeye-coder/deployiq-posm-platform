@@ -48,7 +48,7 @@ test("v2 provider contract selects only relationships and facts; server renders 
   const bundle = projection.buildBuildAIProviderProjection(requested);
   const selected = bundle.projection.context[0].facts.find((item) => item.label === "currentlyOverdue");
   assert.ok(selected);
-  const body = { schemaVersion: "2.0", statements: [{ id: "s1", type: "attention", claim: { relationship: "direct", factRefIds: [selected.factRefId] }, supportingFacts: [{ factRefId: selected.factRefId }], limitationIds: [] }], limitations: [] };
+  const body = { schemaVersion: "2.0", statements: [{ id: "s1", type: "attention", claim: { relationship: "direct", factRefIds: [selected.factRefId] }, limitationIds: [] }], limitations: [] };
   const resolved = projection.resolveBuildAIProviderOutput(body, bundle.registry);
   assert.equal(resolved.ok, true);
   assert.equal(resolved.output.schemaVersion, "2.0");
@@ -57,6 +57,10 @@ test("v2 provider contract selects only relationships and facts; server renders 
   assert.equal(projection.resolveBuildAIProviderOutput({ ...body, statements: [{ ...body.statements[0], claim: { relationship: "direct", grain: "model-authored" } }] }, bundle.registry).ok, false);
   assert.equal(projection.resolveBuildAIProviderOutput({ ...body, statements: [{ ...body.statements[0], claim: { relationship: "direct", factRefIds: [] } }] }, bundle.registry).ok, false);
   assert.equal(openai.buildBuildAIOpenAIOutputSchema(bundle.projection).properties.schemaVersion.const, "2.0");
+  const statementSchema = openai.buildBuildAIOpenAIOutputSchema(bundle.projection).properties.statements.items;
+  assert.deepEqual(JSON.parse(JSON.stringify(Object.keys(statementSchema.properties))), ["id", "type", "claim", "limitationIds"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(statementSchema.required)), ["id", "type", "claim", "limitationIds"]);
+  assert.equal("uniqueItems" in statementSchema.properties.claim.properties.factRefIds, false, "OpenAI strict Structured Outputs supports array bounds but not uniqueItems");
   const fake = { responses: { calls: [], async create(payload) { this.calls.push(payload); return { status: "completed", model: "fixture", output_text: JSON.stringify(body) }; } } };
   const adapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "fixture", timeoutMs: 15000, maxOutputTokens: 1000 }, fake);
   const generated = await adapter.generate(requested);
@@ -64,6 +68,42 @@ test("v2 provider contract selects only relationships and facts; server renders 
   assert.match(generated.output.statements[0].text, /Currently overdue activities: 3/);
   assert.equal(fake.responses.calls.length, 1);
   assert.equal(fake.responses.calls[0].text.format.name, "deployiq_build_ai_model_output_v2");
+
+  const duplicateBody = { ...body, statements: [{ ...body.statements[0], claim: { relationship: "direct", factRefIds: [selected.factRefId, selected.factRefId] } }] };
+  const duplicateClient = { responses: { async create() { return { status: "completed", model: "effective-model", output_text: JSON.stringify(duplicateBody) }; } } };
+  const duplicateAdapter = new openai.OpenAIBuildAIProvider({ enabled: true, mode: "shadow", provider: "openai", model: "configured-model", timeoutMs: 15000, maxOutputTokens: 1000 }, duplicateClient);
+  await assert.rejects(() => duplicateAdapter.generate(requested), (error) => error.category === "invalid_provider_reference" && error.detail === "duplicate_fact_reference" && error.metadata?.modelId === "effective-model");
+});
+
+test("v2 Management Attention has one task-local fact selection and rejects unsupported references and relationships", () => {
+  const requested = { ...managementAttentionRequest(), outputContract: { schemaVersion: "2.0" } };
+  const bundle = projection.buildBuildAIProviderProjection(requested);
+  assert.ok(bundle.projection.context[0].facts.every((fact) => fact.allowedRelationships.includes("direct")));
+  for (const fact of bundle.projection.context[0].facts) assert.deepEqual(JSON.parse(JSON.stringify(fact.allowedRelationships)), JSON.parse(JSON.stringify(bundle.registry.semantics.get(fact.factRefId).allowedDerivations)));
+  const selected = bundle.projection.context[0].facts.find((item) => bundle.registry.facts.get(item.factRefId)?.factPath === "/attention/summary/outstandingObligations");
+  assert.ok(selected);
+  const statement = { id: "attention-1", type: "attention", claim: { relationship: "direct", factRefIds: [selected.factRefId] }, limitationIds: [] };
+  const body = { schemaVersion: "2.0", statements: [statement], limitations: [] };
+  const valid = projection.resolveBuildAIProviderOutput(body, bundle.registry);
+  assert.equal(valid.ok, true);
+  assert.equal(valid.output.statements[0].supportingFacts[0].factPath, "/attention/summary/outstandingObligations");
+
+  const unknown = { ...statement, claim: { relationship: "direct", factRefIds: ["fact-999"] } };
+  const duplicate = { ...statement, claim: { relationship: "direct", factRefIds: [selected.factRefId, selected.factRefId] } };
+  const invalidRelationship = { ...statement, claim: { relationship: "approved_sum", factRefIds: [selected.factRefId] } };
+  assert.deepEqual(JSON.parse(JSON.stringify(projection.resolveBuildAIProviderOutput({ ...body, statements: [unknown] }, bundle.registry))), { ok: false, code: "unknown_fact_reference" });
+  assert.deepEqual(JSON.parse(JSON.stringify(projection.resolveBuildAIProviderOutput({ ...body, statements: [duplicate] }, bundle.registry))), { ok: false, code: "duplicate_fact_reference" });
+  assert.deepEqual(JSON.parse(JSON.stringify(projection.resolveBuildAIProviderOutput({ ...body, statements: [invalidRelationship] }, bundle.registry))), { ok: false, code: "unsupported_fact_relationship" });
+
+  const executive = projection.buildBuildAIProviderProjection({ ...projectRequest(), outputContract: { schemaVersion: "2.0" } });
+  const crossTaskAlias = "foreign-task-fact-001";
+  const crossTaskRegistry = new Map([[crossTaskAlias, executive.registry.facts.values().next().value]]);
+  assert.equal(crossTaskRegistry.has(crossTaskAlias), true);
+  assert.equal(bundle.registry.facts.has(crossTaskAlias), false);
+  assert.equal(projection.resolveBuildAIProviderOutput({ ...body, statements: [{ ...statement, claim: { relationship: "direct", factRefIds: [crossTaskAlias] } }] }, bundle.registry).ok, false);
+
+  const mixed = projection.resolveBuildAIProviderOutput({ ...body, statements: [statement, unknown] }, bundle.registry);
+  assert.equal(mixed.ok, false, "one invalid statement rejects the task output without accepting unsupported partial claims");
 });
 function projectDataset() {
   const value = dataset();

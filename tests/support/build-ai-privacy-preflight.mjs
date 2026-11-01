@@ -1,6 +1,6 @@
 const ROOT_KEYS = ["task", "question", "context", "policy", "outputContract"];
 const CONTEXT_KEYS = ["tool", "scope", "facts", "coverage", "constraints", "selection"];
-const FACT_KEYS = ["factRefId", "label", "value", "coverageRefIds"];
+const FACT_KEYS = ["factRefId", "label", "value", "coverageRefIds", "allowedRelationships"];
 const COVERAGE_KEYS = ["coverageRefId", "label", "value"];
 const POLICY_KEYS = ["governanceVersion", "visibility", "allowedTask", "allowedStatementTypes", "requireFactReferences", "requireCoverageQualification", "unsupportedConclusions", "allowAutonomousActions", "allowModelAuthoredFacts", "decisionOptionsOnly"];
 const SELECTION_KEYS = ["contract", "sourceCoverage", "detail"];
@@ -85,6 +85,7 @@ export function inspectBuildAIAcceptanceProjection(value) {
       inspectScalar(fact.label, `${factPath}/label`, violations);
       inspectScalar(fact.value, `${factPath}/value`, violations);
       if (!Array.isArray(fact.coverageRefIds) || fact.coverageRefIds.some((item) => typeof item !== "string" || sensitiveValue(item))) violations.push(`${factPath}/coverageRefIds:invalid_value`);
+      if (!Array.isArray(fact.allowedRelationships) || fact.allowedRelationships.length === 0 || fact.allowedRelationships.some((item) => !["direct", "approved_ratio", "approved_difference", "approved_sum"].includes(item))) violations.push(`${factPath}/allowedRelationships:invalid_value`);
     });
     if (!Array.isArray(context.coverage)) violations.push(`${path}/coverage:invalid_value`);
     else context.coverage.forEach((coverage, coverageIndex) => {

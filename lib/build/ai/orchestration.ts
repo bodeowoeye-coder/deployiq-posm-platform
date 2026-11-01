@@ -2,7 +2,7 @@ import "server-only";
 
 import { BUILD_AI_DEFAULT_TIMEOUT_MS } from "./config.ts";
 import { DEFAULT_BUILD_AI_GOVERNANCE } from "./governance.ts";
-import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderFailureCategory, type BuildAIProviderMetadata, type BuildAIProviderRequest, type BuildAIProviderToolContext } from "./provider.ts";
+import { BuildAIProviderError, type BuildAIProvider, type BuildAIProviderFailureCategory, type BuildAIProviderFailureDetail, type BuildAIProviderMetadata, type BuildAIProviderRequest, type BuildAIProviderToolContext } from "./provider.ts";
 import type { BuildAIAcceptedToolCall, BuildAIInterpretationV1, BuildAIInterpretationV2, BuildAIModelOutputV1, BuildAITask, BuildAIValidationError } from "./types.ts";
 import { validateBuildAIModelOutput } from "./validation.ts";
 import { BUILD_INTELLIGENCE_TOOLS, type BuildIntelligenceTool, type BuildIntelligenceToolName } from "../intelligence/tools.ts";
@@ -31,7 +31,9 @@ export type BuildAIOrchestrationAudit = {
   outputSchemaVersion: "1.0" | "2.0";
   provider: BuildAIProviderMetadata | null;
   providerFailureCategory: BuildAIProviderFailureCategory | null;
+  providerFailureDetail: BuildAIProviderFailureDetail | null;
   validationOutcome: "not_run" | "accepted" | "rejected";
+  validationErrorCodes: readonly BuildAIValidationError["code"][];
   startedAt: string;
   completedAt: string;
 };
@@ -153,7 +155,7 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   const clock = dependencies.clock ?? (() => new Date());
   const startedAt = clock().toISOString();
   const request = validateRequest(input);
-  const baseAudit = (task: BuildAITask, scope: BuildAIOrchestrationAudit["scope"]): BuildAIOrchestrationAudit => ({ orchestrationVersion: BUILD_AI_ORCHESTRATION_VERSION, task, scope, toolCalls: [], governanceVersion: DEFAULT_BUILD_AI_GOVERNANCE.version, outputSchemaVersion: "2.0", provider: null, providerFailureCategory: null, validationOutcome: "not_run", startedAt, completedAt: clock().toISOString() });
+  const baseAudit = (task: BuildAITask, scope: BuildAIOrchestrationAudit["scope"]): BuildAIOrchestrationAudit => ({ orchestrationVersion: BUILD_AI_ORCHESTRATION_VERSION, task, scope, toolCalls: [], governanceVersion: DEFAULT_BUILD_AI_GOVERNANCE.version, outputSchemaVersion: "2.0", provider: null, providerFailureCategory: null, providerFailureDetail: null, validationOutcome: "not_run", validationErrorCodes: [], startedAt, completedAt: clock().toISOString() });
   if (!request) return { ok: false, status: "invalid_request", toolResults: [], interpretation: null, audit: baseAudit("executive_summary", "project") };
   const routed = route(request), audit = baseAudit(request.task, routed.scope);
   const tool = (dependencies.tools ?? BUILD_INTELLIGENCE_TOOLS).find((candidate) => candidate.name === routed.tool);
@@ -175,7 +177,11 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   catch (error) {
     timer.clear(timeout);
     audit.completedAt = clock().toISOString();
-    if (error instanceof BuildAIProviderError) audit.providerFailureCategory = error.category;
+    if (error instanceof BuildAIProviderError) {
+      audit.providerFailureCategory = error.category;
+      audit.providerFailureDetail = error.detail;
+      audit.provider = safeProviderMetadata(error.metadata);
+    }
     else audit.providerFailureCategory = "transport_error";
     return { ok: true, status: error instanceof BuildAIProviderError ? error.availability : "ai_unavailable", toolResults: [accepted], interpretation: null, audit };
   }
@@ -184,7 +190,7 @@ export async function orchestrateBuildAI(input: unknown, dependencies: Dependenc
   if (!audit.provider) { audit.completedAt = clock().toISOString(); return { ok: true, status: "interpretation_unavailable", toolResults: [accepted], interpretation: null, audit }; }
   const validation = validateBuildAIModelOutput({ output: composeBuildAIModelOutput(generated.output, request.task, [accepted]), toolCalls: [accepted], governance: DEFAULT_BUILD_AI_GOVERNANCE });
   audit.completedAt = clock().toISOString();
-  if (!validation.ok) { audit.validationOutcome = "rejected"; return { ok: true, status: "interpretation_unavailable", toolResults: [accepted], interpretation: null, errors: validation.errors, audit }; }
+  if (!validation.ok) { audit.validationOutcome = "rejected"; audit.validationErrorCodes = [...new Set(validation.errors.map((item) => item.code))]; return { ok: true, status: "interpretation_unavailable", toolResults: [accepted], interpretation: null, errors: validation.errors, audit }; }
   audit.validationOutcome = "accepted";
   return { ok: true, status: "interpreted", toolResults: [accepted], interpretation: validation.interpretation, audit };
 }

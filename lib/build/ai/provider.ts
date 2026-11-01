@@ -67,7 +67,7 @@ export type BuildAIProviderOutputV1 = {
 };
 export type BuildAIProviderOutputV2 = {
   schemaVersion: "2.0";
-  statements: Array<Omit<BuildAIProviderStatementV1, "text"> & { claim: { relationship: "direct" | "approved_ratio" | "approved_difference" | "approved_sum"; factRefIds: string[] } }>;
+  statements: Array<Omit<BuildAIProviderStatementV1, "text" | "supportingFacts"> & { claim: { relationship: "direct" | "approved_ratio" | "approved_difference" | "approved_sum"; factRefIds: string[] } }>;
   limitations: Array<Omit<BuildAIProviderLimitationV1, "text">>;
 };
 
@@ -87,9 +87,21 @@ export type BuildAIProviderFailureCategory =
   | "provider_refusal"
   | "invalid_provider_reference"
   | "invalid_provider_response";
+export type BuildAIProviderFailureDetail =
+  | "invalid_output_shape"
+  | "duplicate_fact_reference"
+  | "unknown_fact_reference"
+  | "unsupported_fact_relationship"
+  | "duplicate_coverage_reference"
+  | "unknown_coverage_reference";
 
 export class BuildAIProviderError extends Error {
-  constructor(readonly availability: BuildAIProviderFailureAvailability, readonly category: BuildAIProviderFailureCategory) {
+  constructor(
+    readonly availability: BuildAIProviderFailureAvailability,
+    readonly category: BuildAIProviderFailureCategory,
+    readonly detail: BuildAIProviderFailureDetail | null = null,
+    readonly metadata: BuildAIProviderMetadata | null = null,
+  ) {
     super("Build AI provider is unavailable.");
     this.name = "BuildAIProviderError";
   }

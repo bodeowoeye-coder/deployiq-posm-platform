@@ -21,9 +21,8 @@ export function buildBuildAIOpenAIOutputSchema(projection: BuildAIProviderProjec
       statements: { type: "array", maxItems: 12, items: { type: "object", additionalProperties: false, properties: {
         id: identifier, type: { type: "string", enum: ["interpretation", "attention", "decision_option", "limitation"] },
         claim: { type: "object", additionalProperties: false, properties: { relationship: { type: "string", enum: ["direct", "approved_ratio", "approved_difference", "approved_sum"] }, factRefIds: { type: "array", maxItems: 8, items: factAlias } }, required: ["relationship", "factRefIds"] },
-        supportingFacts: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, properties: { factRefId: factAlias }, required: ["factRefId"] } },
         limitationIds: { type: "array", maxItems: 8, items: identifier },
-      }, required: ["id", "type", "claim", "supportingFacts", "limitationIds"] } },
+      }, required: ["id", "type", "claim", "limitationIds"] } },
       limitations: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, properties: {
         id: identifier, code: { type: "string", enum: ["partial_coverage", "data_unavailable", "history_unavailable", "interpretation_unavailable", "unsupported_conclusion", "governance_not_configured"] },
         coverageRefs: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, properties: { coverageRefId: coverageAlias }, required: ["coverageRefId"] } },
@@ -79,7 +78,7 @@ export class OpenAIBuildAIProvider implements BuildAIProvider {
       catch { throw new BuildAIProviderError("interpretation_unavailable", "invalid_provider_response"); }
       const effectiveModel = typeof response.model === "string" && response.model.trim() && response.model.length <= 100 ? response.model : this.config.model;
       const resolved = resolveBuildAIProviderOutput(output, registry);
-      if (!resolved.ok) throw new BuildAIProviderError("interpretation_unavailable", "invalid_provider_reference");
+      if (!resolved.ok) throw new BuildAIProviderError("interpretation_unavailable", "invalid_provider_reference", resolved.code, { providerId: "openai", modelId: effectiveModel });
       return { metadata: { providerId: "openai", modelId: effectiveModel }, output: resolved.output };
     } catch (error) {
       if (error instanceof BuildAIProviderError) throw error;

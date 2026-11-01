@@ -27,8 +27,19 @@ export type BuildExecutiveServiceRequest = {
   sections: BuildExecutivePrimarySection[];
   history?: BuildAIHistoryRequest;
 };
+export type BuildExecutiveTaskDiagnostic = {
+  task: BuildExecutiveSourceTask;
+  status: BuildAIOrchestrationStatus | "not_requested" | "unexpected_failure";
+  outcome: "successful" | "provider_timeout" | "provider_rejection" | "malformed_structured_output" | "invalid_fact_references" | "governance_validation_rejection" | "provider_failure" | "not_requested" | "invalid_request" | "deterministic_unavailable" | "unexpected_failure";
+  effectiveModel: string | null;
+  providerFailureCategory: BuildAIOrchestrationResult["audit"]["providerFailureCategory"];
+  providerFailureDetail: BuildAIOrchestrationResult["audit"]["providerFailureDetail"];
+  validationOutcome: BuildAIOrchestrationResult["audit"]["validationOutcome"];
+  validationErrorCodes: BuildAIOrchestrationResult["audit"]["validationErrorCodes"];
+  durationMs: number | null;
+};
 export type BuildExecutiveServiceResult =
-  | { ok: true; interpretation: BuildExecutiveInterpretationV1; explainability: BuildExecutiveExplainabilityV1 }
+  | { ok: true; interpretation: BuildExecutiveInterpretationV1; explainability: BuildExecutiveExplainabilityV1; diagnostics: BuildExecutiveTaskDiagnostic[] }
   | { ok: false; status: "invalid_request" | "composition_unavailable" };
 
 type Orchestrator = (request: BuildAIOrchestrationRequest) => Promise<BuildAIOrchestrationResult>;
@@ -87,27 +98,60 @@ function taskRequest(request: BuildExecutiveServiceRequest, task: BuildExecutive
   };
 }
 
+function boundedDuration(startedAt: string, completedAt: string) {
+  const duration = Date.parse(completedAt) - Date.parse(startedAt);
+  return Number.isFinite(duration) && duration >= 0 && duration <= 120_000 ? duration : null;
+}
+
+function diagnosticOutcome(result: BuildAIOrchestrationResult): BuildExecutiveTaskDiagnostic["outcome"] {
+  if (result.audit.validationOutcome === "accepted" && result.status === "interpreted") return "successful";
+  if (result.audit.validationOutcome === "rejected") return "governance_validation_rejection";
+  if (result.audit.providerFailureCategory === "provider_timeout" || result.audit.providerFailureCategory === "outer_timeout") return "provider_timeout";
+  if (result.audit.providerFailureCategory === "provider_refusal" || result.audit.providerFailureCategory === "incomplete_response") return "provider_rejection";
+  if (result.audit.providerFailureCategory === "invalid_provider_response") return "malformed_structured_output";
+  if (result.audit.providerFailureCategory === "invalid_provider_reference") return "invalid_fact_references";
+  if (result.audit.providerFailureCategory) return "provider_failure";
+  if (result.status === "invalid_request") return "invalid_request";
+  return "deterministic_unavailable";
+}
+
+function diagnostic(task: BuildExecutiveSourceTask, result: BuildAIOrchestrationResult | null, status: "not_requested" | "invalid_request" | "unexpected_failure" = "unexpected_failure"): BuildExecutiveTaskDiagnostic {
+  if (!result) return { task, status, outcome: status, effectiveModel: null, providerFailureCategory: null, providerFailureDetail: null, validationOutcome: "not_run", validationErrorCodes: [], durationMs: null };
+  return {
+    task,
+    status: result.status,
+    outcome: diagnosticOutcome(result),
+    effectiveModel: result.audit.provider?.modelId ?? null,
+    providerFailureCategory: result.audit.providerFailureCategory,
+    providerFailureDetail: result.audit.providerFailureDetail ?? null,
+    validationOutcome: result.audit.validationOutcome,
+    validationErrorCodes: result.audit.validationErrorCodes ?? [],
+    durationMs: boundedDuration(result.audit.startedAt, result.audit.completedAt),
+  };
+}
+
 export function createBuildExecutiveService(dependencies: ServiceDependencies) {
   return async function getBuildExecutiveInterpretation(input: unknown): Promise<BuildExecutiveServiceResult> {
     const request = validateRequest(input);
     if (!request) return { ok: false, status: "invalid_request" };
 
     const selected = new Set(request.sections.map((section) => SECTION_TASK[section]));
-    const pending = SOURCE_TASKS.map(async (task): Promise<{ source: BuildExecutiveInterpretationSource; result: BuildAIOrchestrationResult | null }> => {
-      if (!selected.has(task)) return { source: source(task, "not_requested"), result: null };
-      if (task === "change_interpretation" && !request.history) return { source: source(task, "invalid_request"), result: null };
+    const pending = SOURCE_TASKS.map(async (task): Promise<{ source: BuildExecutiveInterpretationSource; result: BuildAIOrchestrationResult | null; diagnosticStatus?: "not_requested" | "invalid_request" | "unexpected_failure" }> => {
+      if (!selected.has(task)) return { source: source(task, "not_requested"), result: null, diagnosticStatus: "not_requested" };
+      if (task === "change_interpretation" && !request.history) return { source: source(task, "invalid_request"), result: null, diagnosticStatus: "invalid_request" };
       try {
         const result = await dependencies.orchestrate(taskRequest(request, task));
         return { source: source(task, result.status, result.status === "interpreted" ? result.interpretation : null), result };
       } catch {
-        return { source: source(task, "deterministic_intelligence_unavailable"), result: null };
+        return { source: source(task, "deterministic_intelligence_unavailable"), result: null, diagnosticStatus: "unexpected_failure" };
       }
     });
     const settled = await Promise.all(pending); const sources = settled.map((item) => item.source);
     const composed = composeBuildExecutiveInterpretation({ scope: { kind: "project", projectId: request.projectId }, sources });
     if (!composed.ok) return { ok: false, status: "composition_unavailable" };
     const explainability = buildBuildExecutiveExplainability({ interpretation: composed.interpretation, sources: settled.filter((item) => item.result).map((item) => ({ task: item.source.task, result: item.result })) });
-    return explainability.ok ? { ok: true, interpretation: composed.interpretation, explainability: explainability.explainability } : { ok: false, status: "composition_unavailable" };
+    const diagnostics = settled.map((item) => diagnostic(item.source.task, item.result, item.diagnosticStatus));
+    return explainability.ok ? { ok: true, interpretation: composed.interpretation, explainability: explainability.explainability, diagnostics } : { ok: false, status: "composition_unavailable" };
   };
 }
 

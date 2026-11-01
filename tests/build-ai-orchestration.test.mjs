@@ -244,6 +244,8 @@ test("validator rejection also leaves no active outer-containment timer", async 
   const ai = provider((request) => ({ metadata: { providerId: "fake" }, output: { ...validOutput(request), extra: true } }));
   const result = await runtime().orchestrateBuildAI({ task: "executive_summary", projectId: PROJECT }, { provider: ai, tools: [project], providerTimeoutMs: 15_000, timer: timers.timer });
   assert.equal(result.status, "interpretation_unavailable"); assert.equal(result.audit.validationOutcome, "rejected");
+  assert.deepEqual(JSON.parse(JSON.stringify(result.audit.validationErrorCodes)), ["invalid_shape"]);
+  assert.ok(result.errors?.some((item) => item.code === "invalid_shape"));
   assert.deepEqual(timers.cleared, [timers.scheduled[0]]); timers.advance(17_500); assert.equal(timers.scheduled[0].fired, false);
 });
 

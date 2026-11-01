@@ -75,7 +75,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const result = await service({ projectId: project.id, sections: ["executive_position", "current_management_attention", "material_execution_changes"], history });
     const view = composeExecutiveIntelligenceViewModel(result, project.id);
     if (!view) return NextResponse.json({ error: "Executive interpretation is unavailable." }, { status: 503, headers: noStore });
-    return NextResponse.json({ view }, { headers: noStore });
+    return NextResponse.json({ view, diagnostics: result.ok ? result.diagnostics : [] }, { headers: noStore });
   } catch (error) {
     const status = error instanceof AccessControlError ? error.status : error instanceof CustomerWorkspaceRedirect ? 403 : 500;
     const message = status === 401 ? "Authentication is required." : status === 403 ? "You do not have access to this Build project." : status === 404 ? "Build project not found." : "Executive intelligence is unavailable.";

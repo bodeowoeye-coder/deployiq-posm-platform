@@ -16,9 +16,9 @@ const projectId = "a1000000-0000-4000-8000-000000000002";
 const clientId = "b1000000-0000-4000-8000-000000000002";
 const history = { from: "2026-09-01", through: "2026-09-07", timezone: "UTC", cadence: "daily" };
 
-function routeHarness({ authorized = true, providerReady = true, projectClientId = clientId } = {}) {
+function routeHarness({ authorized = true, providerReady = true, projectClientId = clientId, serviceResultOverride = null } = {}) {
   const calls = { auth: 0, scope: 0, canonical: 0, providerFactory: 0, executive: 0 };
-  const serviceResult = { ok: false, status: "composition_unavailable" };
+  const serviceResult = serviceResultOverride ?? { ok: false, status: "composition_unavailable" };
   const project = { id: projectId, client_id: projectClientId, project_type: "Construction" };
   const imports = {
     "next/server": { NextResponse: { json: (body, options = {}) => ({ body, status: options.status ?? 200, headers: options.headers }) } },
@@ -129,6 +129,20 @@ test("disabled provider returns controlled unavailability without invoking servi
   const response = await harness.POST(harness.request({ history }), { params: { id: projectId } });
   assert.equal(response.status, 503);
   assert.equal(harness.calls.executive, 0);
+});
+
+test("partial API responses expose only bounded task diagnostics while the customer UI ignores them", async () => {
+  const diagnostics = [
+    { task: "executive_summary", status: "interpretation_unavailable", outcome: "invalid_fact_references", effectiveModel: "gpt-test", providerFailureCategory: "invalid_provider_reference", providerFailureDetail: "duplicate_fact_reference", validationOutcome: "not_run", validationErrorCodes: [], durationMs: 147 },
+    { task: "management_attention", status: "interpretation_unavailable", outcome: "governance_validation_rejection", effectiveModel: "gpt-test", providerFailureCategory: null, providerFailureDetail: null, validationOutcome: "rejected", validationErrorCodes: ["coverage_limitation_required"], durationMs: 231 },
+  ];
+  const harness = routeHarness({ serviceResultOverride: { ok: true, diagnostics } });
+  const response = await harness.POST(harness.request({ history }), { params: { id: projectId } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.diagnostics, diagnostics);
+  const serialized = JSON.stringify(response.body.diagnostics);
+  for (const forbidden of ["prompt", "input", "output", "credential", "token", "dataset", "errorMessage"]) assert.equal(serialized.includes(forbidden), false);
+  assert.doesNotMatch(shellSource, /diagnostics|providerFailureCategory|providerFailureDetail|effectiveModel|validationOutcome|validationErrorCodes/);
 });
 
 test("presentation preserves partial sections, non-binding decisions, qualifications and unavailable evidence", () => {
