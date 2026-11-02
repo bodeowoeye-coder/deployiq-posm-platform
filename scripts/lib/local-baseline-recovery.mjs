@@ -11,7 +11,16 @@ export const E1C_FIELD_COORDINATOR_MIGRATION = "20261015010000";
 export const E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION = "20261015020000";
 export const E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION = "20261016010000";
 export const E1D_PLATFORM_PRIVILEGE_MIGRATION = "20261016020000";
+export const PUBLIC_SERVER_AUTHORITATIVE_RLS_MIGRATION = "20261101010000";
 export const DIRECT_AUTHENTICATED_SESSION_TABLES = Object.freeze(["user_roles", "user_profiles", "clients"]);
+export const PUBLIC_SERVER_AUTHORITATIVE_RLS_TABLES = Object.freeze([
+  "commercial_pricing_snapshots", "commercial_pricing_templates", "commercial_pricing_tiers",
+  "provisioning_events", "provisioning_jobs", "workspace_branding", "workspace_campaign_locations",
+  "workspace_campaigns", "workspace_directory_import_batches", "workspace_field_assignments",
+  "workspace_memberships", "workspace_navigation", "workspace_notification_defaults",
+  "workspace_onboarding_checklist_items", "workspace_onboarding_checklists", "workspace_report_configs",
+  "workspace_role_permissions", "workspace_roles", "workspace_settings", "workspace_statuses",
+]);
 export const SERVER_AUTHORITATIVE_LEGACY_TABLES = Object.freeze([
   "agencies", "alert_events", "audit_logs", "brands", "client_profiles", "client_projects",
   "commercial_pricing_snapshots", "commercial_pricing_templates", "commercial_pricing_tiers",
@@ -53,13 +62,14 @@ export function assertRecoveryFiles(root) {
     `supabase/migrations/${E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION}_repair_customer_workspace_status_lookup_privilege.sql`,
     `supabase/migrations/${E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION}_repair_workspace_authorization_table_privileges.sql`,
     `supabase/migrations/${E1D_PLATFORM_PRIVILEGE_MIGRATION}_repair_legacy_browser_table_privileges.sql`,
+    `supabase/migrations/${PUBLIC_SERVER_AUTHORITATIVE_RLS_MIGRATION}_enable_rls_on_server_authoritative_public_tables.sql`,
   ];
   for (const relative of required) {
     if (!existsSync(resolve(root, relative))) throw new Error(`recovery_file_missing:${relative}`);
   }
   const forward = forwardMigrations(root);
   if (forward[0]?.version !== FIRST_FORWARD_MIGRATION) throw new Error("unexpected_first_forward_migration");
-  if (forward.at(-1)?.version !== E1D_PLATFORM_PRIVILEGE_MIGRATION) throw new Error("unexpected_last_forward_migration");
+  if (forward.at(-1)?.version !== PUBLIC_SERVER_AUTHORITATIVE_RLS_MIGRATION) throw new Error("unexpected_last_forward_migration");
 }
 
 export function run(command, args, { cwd, capture = false, env = process.env } = {}) {
@@ -210,6 +220,12 @@ export function assertCurrentSchema(inventory) {
       throw new Error(`browser_server_authoritative_grant:${table}`);
     if (!hasGrant(table, "service_role", "SELECT")) throw new Error(`service_server_authoritative_select_missing:${table}`);
   }
+  for (const table of PUBLIC_SERVER_AUTHORITATIVE_RLS_TABLES) {
+    if (!tables.get(table)?.rls) throw new Error(`server_authoritative_rls_missing:${table}`);
+    if (tables.get(table)?.forced_rls) throw new Error(`server_authoritative_forced_rls:${table}`);
+    if (inventory.policies.some((policy) => policy.schema === "public" && policy.table === table))
+      throw new Error(`server_authoritative_browser_policy:${table}`);
+  }
   const evidenceBucket = inventory.buckets.find((bucket) => bucket.id === "build-runtime-evidence");
   if (!evidenceBucket || evidenceBucket.public !== false || Number(evidenceBucket.file_size_limit) !== 52428800)
     throw new Error("build_evidence_bucket_invalid");
@@ -222,7 +238,8 @@ export function assertCurrentSchema(inventory) {
   if (!inventory.migrations.includes(E1C_FIELD_COORDINATOR_MIGRATION)) throw new Error("e1c_field_coordinator_migration_not_applied");
   if (!inventory.migrations.includes(E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION)) throw new Error("e1c_workspace_status_privilege_migration_not_applied");
   if (!inventory.migrations.includes(E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION)) throw new Error("e1d_workspace_authorization_privilege_migration_not_applied");
-  if (inventory.migrations.at(-1) !== E1D_PLATFORM_PRIVILEGE_MIGRATION) throw new Error("e1d_platform_privilege_migration_not_applied");
+  if (!inventory.migrations.includes(E1D_PLATFORM_PRIVILEGE_MIGRATION)) throw new Error("e1d_platform_privilege_migration_not_applied");
+  if (inventory.migrations.at(-1) !== PUBLIC_SERVER_AUTHORITATIVE_RLS_MIGRATION) throw new Error("public_server_authoritative_rls_migration_not_applied");
 }
 
 export function assertCanonicalLocalData(databaseUrl) {
@@ -301,7 +318,11 @@ export function assertPlatformLegacyPrivileges(databaseUrl) {
 }
 
 export function fingerprintInventory(inventory) {
-  return createHash("sha256").update(JSON.stringify(inventory)).digest("hex");
+  const stable = {
+    ...inventory,
+    routine_grants: inventory.routine_grants.map(({ specific: _unstablePostgresOidIdentity, ...grant }) => grant),
+  };
+  return createHash("sha256").update(JSON.stringify(stable)).digest("hex");
 }
 
 export function baselineDigest(root) {

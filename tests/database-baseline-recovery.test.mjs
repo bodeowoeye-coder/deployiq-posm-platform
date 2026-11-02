@@ -8,9 +8,11 @@ import {
   E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION,
   E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION,
   E1D_PLATFORM_PRIVILEGE_MIGRATION,
+  PUBLIC_SERVER_AUTHORITATIVE_RLS_MIGRATION,
   E1B_MIGRATION,
   FIRST_FORWARD_MIGRATION,
   assertRecoveryFiles,
+  fingerprintInventory,
   forwardMigrations,
   representedMigrationVersions,
 } from "../scripts/lib/local-baseline-recovery.mjs";
@@ -27,7 +29,8 @@ test("canonical baseline boundary and forward migration order are stable", () =>
   assert.ok(forwardMigrations(root).some(({ version }) => version === E1C_FIELD_COORDINATOR_MIGRATION));
   assert.ok(forwardMigrations(root).some(({ version }) => version === E1C_WORKSPACE_STATUS_PRIVILEGE_MIGRATION));
   assert.ok(forwardMigrations(root).some(({ version }) => version === E1D_WORKSPACE_AUTHORIZATION_PRIVILEGE_MIGRATION));
-  assert.equal(forwardMigrations(root).at(-1).version, E1D_PLATFORM_PRIVILEGE_MIGRATION);
+  assert.ok(forwardMigrations(root).some(({ version }) => version === E1D_PLATFORM_PRIVILEGE_MIGRATION));
+  assert.equal(forwardMigrations(root).at(-1).version, PUBLIC_SERVER_AUTHORITATIVE_RLS_MIGRATION);
   assert.ok(representedMigrationVersions(root).includes("20260625000000"));
 });
 
@@ -51,6 +54,11 @@ test("legacy application tables deny browser roles while session reads remain bo
   for (const token of ["browser_server_authoritative_grant", "service_server_authoritative_select_missing", "E1D_PLATFORM_PRIVILEGE_MIGRATION", "e1d_platform_privilege_migration_not_applied", "assertPlatformLegacyPrivileges", "session_browser_privileges_invalid"])
     assert.match(verify, new RegExp(token));
   assert.match(bootstrap, /assertPlatformLegacyPrivileges\(databaseUrl\)/);
+});
+
+test("server-authoritative public tables require ordinary non-forced RLS without browser policies", () => {
+  for (const token of ["PUBLIC_SERVER_AUTHORITATIVE_RLS_MIGRATION", "PUBLIC_SERVER_AUTHORITATIVE_RLS_TABLES", "server_authoritative_rls_missing", "server_authoritative_forced_rls", "server_authoritative_browser_policy", "public_server_authoritative_rls_migration_not_applied"])
+    assert.match(verify, new RegExp(token));
 });
 
 test("bootstrap starts from an isolated empty migration directory before repair", () => {
@@ -100,4 +108,10 @@ test("two rehearsals must produce identical normalized fingerprints", () => {
   assert.match(bootstrap, /rehearsals > 2/);
   assert.match(bootstrap, /fingerprints\[0\] !== fingerprints\[1\]/);
   assert.match(bootstrap, /schema_fingerprint_mismatch/);
+});
+
+test("schema fingerprint excludes unstable PostgreSQL routine specific-name OIDs", () => {
+  const base = { tables: [], routine_grants: [{ name: "controlled_rpc", specific: "controlled_rpc_21084", grantee: "service_role", privilege: "EXECUTE" }] };
+  const equivalent = { tables: [], routine_grants: [{ name: "controlled_rpc", specific: "controlled_rpc_31415", grantee: "service_role", privilege: "EXECUTE" }] };
+  assert.equal(fingerprintInventory(base), fingerprintInventory(equivalent));
 });
