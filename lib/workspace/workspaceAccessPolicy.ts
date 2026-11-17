@@ -19,7 +19,7 @@ export type WorkspaceAccessAppRole = "client" | "installer";
 export type ProjectVisibilityClassification =
   | "tenant_wide_administration"
   | "explicit_project_assignment"
-  | "supervised_work"
+  | "assigned_or_supervised_build_work"
   | "assigned_work"
   | "explicit_read_only_grant"
   | "installer_retail_assignment";
@@ -147,6 +147,10 @@ export function assessWorkspaceAccess(input: WorkspaceAccessPolicyInput): Worksp
   ));
   const projectById = new Map(activeTenantProjects.map((project) => [project.id, project]));
   const explicitIds = unique(input.explicitlyAssignedProjectIds ?? []).filter((id) => projectById.has(id));
+  const buildProjectIds = new Set(activeTenantProjects
+    .filter((project) => projectKind(project.projectType) === "build")
+    .map((project) => project.id));
+  const explicitlyAssignedBuildProjectIds = explicitIds.filter((id) => buildProjectIds.has(id));
   const installerIds = unique(input.installerAssignedProjectIds ?? []).filter((id) => projectById.get(id)?.projectType === "Retail Deployment");
   const liveAssignments = (input.activityAssignments ?? []).filter((assignment) => !normalized(assignment.archivedAt) && projectById.has(assignment.projectId));
 
@@ -159,10 +163,13 @@ export function assessWorkspaceAccess(input: WorkspaceAccessPolicyInput): Worksp
     visibility = "explicit_project_assignment";
     authorizedProjectIds = explicitIds;
   } else if (roleKey === "supervisor") {
-    visibility = "supervised_work";
-    authorizedProjectIds = liveAssignments
-      .filter((assignment) => normalized(assignment.supervisorUserId) === userId)
-      .map((assignment) => assignment.projectId);
+    visibility = "assigned_or_supervised_build_work";
+    authorizedProjectIds = [
+      ...explicitlyAssignedBuildProjectIds,
+      ...liveAssignments
+        .filter((assignment) => buildProjectIds.has(assignment.projectId) && normalized(assignment.supervisorUserId) === userId)
+        .map((assignment) => assignment.projectId),
+    ];
   } else if (roleKey === "agency_manager" || roleKey === "field_coordinator") {
     visibility = "assigned_work";
     authorizedProjectIds = [

@@ -39,6 +39,25 @@ test("durable operational roles require project visibility and an authorized Bui
   }
   assert.deepEqual(operationalBuildEligibility(decision("project_manager", { permissions: [] })), { eligible: false, code: "projects_view_missing" });
   assert.deepEqual(operationalBuildEligibility(decision("project_manager", { explicit: ["retail-1"] })), { eligible: false, code: "no_authorized_build_projects" });
+  assert.equal(operationalBuildEligibility(decision("supervisor", { activities: [] })).eligible, true);
+  assert.deepEqual(operationalBuildEligibility(decision("supervisor", { explicit: ["retail-1"], activities: [] })), { eligible: false, code: "no_authorized_build_projects" });
+});
+
+test("Supervisor Build visibility is explicit-assignment or supervised-Activity scoped without changing execution authority", () => {
+  const explicit = decision("supervisor", { explicit: ["build-1"], activities: [] });
+  assert.equal(explicit.allowed, true);
+  assert.deepEqual(explicit.authorizedProjectIds, ["build-1"]);
+  assert.equal(explicit.visibility, "assigned_or_supervised_build_work");
+
+  const removed = decision("supervisor", { explicit: [], activities: [] });
+  assert.deepEqual(operationalBuildEligibility(removed), { eligible: false, code: "no_authorized_build_projects" });
+
+  const supervised = decision("supervisor", { explicit: [], activities: [{ projectId: "build-1", supervisorUserId: "user-1" }] });
+  assert.deepEqual(supervised.authorizedProjectIds, ["build-1"]);
+
+  const activityPage = source("app/workspace/build/projects/[id]/activities/[activityId]/page.tsx");
+  assert.match(activityPage, /access\.roleKey === "supervisor" && assignedSupervisor/);
+  assert.match(activityPage, /if \(!canUseExecution\) return <ReadOnlyActivity/);
 });
 
 test("historical workspace_manager ambiguity fails closed at workspace and Build service boundaries", () => {

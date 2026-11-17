@@ -52,18 +52,40 @@ test("project manager visibility is limited to explicit valid assignments", () =
   assert.deepEqual(decision.authorizedProjectIds, ["build-2"]);
 });
 
-test("canonical supervisor visibility is derived only from supervised work", () => {
+test("canonical supervisor visibility unions explicit Build assignments with supervised work", () => {
   const decision = allowed(assessWorkspaceAccess(input("supervisor", {
-    explicitlyAssignedProjectIds: ["build-2"],
+    explicitlyAssignedProjectIds: ["build-2", "retail-1", "foreign", "archived"],
     activityAssignments: [
       { projectId: "build-1", supervisorUserId: USER },
       { projectId: "build-2", ownerUserId: USER },
       { projectId: "foreign", supervisorUserId: USER },
-      { projectId: "retail-1", supervisorUserId: "someone-else" },
+      { projectId: "retail-1", supervisorUserId: USER },
     ],
   })));
-  assert.deepEqual(decision.authorizedProjectIds, ["build-1"]);
-  assert.equal(decision.visibility, "supervised_work");
+  assert.deepEqual(decision.authorizedProjectIds, ["build-1", "build-2"]);
+  assert.equal(decision.visibility, "assigned_or_supervised_build_work");
+  assert.equal(decision.productComposition.kind, "build");
+});
+
+test("removing a Supervisor explicit assignment revokes visibility unless supervised Activity ancestry remains", () => {
+  const removed = allowed(assessWorkspaceAccess(input("supervisor")));
+  assert.deepEqual(removed.authorizedProjectIds, []);
+
+  const retainedBySupervision = allowed(assessWorkspaceAccess(input("supervisor", {
+    activityAssignments: [{ projectId: "build-1", supervisorUserId: USER }],
+  })));
+  assert.deepEqual(retainedBySupervision.authorizedProjectIds, ["build-1"]);
+});
+
+test("Retail-only explicit and Activity assignments do not grant canonical Supervisor Build visibility", () => {
+  const decision = allowed(assessWorkspaceAccess(input("supervisor", {
+    explicitlyAssignedProjectIds: ["retail-1"],
+    activityAssignments: [{ projectId: "retail-1", supervisorUserId: USER }],
+  })));
+  assert.deepEqual(decision.authorizedProjectIds, []);
+  assert.equal(decision.productComposition.kind, "shared");
+  assert.equal(decision.productComposition.buildProjectCount, 0);
+  assert.equal(decision.productComposition.retailProjectCount, 0);
 });
 
 for (const roleKey of ["agency_manager", "field_coordinator"]) {
